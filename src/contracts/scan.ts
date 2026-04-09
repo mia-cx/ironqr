@@ -57,6 +57,24 @@ export const DecodedPayloadSchema = S.Struct({
 });
 export type DecodedPayload = S.Schema.Type<typeof DecodedPayloadSchema>;
 
+export const SegmentModeSchema = S.Literals([
+  'numeric',
+  'alphanumeric',
+  'byte',
+  'kanji',
+  'eci',
+  'fnc1-first',
+  'fnc1-second',
+]);
+export type SegmentMode = S.Schema.Type<typeof SegmentModeSchema>;
+
+export const DecodedSegmentSchema = S.Struct({
+  mode: SegmentModeSchema,
+  text: S.String,
+  bytes: S.Uint8Array,
+});
+export type DecodedSegment = S.Schema.Type<typeof DecodedSegmentSchema>;
+
 export const ScanResultSchema = S.Struct({
   payload: DecodedPayloadSchema,
   confidence: S.Number,
@@ -65,6 +83,7 @@ export const ScanResultSchema = S.Struct({
   bounds: BoundsSchema,
   corners: CornerSetSchema,
   headers: S.Array(S.Tuple([S.String, S.String])),
+  segments: S.Array(DecodedSegmentSchema),
 });
 export type ScanResult = S.Schema.Type<typeof ScanResultSchema>;
 

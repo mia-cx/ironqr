@@ -1,4 +1,4 @@
-import type { DecodeGridResult } from '../contracts/index.js';
+import type { DecodedSegment, DecodeGridResult } from '../contracts/index.js';
 import { ScannerError } from './errors.js';
 import {
   ALPHANUMERIC_CHARSET,
@@ -306,9 +306,11 @@ function decodePayloadFromDataCodewords(
     | 'binary'
     | 'unknown';
   readonly headers: Array<readonly [string, string]>;
+  readonly segments: readonly DecodedSegment[];
 } {
   const reader = new BitReader(dataCodewords);
   const headers: Array<readonly [string, string]> = [];
+  const segments: DecodedSegment[] = [];
   const bytes: number[] = [];
   let text = '';
   let payloadKind:
@@ -338,42 +340,48 @@ function decodePayloadFromDataCodewords(
     if (mode === 0b0010) {
       const count = reader.read(alphanumericCountBits);
       const segmentText = decodeAlphanumeric(reader, count);
+      const segmentBytes = new TextEncoder().encode(segmentText);
       text += segmentText;
-      bytes.push(...new TextEncoder().encode(segmentText));
+      bytes.push(...segmentBytes);
       payloadKind = classifyPayload(text);
       headers.push(['mode', 'alphanumeric']);
+      segments.push({ mode: 'alphanumeric', text: segmentText, bytes: segmentBytes });
       continue;
     }
 
     if (mode === 0b0100) {
       const count = reader.read(byteCountBits);
-      const segment = decodeByteSegment(reader, count);
-      bytes.push(...segment);
-      const segmentText = decodeText(segment, currentEncoding);
+      const segmentBytes = decodeByteSegment(reader, count);
+      bytes.push(...segmentBytes);
+      const segmentText = decodeText(segmentBytes, currentEncoding);
       text += segmentText;
       payloadKind = classifyPayload(text);
       headers.push(['mode', 'byte']);
+      segments.push({ mode: 'byte', text: segmentText, bytes: segmentBytes });
       continue;
     }
 
     if (mode === 0b0001) {
       const count = reader.read(numericCountBits);
       const segmentText = decodeNumeric(reader, count);
+      const segmentBytes = new TextEncoder().encode(segmentText);
       text += segmentText;
-      bytes.push(...new TextEncoder().encode(segmentText));
+      bytes.push(...segmentBytes);
       payloadKind = classifyPayload(text);
       headers.push(['mode', 'numeric']);
+      segments.push({ mode: 'numeric', text: segmentText, bytes: segmentBytes });
       continue;
     }
 
     if (mode === 0b1000) {
       const count = reader.read(kanjiCountBits);
-      const segment = decodeKanjiSegment(reader, count);
-      bytes.push(...segment);
-      const segmentText = decodeText(segment, 'shift_jis');
+      const segmentBytes = decodeKanjiSegment(reader, count);
+      bytes.push(...segmentBytes);
+      const segmentText = decodeText(segmentBytes, 'shift_jis');
       text += segmentText;
       payloadKind = classifyPayload(text);
       headers.push(['mode', 'kanji']);
+      segments.push({ mode: 'kanji', text: segmentText, bytes: segmentBytes });
       continue;
     }
 
@@ -382,11 +390,13 @@ function decodePayloadFromDataCodewords(
       currentEncoding = getEciEncodingLabel(assignmentNumber);
       headers.push(['mode', 'eci']);
       headers.push(['encoding', currentEncoding]);
+      segments.push({ mode: 'eci', text: currentEncoding, bytes: new Uint8Array(0) });
       continue;
     }
 
     if (mode === 0b0101) {
       headers.push(['mode', 'fnc1-first']);
+      segments.push({ mode: 'fnc1-first', text: '', bytes: new Uint8Array(0) });
       continue;
     }
 
@@ -394,6 +404,11 @@ function decodePayloadFromDataCodewords(
       const applicationIndicator = reader.read(8);
       headers.push(['mode', 'fnc1-second']);
       headers.push(['application-indicator', applicationIndicator.toString()]);
+      segments.push({
+        mode: 'fnc1-second',
+        text: applicationIndicator.toString(),
+        bytes: new Uint8Array(0),
+      });
       continue;
     }
 
@@ -412,6 +427,7 @@ function decodePayloadFromDataCodewords(
     bytes: new Uint8Array(bytes),
     kind: payloadKind === 'unknown' ? 'text' : payloadKind,
     headers,
+    segments,
   };
 }
 
@@ -632,5 +648,6 @@ export async function decodeGridLogical(input: {
       bottomLeft: { x: 0, y: size },
     },
     headers: payload.headers.length > 0 ? payload.headers : [['mode', 'unknown']],
+    segments: payload.segments,
   };
 }

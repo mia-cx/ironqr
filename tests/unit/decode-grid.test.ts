@@ -351,6 +351,9 @@ describe('decodeGrid', () => {
     expect(result.payload.text).toBe('1234');
     expect(result.headers).toContainEqual(['mode', 'numeric']);
     expect(new TextDecoder().decode(result.payload.bytes)).toBe('1234');
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]?.mode).toBe('numeric');
+    expect(result.segments[0]?.text).toBe('1234');
   });
 
   it('decodes a byte-mode segment with ISO-8859-1 encoding', async () => {
@@ -368,6 +371,10 @@ describe('decodeGrid', () => {
     expect(result.payload.text).toBe('HI!');
     expect(Array.from(result.payload.bytes)).toEqual([0x48, 0x49, 0x21]);
     expect(result.headers).toContainEqual(['mode', 'byte']);
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]?.mode).toBe('byte');
+    expect(result.segments[0]?.text).toBe('HI!');
+    expect(Array.from(result.segments[0]?.bytes ?? [])).toEqual([0x48, 0x49, 0x21]);
   });
 
   it('decodes a kanji-mode segment', async () => {
@@ -384,6 +391,10 @@ describe('decodeGrid', () => {
     });
     expect(result.payload.text).toBe('あ');
     expect(result.headers).toContainEqual(['mode', 'kanji']);
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]?.mode).toBe('kanji');
+    expect(result.segments[0]?.text).toBe('あ');
+    expect(Array.from(result.segments[0]?.bytes ?? [])).toEqual([0x82, 0xa0]);
   });
 
   it('decodes an ECI-mode segment switching to UTF-8 encoding', async () => {
@@ -403,6 +414,53 @@ describe('decodeGrid', () => {
     expect(result.headers).toContainEqual(['mode', 'eci']);
     expect(result.headers).toContainEqual(['encoding', 'utf-8']);
     expect(result.headers).toContainEqual(['mode', 'byte']);
+    expect(result.segments).toHaveLength(2);
+    expect(result.segments[0]).toMatchObject({ mode: 'eci', text: 'utf-8' });
+    expect(result.segments[1]).toMatchObject({ mode: 'byte', text: 'é' });
+    expect(Array.from(result.segments[1]?.bytes ?? [])).toEqual([0xc3, 0xa9]);
+  });
+
+  // ── AC3: multi-segment combination ───────────────────────────────────────
+
+  it('decodes a symbol with consecutive numeric and alphanumeric segments', async () => {
+    // Encode numeric "123" followed immediately by alphanumeric "HI" in one symbol.
+    const bits: number[] = [];
+    appendBits(bits, 0b0001, 4); // numeric mode
+    appendBits(bits, 3, 10); // 3 chars
+    appendBits(bits, 123, 10); // "123"
+    appendBits(bits, 0b0010, 4); // alphanumeric mode
+    appendBits(bits, 2, 9); // 2 chars
+    appendBits(bits, 17 * 45 + 18, 11); // "HI" (H=17, I=18)
+
+    const result = await decodeGrid({
+      grid: buildVersion1Grid(finalizeVersion1DataCodewords(bits, 'M'), 'M', 0),
+    });
+    expect(result.payload.text).toBe('123HI');
+    expect(result.headers).toContainEqual(['mode', 'numeric']);
+    expect(result.headers).toContainEqual(['mode', 'alphanumeric']);
+    expect(result.segments).toHaveLength(2);
+    expect(result.segments[0]).toMatchObject({ mode: 'numeric', text: '123' });
+    expect(result.segments[1]).toMatchObject({ mode: 'alphanumeric', text: 'HI' });
+  });
+
+  // ── AC3: FNC1-first ───────────────────────────────────────────────────────
+
+  it('decodes a FNC1 first-position marker followed by alphanumeric data', async () => {
+    // FNC1-first has no payload bits; it's a bare mode indicator.
+    const bits: number[] = [];
+    appendBits(bits, 0b0101, 4); // FNC1-first
+    appendBits(bits, 0b0010, 4); // alphanumeric
+    appendBits(bits, 2, 9); // 2 chars
+    appendBits(bits, 10 * 45 + 11, 11); // "AB" (A=10, B=11)
+
+    const result = await decodeGrid({
+      grid: buildVersion1Grid(finalizeVersion1DataCodewords(bits, 'M'), 'M', 0),
+    });
+    expect(result.payload.text).toBe('AB');
+    expect(result.headers).toContainEqual(['mode', 'fnc1-first']);
+    expect(result.segments).toHaveLength(2);
+    expect(result.segments[0]).toMatchObject({ mode: 'fnc1-first', text: '' });
+    expect(result.segments[1]).toMatchObject({ mode: 'alphanumeric', text: 'AB' });
   });
 
   // ── FNC1 second-position ──────────────────────────────────────────────────
@@ -413,6 +471,9 @@ describe('decodeGrid', () => {
     expect(result.headers).toContainEqual(['mode', 'fnc1-second']);
     expect(result.headers).toContainEqual(['application-indicator', '65']);
     expect(new TextDecoder().decode(result.payload.bytes)).toBe('AB');
+    expect(result.segments).toHaveLength(2);
+    expect(result.segments[0]).toMatchObject({ mode: 'fnc1-second', text: '65' });
+    expect(result.segments[1]).toMatchObject({ mode: 'alphanumeric', text: 'AB' });
   });
 
   // ── Full version/table coverage ───────────────────────────────────────────
