@@ -11,7 +11,7 @@ import {
   getVersionFromSize,
   unmask,
 } from './qr-spec.js';
-import { correctRsBlock } from './reed-solomon.js';
+import { correctRsBlock, ReedSolomonError } from './reed-solomon.js';
 
 const LATIN1_DECODER = new TextDecoder('iso-8859-1', { fatal: false });
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: false });
@@ -391,7 +391,9 @@ function decodePayloadFromDataCodewords(
     }
 
     if (mode === 0b1001) {
+      const applicationIndicator = reader.read(8);
       headers.push(['mode', 'fnc1-second']);
+      headers.push(['application-indicator', applicationIndicator.toString()]);
       continue;
     }
 
@@ -518,15 +520,23 @@ function splitInterleavedCodewords(
  */
 function correctAndReinterleaveDataCodewords(blocks: RawBlock[]): number[] {
   const correctedBlocks = blocks.map((block) => {
-    const corrected = correctRsBlock(
-      [...block.dataCodewords, ...block.ecCodewords],
-      block.ecCodewords.length,
-    );
+    try {
+      const corrected = correctRsBlock(
+        [...block.dataCodewords, ...block.ecCodewords],
+        block.ecCodewords.length,
+      );
 
-    return {
-      dataCodewords: Array.from(corrected.slice(0, block.dataCodewords.length)),
-      ecCodewords: Array.from(corrected.slice(block.dataCodewords.length)),
-    };
+      return {
+        dataCodewords: Array.from(corrected.slice(0, block.dataCodewords.length)),
+        ecCodewords: Array.from(corrected.slice(block.dataCodewords.length)),
+      };
+    } catch (error) {
+      if (error instanceof ReedSolomonError) {
+        throw new ScannerError('decode_failed', error.message);
+      }
+
+      throw error;
+    }
   });
 
   const maxDataCodewords = Math.max(

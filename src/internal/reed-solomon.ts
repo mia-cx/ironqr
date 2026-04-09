@@ -116,6 +116,21 @@ function buildGeneratorPolynomial(ecCodewords: number): number[] {
 }
 
 /**
+ * Represents a Reed-Solomon decode failure before it is translated into the public scanner contract.
+ */
+export class ReedSolomonError extends Error {
+  /**
+   * Creates a Reed-Solomon decode error.
+   *
+   * @param message - Human-readable decode failure detail.
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReedSolomonError';
+  }
+}
+
+/**
  * Minimal polynomial helper used by the Reed-Solomon decoder.
  */
 class GenericGFPoly {
@@ -343,7 +358,7 @@ function runEuclideanAlgorithm(
     tLast = t;
 
     if (rLast.isZero()) {
-      throw new Error('Reed-Solomon Euclidean algorithm failed: zero remainder.');
+      throw new ReedSolomonError('Reed-Solomon Euclidean algorithm failed: zero remainder.');
     }
 
     r = rLastLast;
@@ -364,7 +379,7 @@ function runEuclideanAlgorithm(
 
   const sigmaTildeAtZero = t.getCoefficient(0);
   if (sigmaTildeAtZero === 0) {
-    throw new Error('Reed-Solomon Euclidean algorithm failed: sigma(0) = 0.');
+    throw new ReedSolomonError('Reed-Solomon Euclidean algorithm failed: sigma(0) = 0.');
   }
 
   const inverse = gfInverse(sigmaTildeAtZero);
@@ -391,7 +406,7 @@ function findErrorLocations(errorLocator: GenericGFPoly): number[] {
   }
 
   if (result.length !== numberOfErrors) {
-    throw new Error('Reed-Solomon decoder failed to locate all errors.');
+    throw new ReedSolomonError('Reed-Solomon decoder failed to locate all errors.');
   }
 
   return result;
@@ -466,44 +481,58 @@ export function rsEncode(data: readonly number[], ecCodewords: number): Uint8Arr
  * @returns The corrected block codewords.
  */
 export function correctRsBlock(received: readonly number[], ecCodewords: number): Uint8Array {
-  const work = Array.from(received);
-  const poly = new GenericGFPoly(work);
-  const syndromeCoefficients = new Array<number>(ecCodewords).fill(0);
-  let noError = true;
+  initializeTables();
 
-  // A zero syndrome means the block is already valid and can be returned as-is.
-  for (let i = 0; i < ecCodewords; i += 1) {
-    const evaluation = poly.evaluateAt(EXP_TABLE[i] ?? 0);
-    syndromeCoefficients[ecCodewords - 1 - i] = evaluation;
-    if (evaluation !== 0) {
-      noError = false;
+  try {
+    const work = Array.from(received);
+    const poly = new GenericGFPoly(work);
+    const syndromeCoefficients = new Array<number>(ecCodewords).fill(0);
+    let noError = true;
+
+    // A zero syndrome means the block is already valid and can be returned as-is.
+    for (let i = 0; i < ecCodewords; i += 1) {
+      const evaluation = poly.evaluateAt(EXP_TABLE[i] ?? 0);
+      syndromeCoefficients[ecCodewords - 1 - i] = evaluation;
+      if (evaluation !== 0) {
+        noError = false;
+      }
     }
-  }
 
-  if (noError) {
+    if (noError) {
+      return Uint8Array.from(work);
+    }
+
+    const syndrome = new GenericGFPoly(syndromeCoefficients);
+    const [errorLocator, errorEvaluator] = runEuclideanAlgorithm(
+      GenericGFPoly.monomial(ecCodewords, 1),
+      syndrome,
+      ecCodewords,
+    );
+
+    const errorLocations = findErrorLocations(errorLocator);
+    const errorMagnitudes = findErrorMagnitudes(errorEvaluator, errorLocations);
+
+    for (let i = 0; i < errorLocations.length; i += 1) {
+      const position = work.length - 1 - (LOG_TABLE[errorLocations[i] ?? 0] ?? 0);
+      if (position < 0) {
+        throw new ReedSolomonError('Reed-Solomon error location outside the block.');
+      }
+
+      work[position] = (work[position] ?? 0) ^ (errorMagnitudes[i] ?? 0);
+    }
+
     return Uint8Array.from(work);
-  }
-
-  const syndrome = new GenericGFPoly(syndromeCoefficients);
-  const [errorLocator, errorEvaluator] = runEuclideanAlgorithm(
-    GenericGFPoly.monomial(ecCodewords, 1),
-    syndrome,
-    ecCodewords,
-  );
-
-  const errorLocations = findErrorLocations(errorLocator);
-  const errorMagnitudes = findErrorMagnitudes(errorEvaluator, errorLocations);
-
-  for (let i = 0; i < errorLocations.length; i += 1) {
-    const position = work.length - 1 - (LOG_TABLE[errorLocations[i] ?? 0] ?? 0);
-    if (position < 0) {
-      throw new Error('Reed-Solomon error location outside the block.');
+  } catch (error) {
+    if (error instanceof ReedSolomonError) {
+      throw error;
     }
 
-    work[position] = (work[position] ?? 0) ^ (errorMagnitudes[i] ?? 0);
-  }
+    if (error instanceof Error) {
+      throw new ReedSolomonError(error.message);
+    }
 
-  return Uint8Array.from(work);
+    throw new ReedSolomonError('Unknown Reed-Solomon decoding failure.');
+  }
 }
 
 /**
