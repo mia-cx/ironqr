@@ -118,6 +118,67 @@ describe('real-world corpus toolkit', () => {
     expect(corpus.positives).toHaveLength(1);
   });
 
+  it('fills in missing reviewer metadata on a same-status dedup import', async () => {
+    const repoRoot = await createRepoRoot();
+    const firstPath = path.join(repoRoot, 'fixtures', 'approved-no-reviewer.png');
+    const secondPath = path.join(repoRoot, 'fixtures', 'approved-with-reviewer.png');
+
+    const duplicateBytes = await createPngBytes(200, 200, 200);
+    await writeFixture(firstPath, duplicateBytes);
+    await writeFixture(secondPath, duplicateBytes);
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [firstPath],
+      label: 'qr-positive',
+      reviewStatus: 'approved',
+    });
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [secondPath],
+      label: 'qr-positive',
+      reviewStatus: 'approved',
+      reviewer: 'mia',
+      reviewNotes: 'verified on second pass',
+    });
+
+    const manifest = await readCorpusManifest(repoRoot);
+    expect(manifest.assets).toHaveLength(1);
+    expect(manifest.assets[0]?.review.status).toBe('approved');
+    expect(manifest.assets[0]?.review.reviewer).toBe('mia');
+    expect(manifest.assets[0]?.review.notes).toBe('verified on second pass');
+  });
+
+  it('keeps the first recorded reviewer on a same-status dedup import with a different reviewer', async () => {
+    const repoRoot = await createRepoRoot();
+    const firstPath = path.join(repoRoot, 'fixtures', 'approved-mia.png');
+    const secondPath = path.join(repoRoot, 'fixtures', 'approved-bob.png');
+
+    const duplicateBytes = await createPngBytes(220, 220, 220);
+    await writeFixture(firstPath, duplicateBytes);
+    await writeFixture(secondPath, duplicateBytes);
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [firstPath],
+      label: 'qr-positive',
+      reviewStatus: 'approved',
+      reviewer: 'mia',
+    });
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [secondPath],
+      label: 'qr-positive',
+      reviewStatus: 'approved',
+      reviewer: 'bob',
+    });
+
+    const manifest = await readCorpusManifest(repoRoot);
+    expect(manifest.assets[0]?.review.reviewer).toBe('mia');
+  });
+
   it('refuses to silently flip an already-decided review on a conflicting dedup import', async () => {
     const repoRoot = await createRepoRoot();
     const firstPath = path.join(repoRoot, 'fixtures', 'approved.png');

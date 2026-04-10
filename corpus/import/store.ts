@@ -87,9 +87,18 @@ function mergeProvenance(
 
 /**
  * Merge an incoming review into an existing asset review, keeping the more
- * authoritative state. An incoming `approved` or `rejected` status overrides
- * an existing `pending`; we never downgrade a decided review back to pending,
- * and we never silently flip an already-decided status to a conflicting one.
+ * authoritative state and filling in any metadata the existing review is
+ * missing.
+ *
+ * Rules:
+ * - If incoming brings a different authoritative status (`approved` vs
+ *   `rejected`) on top of an already-decided review, we refuse to silently
+ *   flip it and throw. Status transitions must be explicit.
+ * - If incoming upgrades `pending` → `approved`/`rejected`, incoming fully
+ *   owns the review (status, reviewer, reviewedAt, notes).
+ * - Otherwise the existing review's status wins, but incoming may fill in
+ *   any reviewer/notes that the existing review is missing. The first
+ *   recorded reviewer is kept when both sides have one.
  */
 function mergeReview(
   existing: AssetReview,
@@ -99,25 +108,43 @@ function mergeReview(
     readonly reviewNotes?: string;
   },
 ): AssetReview {
-  if (!incoming.status || incoming.status === 'pending') {
-    return existing;
-  }
+  const incomingStatus = incoming.status;
 
-  if (existing.status !== 'pending' && existing.status !== incoming.status) {
+  if (
+    incomingStatus &&
+    incomingStatus !== 'pending' &&
+    existing.status !== 'pending' &&
+    existing.status !== incomingStatus
+  ) {
     throw new Error(
-      `Cannot change review status from ${existing.status} to ${incoming.status} on dedupe`,
+      `Cannot change review status from ${existing.status} to ${incomingStatus} on dedupe`,
     );
   }
 
-  if (existing.status === incoming.status) {
+  const isUpgrade =
+    existing.status === 'pending' && incomingStatus !== undefined && incomingStatus !== 'pending';
+
+  if (isUpgrade) {
+    return {
+      status: incomingStatus as ReviewStatus,
+      ...(incoming.reviewer ? { reviewer: incoming.reviewer } : {}),
+      reviewedAt: new Date().toISOString(),
+      ...(incoming.reviewNotes ? { notes: incoming.reviewNotes } : {}),
+    };
+  }
+
+  const mergedReviewer = existing.reviewer ?? incoming.reviewer;
+  const mergedNotes = existing.notes ?? incoming.reviewNotes;
+
+  if (mergedReviewer === existing.reviewer && mergedNotes === existing.notes) {
     return existing;
   }
 
   return {
-    status: incoming.status,
-    ...(incoming.reviewer ? { reviewer: incoming.reviewer } : {}),
-    reviewedAt: new Date().toISOString(),
-    ...(incoming.reviewNotes ? { notes: incoming.reviewNotes } : {}),
+    status: existing.status,
+    ...(mergedReviewer ? { reviewer: mergedReviewer } : {}),
+    reviewedAt: existing.reviewedAt ?? new Date().toISOString(),
+    ...(mergedNotes ? { notes: mergedNotes } : {}),
   };
 }
 
