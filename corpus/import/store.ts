@@ -4,6 +4,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { ensureCorpusLayout, getCorpusAssetsRoot } from '../manifest.js';
 import type {
+  AssetReview,
   AutoScan,
   CorpusAsset,
   CorpusAssetLabel,
@@ -84,6 +85,42 @@ function mergeProvenance(
   return [...existing, next];
 }
 
+/**
+ * Merge an incoming review into an existing asset review, keeping the more
+ * authoritative state. An incoming `approved` or `rejected` status overrides
+ * an existing `pending`; we never downgrade a decided review back to pending,
+ * and we never silently flip an already-decided status to a conflicting one.
+ */
+function mergeReview(
+  existing: AssetReview,
+  incoming: {
+    readonly status?: ReviewStatus;
+    readonly reviewer?: string;
+    readonly reviewNotes?: string;
+  },
+): AssetReview {
+  if (!incoming.status || incoming.status === 'pending') {
+    return existing;
+  }
+
+  if (existing.status !== 'pending' && existing.status !== incoming.status) {
+    throw new Error(
+      `Cannot change review status from ${existing.status} to ${incoming.status} on dedupe`,
+    );
+  }
+
+  if (existing.status === incoming.status) {
+    return existing;
+  }
+
+  return {
+    status: incoming.status,
+    ...(incoming.reviewer ? { reviewer: incoming.reviewer } : {}),
+    reviewedAt: new Date().toISOString(),
+    ...(incoming.reviewNotes ? { notes: incoming.reviewNotes } : {}),
+  };
+}
+
 interface ImportAssetBytesOptions {
   readonly repoRoot: string;
   readonly assets: CorpusAsset[];
@@ -144,6 +181,11 @@ export async function importAssetBytes(
     const asset: CorpusAsset = {
       ...existing,
       provenance: mergeProvenance(existing.provenance, options.provenance),
+      review: mergeReview(existing.review, {
+        ...(options.reviewStatus ? { status: options.reviewStatus } : {}),
+        ...(options.reviewer ? { reviewer: options.reviewer } : {}),
+        ...(options.reviewNotes ? { reviewNotes: options.reviewNotes } : {}),
+      }),
       ...(options.groundTruth ? { groundTruth: options.groundTruth } : {}),
       ...(options.autoScan ? { autoScan: options.autoScan } : {}),
       ...(options.licenseReview ? { licenseReview: options.licenseReview } : {}),

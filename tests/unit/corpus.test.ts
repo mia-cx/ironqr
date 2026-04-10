@@ -84,6 +84,66 @@ describe('real-world corpus toolkit', () => {
     await stat(path.join(repoRoot, 'corpus', 'data', positive?.relativePath ?? 'missing'));
   });
 
+  it('upgrades pending review metadata when a later dedup import is approved', async () => {
+    const repoRoot = await createRepoRoot();
+    const firstPath = path.join(repoRoot, 'fixtures', 'pending.png');
+    const secondPath = path.join(repoRoot, 'fixtures', 'approved.png');
+
+    const duplicateBytes = await createPngBytes(128, 128, 128);
+    await writeFixture(firstPath, duplicateBytes);
+    await writeFixture(secondPath, duplicateBytes);
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [firstPath],
+      label: 'qr-positive',
+    });
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [secondPath],
+      label: 'qr-positive',
+      reviewStatus: 'approved',
+      reviewer: 'mia',
+      reviewNotes: 'confirmed on second pass',
+    });
+
+    const manifest = await readCorpusManifest(repoRoot);
+    expect(manifest.assets).toHaveLength(1);
+    expect(manifest.assets[0]?.review.status).toBe('approved');
+    expect(manifest.assets[0]?.review.reviewer).toBe('mia');
+    expect(manifest.assets[0]?.review.notes).toBe('confirmed on second pass');
+
+    const corpus = await buildRealWorldBenchmarkCorpus(repoRoot);
+    expect(corpus.positives).toHaveLength(1);
+  });
+
+  it('refuses to silently flip an already-decided review on a conflicting dedup import', async () => {
+    const repoRoot = await createRepoRoot();
+    const firstPath = path.join(repoRoot, 'fixtures', 'approved.png');
+    const secondPath = path.join(repoRoot, 'fixtures', 'rejected.png');
+
+    const duplicateBytes = await createPngBytes(64, 64, 64);
+    await writeFixture(firstPath, duplicateBytes);
+    await writeFixture(secondPath, duplicateBytes);
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [firstPath],
+      label: 'qr-positive',
+      reviewStatus: 'approved',
+    });
+
+    await expect(
+      importLocalAssets({
+        repoRoot,
+        paths: [secondPath],
+        label: 'qr-positive',
+        reviewStatus: 'rejected',
+      }),
+    ).rejects.toThrow(/Cannot change review status from approved to rejected/);
+  });
+
   it('dedupes by content hash and keeps provenance unique per source path', async () => {
     const repoRoot = await createRepoRoot();
     const firstPath = path.join(repoRoot, 'fixtures', 'duplicate-a.png');
