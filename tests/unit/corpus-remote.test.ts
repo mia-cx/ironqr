@@ -342,6 +342,92 @@ describe('remote corpus import', () => {
     expect(persistedStage.importedAssetId).toBe(imported?.id);
   });
 
+  it('rejects dedup imports that try to rewrite canonical truth metadata', async () => {
+    const repoRoot = await createRepoRoot();
+
+    const firstStage = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      buildMockFetch(),
+    );
+
+    const firstAsset = firstStage.assets[0];
+    if (!firstAsset) {
+      throw new Error('expected first staged asset');
+    }
+
+    await updateStagedRemoteAsset(firstStage.stageDir, {
+      ...firstAsset,
+      review: {
+        status: 'approved',
+        reviewer: 'mia',
+        reviewedAt: '2026-04-10T12:00:00.000Z',
+      },
+      confirmedLicense: 'CC0',
+      groundTruth: {
+        qrCount: 1,
+        codes: [{ text: 'https://example.com', kind: 'url' }],
+      },
+      autoScan: {
+        attempted: true,
+        succeeded: true,
+        results: [{ text: 'https://example.com', kind: 'url' }],
+        acceptedAsTruth: true,
+      },
+    });
+
+    await importStagedRemoteAssets({
+      repoRoot,
+      stageDir: firstStage.stageDir,
+    });
+
+    const secondStage = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      buildMockFetch(),
+    );
+
+    const secondAsset = secondStage.assets[0];
+    if (!secondAsset) {
+      throw new Error('expected second staged asset');
+    }
+
+    await updateStagedRemoteAsset(secondStage.stageDir, {
+      ...secondAsset,
+      review: {
+        status: 'approved',
+        reviewer: 'mia',
+        reviewedAt: '2026-04-10T12:05:00.000Z',
+      },
+      confirmedLicense: 'CC0',
+      groundTruth: {
+        qrCount: 1,
+        codes: [{ text: 'https://different.example.com', kind: 'url' }],
+      },
+      autoScan: {
+        attempted: true,
+        succeeded: true,
+        results: [{ text: 'https://different.example.com', kind: 'url' }],
+        acceptedAsTruth: true,
+      },
+    });
+
+    await expect(
+      importStagedRemoteAssets({
+        repoRoot,
+        stageDir: secondStage.stageDir,
+      }),
+    ).rejects.toThrow('Cannot change ground truth on dedupe');
+  });
+
   it('skips image urls whose host is not in the per-source CDN allowlist', async () => {
     const repoRoot = await createRepoRoot();
     const hostileFetch: (input: string | URL) => Promise<Response> = async (input) => {

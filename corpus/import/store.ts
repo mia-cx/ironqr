@@ -133,6 +133,20 @@ function mergeProvenance(
   return merged;
 }
 
+function mergeCanonicalMetadata<T extends object>(
+  existing: T | undefined,
+  incoming: T | undefined,
+  label: string,
+): T | undefined {
+  if (existing === undefined) return incoming;
+  if (incoming === undefined) return existing;
+  if (JSON.stringify(existing) === JSON.stringify(incoming)) {
+    return existing;
+  }
+
+  throw new Error(`Cannot change ${label} on dedupe`);
+}
+
 /**
  * Merge an incoming review into an existing asset review, keeping the more
  * authoritative state and filling in any metadata the existing review is
@@ -269,9 +283,17 @@ export async function importAssetBytes(
         ...(options.reviewNotes ? { reviewNotes: options.reviewNotes } : {}),
         ...(options.reviewedAt ? { reviewedAt: options.reviewedAt } : {}),
       }),
-      ...(options.groundTruth ? { groundTruth: options.groundTruth } : {}),
-      ...(options.autoScan ? { autoScan: options.autoScan } : {}),
-      ...(options.licenseReview ? { licenseReview: options.licenseReview } : {}),
+      groundTruth: mergeCanonicalMetadata(
+        existing.groundTruth,
+        options.groundTruth,
+        'ground truth',
+      ),
+      autoScan: mergeCanonicalMetadata(existing.autoScan, options.autoScan, 'auto-scan evidence'),
+      licenseReview: mergeCanonicalMetadata(
+        existing.licenseReview,
+        options.licenseReview,
+        'license review',
+      ),
     };
     options.assets[existingIndex] = asset;
     return { asset, deduped: true };
