@@ -10,17 +10,27 @@ export async function buildRealWorldBenchmarkCorpus(
 
   const entries: RealWorldBenchmarkEntry[] = manifest.assets
     .filter((asset) => asset.review.status === 'approved')
-    .map((asset) => ({
-      id: asset.id,
-      label: asset.label,
-      assetPath: toRepoRelativePath(
-        repoRoot,
-        path.join(repoRoot, 'corpus', 'data', asset.relativePath),
-      ),
-      sha256: asset.sha256,
-      byteLength: asset.byteLength,
-      mediaType: asset.mediaType,
-    }));
+    .map((asset) => {
+      const remoteSource = asset.provenance.find((source) => source.kind === 'remote');
+
+      return {
+        id: asset.id,
+        label: asset.label,
+        assetPath: toRepoRelativePath(
+          repoRoot,
+          path.join(repoRoot, 'corpus', 'data', asset.relativePath),
+        ),
+        sha256: asset.sha256,
+        byteLength: asset.byteLength,
+        mediaType: asset.mediaType,
+        ...(remoteSource?.sourcePageUrl ? { sourcePageUrl: remoteSource.sourcePageUrl } : {}),
+        ...(asset.licenseReview?.confirmedLicense
+          ? { confirmedLicense: asset.licenseReview.confirmedLicense }
+          : {}),
+        ...(asset.groundTruth ? { groundTruth: asset.groundTruth } : {}),
+        ...(asset.autoScan ? { autoScan: asset.autoScan } : {}),
+      };
+    });
 
   return {
     positives: entries.filter((entry) => entry.label === 'qr-positive'),

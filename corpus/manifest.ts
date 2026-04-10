@@ -3,7 +3,15 @@ import path from 'node:path';
 import * as S from 'effect/Schema';
 import { type CorpusManifest, CorpusManifestSchema } from './schema.js';
 
-const decodeManifest = S.decodeUnknownSync(CorpusManifestSchema);
+function decodeManifest(value: unknown): CorpusManifest {
+  return S.decodeUnknownSync(CorpusManifestSchema)(value);
+}
+
+function provenanceSortKey(record: CorpusManifest['assets'][number]['provenance'][number]): string {
+  return record.kind === 'local'
+    ? `local:${record.originalPath}`
+    : `remote:${record.sourcePageUrl}:${record.imageUrl}`;
+}
 
 export function getCorpusDataRoot(repoRoot: string): string {
   return path.join(repoRoot, 'corpus', 'data');
@@ -53,7 +61,7 @@ export async function writeCorpusManifest(
       .map((asset) => ({
         ...asset,
         provenance: [...asset.provenance].sort((left, right) =>
-          left.originalPath.localeCompare(right.originalPath),
+          provenanceSortKey(left).localeCompare(provenanceSortKey(right)),
         ),
       })),
   };

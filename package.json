@@ -48,6 +48,9 @@
     "changeset:publish": "changeset publish",
     "benchmark": "bun run benchmark/cli.ts",
     "corpus:import": "bun run corpus/cli.ts import-local",
+    "corpus:scrape": "bun run corpus/cli.ts scrape-remote",
+    "corpus:review": "bun run corpus/cli.ts review-staged",
+    "corpus:import-staged": "bun run corpus/cli.ts import-staged",
     "corpus:export": "bun run corpus/cli.ts export-benchmark"
   },
   "dependencies": {
@@ -61,6 +64,7 @@
     "@types/node": "^24.6.1",
     "bun-types": "1.3.11",
     "publint": "^0.3.18",
+    "sharp": "^0.34.4",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }

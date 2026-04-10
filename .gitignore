@@ -11,3 +11,4 @@ test-results
 *.tsbuildinfo
 benchmark-results.json
 corpus/data/
+corpus/staging/

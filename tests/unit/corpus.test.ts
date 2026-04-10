@@ -2,25 +2,33 @@ import { describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 import { buildRealWorldBenchmarkCorpus } from '../../corpus/export/benchmark.js';
 import { importLocalAssets } from '../../corpus/import/local.js';
 import {
   getCorpusManifestPath,
   readCorpusManifest,
   toRepoRelativePath,
+  writeCorpusManifest,
 } from '../../corpus/manifest.js';
-
-const PNG_1X1 = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK2cAAAAASUVORK5CYII=',
-  'base64',
-);
-const PNG_1X1_ALT = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAusB9Y9sS8sAAAAASUVORK5CYII=',
-  'base64',
-);
 
 async function createRepoRoot(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'qreader-corpus-'));
+}
+
+async function createPngBytes(red: number, green: number, blue: number): Promise<Uint8Array> {
+  const buffer = await sharp({
+    create: {
+      width: 2,
+      height: 2,
+      channels: 4,
+      background: { r: red, g: green, b: blue, alpha: 1 },
+    },
+  })
+    .png()
+    .toBuffer();
+
+  return new Uint8Array(buffer);
 }
 
 async function writeFixture(filePath: string, bytes: Uint8Array): Promise<void> {
@@ -34,8 +42,8 @@ describe('real-world corpus toolkit', () => {
     const positivePath = path.join(repoRoot, 'fixtures', 'positive.png');
     const negativePath = path.join(repoRoot, 'fixtures', 'negative.png');
 
-    await writeFixture(positivePath, PNG_1X1);
-    await writeFixture(negativePath, PNG_1X1_ALT);
+    await writeFixture(positivePath, await createPngBytes(255, 255, 255));
+    await writeFixture(negativePath, await createPngBytes(0, 0, 0));
 
     await importLocalAssets({
       repoRoot,
@@ -61,9 +69,14 @@ describe('real-world corpus toolkit', () => {
     expect(positive).toBeDefined();
     expect(positive?.review.status).toBe('approved');
     expect(positive?.review.reviewer).toBe('mia');
-    expect(positive?.provenance[0]?.originalPath).toBe(path.resolve(positivePath));
-    expect(positive?.provenance[0]?.attribution).toBe('self-generated');
-    expect(positive?.provenance[0]?.license).toBe('test-only');
+    const positiveSource = positive?.provenance[0];
+    expect(positiveSource?.kind).toBe('local');
+    if (positiveSource?.kind !== 'local') {
+      throw new Error('expected local provenance');
+    }
+    expect(positiveSource.originalPath).toBe(path.resolve(positivePath));
+    expect(positiveSource.attribution).toBe('self-generated');
+    expect(positiveSource.license).toBe('test-only');
 
     const manifestPath = getCorpusManifestPath(repoRoot);
     expect(JSON.parse(await readFile(manifestPath, 'utf8')).assets).toHaveLength(2);
@@ -76,8 +89,9 @@ describe('real-world corpus toolkit', () => {
     const firstPath = path.join(repoRoot, 'fixtures', 'duplicate-a.png');
     const secondPath = path.join(repoRoot, 'fixtures', 'duplicate-b.png');
 
-    await writeFixture(firstPath, PNG_1X1);
-    await writeFixture(secondPath, PNG_1X1);
+    const duplicateBytes = await createPngBytes(255, 255, 255);
+    await writeFixture(firstPath, duplicateBytes);
+    await writeFixture(secondPath, duplicateBytes);
 
     await importLocalAssets({
       repoRoot,
@@ -96,10 +110,13 @@ describe('real-world corpus toolkit', () => {
     const manifest = await readCorpusManifest(repoRoot);
     expect(manifest.assets).toHaveLength(1);
     expect(manifest.assets[0]?.provenance).toHaveLength(2);
-    expect(manifest.assets[0]?.provenance.map((source) => source.originalPath)).toEqual([
-      path.resolve(firstPath),
-      path.resolve(secondPath),
-    ]);
+    const provenancePaths = manifest.assets[0]?.provenance.map((source) => {
+      if (source.kind !== 'local') {
+        throw new Error('expected local provenance');
+      }
+      return source.originalPath;
+    });
+    expect(provenancePaths).toEqual([path.resolve(firstPath), path.resolve(secondPath)]);
   });
 
   it('exports only approved assets in benchmark-ready positive and negative groups', async () => {
@@ -108,9 +125,9 @@ describe('real-world corpus toolkit', () => {
     const approvedNegativePath = path.join(repoRoot, 'fixtures', 'approved-negative.png');
     const pendingNegativePath = path.join(repoRoot, 'fixtures', 'pending-negative.png');
 
-    await writeFixture(approvedPositivePath, PNG_1X1);
-    await writeFixture(approvedNegativePath, PNG_1X1_ALT);
-    await writeFixture(pendingNegativePath, Buffer.from('another-image'));
+    await writeFixture(approvedPositivePath, await createPngBytes(255, 255, 255));
+    await writeFixture(approvedNegativePath, await createPngBytes(0, 0, 0));
+    await writeFixture(pendingNegativePath, await createPngBytes(0, 255, 0));
 
     await importLocalAssets({
       repoRoot,
@@ -131,6 +148,51 @@ describe('real-world corpus toolkit', () => {
       reviewStatus: 'pending',
     });
 
+    const manifest = await readCorpusManifest(repoRoot);
+    const approvedPositive = manifest.assets.find((asset) => asset.label === 'qr-positive');
+    if (!approvedPositive) {
+      throw new Error('expected approved positive asset');
+    }
+
+    await writeCorpusManifest(repoRoot, {
+      version: manifest.version,
+      assets: manifest.assets.map((asset) =>
+        asset.id === approvedPositive.id
+          ? {
+              ...asset,
+              provenance: [
+                {
+                  kind: 'remote' as const,
+                  sourcePageUrl: 'https://example.com/source-page',
+                  imageUrl: 'https://cdn.example.com/source.png',
+                  fetchedAt: '2026-04-10T12:00:00.000Z',
+                  pageTitle: 'Example Source',
+                  license: 'CC0',
+                },
+              ],
+              licenseReview: {
+                bestEffortLicense: 'CC0',
+                confirmedLicense: 'CC0',
+                licenseVerifiedBy: 'mia',
+                licenseVerifiedAt: '2026-04-10T12:05:00.000Z',
+              },
+              groundTruth: {
+                qrCount: 1,
+                codes: [
+                  { text: 'https://example.com', kind: 'url', verifiedWith: 'iphone camera' },
+                ],
+              },
+              autoScan: {
+                attempted: true,
+                succeeded: true,
+                results: [{ text: 'https://example.com', kind: 'url' }],
+                acceptedAsTruth: true,
+              },
+            }
+          : asset,
+      ),
+    });
+
     const corpus = await buildRealWorldBenchmarkCorpus(repoRoot);
 
     expect(corpus.positives).toHaveLength(1);
@@ -140,8 +202,20 @@ describe('real-world corpus toolkit', () => {
     expect(corpus.positives[0]?.assetPath).toBe(
       toRepoRelativePath(
         repoRoot,
-        path.join(repoRoot, 'corpus', 'data', 'assets', `${corpus.positives[0]?.id}.png`),
+        path.join(repoRoot, 'corpus', 'data', 'assets', `${corpus.positives[0]?.id}.webp`),
       ),
     );
+    expect(corpus.positives[0]?.sourcePageUrl).toBe('https://example.com/source-page');
+    expect(corpus.positives[0]?.confirmedLicense).toBe('CC0');
+    expect(corpus.positives[0]?.groundTruth).toEqual({
+      qrCount: 1,
+      codes: [{ text: 'https://example.com', kind: 'url', verifiedWith: 'iphone camera' }],
+    });
+    expect(corpus.positives[0]?.autoScan).toEqual({
+      attempted: true,
+      succeeded: true,
+      results: [{ text: 'https://example.com', kind: 'url' }],
+      acceptedAsTruth: true,
+    });
   });
 });
