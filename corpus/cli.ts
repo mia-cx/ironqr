@@ -3,7 +3,11 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { writeRealWorldBenchmarkCorpus } from './export/benchmark.js';
 import { importLocalAssets } from './import/local.js';
-import { importStagedRemoteAssets, scrapeRemoteAssets } from './import/remote.js';
+import {
+  importStagedRemoteAssets,
+  resolveStagedAssetPath,
+  scrapeRemoteAssets,
+} from './import/remote.js';
 import { reviewStagedAssets } from './review.js';
 import { scanLocalImageFile } from './scan.js';
 import type { CorpusAssetLabel, ReviewStatus } from './schema.js';
@@ -92,9 +96,11 @@ function openTarget(target: string): Promise<void> {
           ? spawn('cmd', ['/c', 'start', '', target], { stdio: 'ignore', detached: true })
           : spawn('xdg-open', [target], { stdio: 'ignore', detached: true });
 
-    child.on('error', reject);
-    child.unref();
-    resolve();
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
   });
 }
 
@@ -168,10 +174,7 @@ async function main(): Promise<void> {
         reviewer,
         prompt,
         scanAsset: async (asset) => {
-          const imagePath = path.resolve(resolvedStageDir, asset.id, asset.imageFileName);
-          if (imagePath !== path.join(resolvedStageDir, asset.id, asset.imageFileName)) {
-            throw new Error(`Scan path escapes stage directory: ${imagePath}`);
-          }
+          const imagePath = resolveStagedAssetPath(resolvedStageDir, asset.id, asset.imageFileName);
           return scanLocalImageFile(imagePath);
         },
         openLocalImage: openTarget,

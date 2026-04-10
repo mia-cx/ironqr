@@ -1,6 +1,6 @@
-import path from 'node:path';
 import {
   readStagedRemoteAssets,
+  resolveStagedAssetPath,
   type StagedRemoteAsset,
   type StageReviewStatus,
   updateStagedRemoteAsset,
@@ -12,15 +12,6 @@ function assertHttpUrl(value: string, label: string): void {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`Expected http(s) URL for ${label}, got ${url.protocol}`);
   }
-}
-
-function resolveStagedImagePath(stageDir: string, asset: StagedRemoteAsset): string {
-  const absoluteStage = path.resolve(stageDir);
-  const imagePath = path.resolve(absoluteStage, asset.id, asset.imageFileName);
-  if (imagePath !== path.join(absoluteStage, asset.id, asset.imageFileName)) {
-    throw new Error(`Staged image path escapes stage directory: ${imagePath}`);
-  }
-  return imagePath;
 }
 
 interface ScanAssetResult {
@@ -96,7 +87,7 @@ export async function reviewStagedAssets(
       continue;
     }
 
-    const imagePath = resolveStagedImagePath(options.stageDir, asset);
+    const imagePath = resolveStagedAssetPath(options.stageDir, asset.id, asset.imageFileName);
     assertHttpUrl(asset.sourcePageUrl, 'source page URL');
 
     options.log(`Reviewing ${asset.id}`);

@@ -236,6 +236,33 @@ function getAssetImagePath(stageDir: string, asset: StagedRemoteAsset): string {
   return path.join(getAssetDir(stageDir, asset.id), asset.imageFileName);
 }
 
+/**
+ * Resolve `<stageDir>/<assetId>/<fileName>` and assert that the final
+ * absolute path is contained within `<stageDir>`. This is a defense-in-depth
+ * prefix check on top of `assertSafeSlug`, and gives a meaningful guarantee
+ * even if the upstream validators are ever weakened or bypassed.
+ */
+export function resolveStagedAssetPath(
+  stageDir: string,
+  assetId: string,
+  fileName: string,
+): string {
+  assertSafeSlug(assetId, 'asset id');
+  assertSafeSlug(fileName, 'image filename');
+
+  const absoluteStage = path.resolve(stageDir);
+  const absoluteTarget = path.resolve(absoluteStage, assetId, fileName);
+  const stageWithSep = absoluteStage.endsWith(path.sep)
+    ? absoluteStage
+    : `${absoluteStage}${path.sep}`;
+
+  if (absoluteTarget !== absoluteStage && !absoluteTarget.startsWith(stageWithSep)) {
+    throw new Error(`Staged path escapes stage directory: ${absoluteTarget}`);
+  }
+
+  return absoluteTarget;
+}
+
 function detectBestEffortLicense(
   host: string,
   html: string,

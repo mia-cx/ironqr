@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import {
   importStagedRemoteAssets,
   readStagedRemoteAsset,
+  resolveStagedAssetPath,
   scrapeRemoteAssets,
   updateStagedRemoteAsset,
 } from '../../corpus/import/remote.js';
@@ -314,6 +315,20 @@ describe('remote corpus import', () => {
     );
 
     await expect(readStagedRemoteAsset(stageDir, 'stage-deadbeefcafef00d')).rejects.toThrow(
+      /Unsafe image filename/,
+    );
+  });
+
+  it('resolveStagedAssetPath rejects components containing path separators or parent traversal', async () => {
+    const stageDir = '/tmp/qreader-stage';
+
+    expect(() => resolveStagedAssetPath(stageDir, 'stage-abc', '../../etc/passwd')).toThrow(
+      /Unsafe image filename/,
+    );
+    expect(() => resolveStagedAssetPath(stageDir, '../escape', 'image.png')).toThrow(
+      /Unsafe asset id/,
+    );
+    expect(() => resolveStagedAssetPath(stageDir, 'stage-abc', 'sub/image.png')).toThrow(
       /Unsafe image filename/,
     );
   });
