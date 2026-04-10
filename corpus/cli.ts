@@ -87,17 +87,52 @@ async function resolveReviewer(
   return answer || detected || '';
 }
 
+type OpenTargetInvocation = {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly options: {
+    readonly stdio: 'ignore';
+    readonly detached: true;
+    readonly windowsVerbatimArguments?: true;
+  };
+};
+
+export function buildOpenTargetInvocation(
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+): OpenTargetInvocation {
+  const options = { stdio: 'ignore' as const, detached: true as const };
+
+  if (platform === 'darwin') {
+    return {
+      command: 'open',
+      args: [target],
+      options,
+    };
+  }
+
+  if (platform === 'win32') {
+    return {
+      command: 'cmd',
+      args: ['/d', '/s', '/c', 'start', '""', `"${target}"`],
+      options: {
+        ...options,
+        windowsVerbatimArguments: true,
+      },
+    };
+  }
+
+  return {
+    command: 'xdg-open',
+    args: [target],
+    options,
+  };
+}
+
 function openTarget(target: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child =
-      process.platform === 'darwin'
-        ? spawn('open', [target], { stdio: 'ignore', detached: true })
-        : process.platform === 'win32'
-          ? spawn('cmd', ['/d', '/s', '/c', 'start', '""', `"${target}"`], {
-              stdio: 'ignore',
-              detached: true,
-            })
-          : spawn('xdg-open', [target], { stdio: 'ignore', detached: true });
+    const { command, args, options } = buildOpenTargetInvocation(target);
+    const child = spawn(command, args, options);
 
     child.once('error', reject);
     child.once('spawn', () => {
@@ -247,4 +282,9 @@ async function main(): Promise<void> {
   bun run corpus/cli.ts export-benchmark`);
 }
 
-await main();
+if (import.meta.main) {
+  void main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
