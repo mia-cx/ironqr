@@ -405,17 +405,17 @@ describe('remote corpus import', () => {
       review: {
         status: 'approved',
         reviewer: 'mia',
-        reviewedAt: '2026-04-10T12:05:00.000Z',
+        reviewedAt: '2026-04-10T12:00:00.000Z',
       },
       confirmedLicense: 'CC0',
       groundTruth: {
+        codes: [{ kind: 'url', text: 'https://different.example.com' }],
         qrCount: 1,
-        codes: [{ text: 'https://different.example.com', kind: 'url' }],
       },
       autoScan: {
         attempted: true,
         succeeded: true,
-        results: [{ text: 'https://different.example.com', kind: 'url' }],
+        results: [{ kind: 'url', text: 'https://different.example.com' }],
         acceptedAsTruth: true,
       },
     });
@@ -426,6 +426,132 @@ describe('remote corpus import', () => {
         stageDir: secondStage.stageDir,
       }),
     ).rejects.toThrow('Cannot change ground truth on dedupe');
+  });
+
+  it('accepts canonical metadata with different key order on dedup imports', async () => {
+    const repoRoot = await createRepoRoot();
+    const sameBytes = await createPngBytes(64, 64, 64);
+
+    const staged = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 2,
+      },
+      async (input) => {
+        const url = typeof input === 'string' ? input : input.toString();
+
+        if (url === 'https://pixabay.com/images/search/qr%20code/') {
+          return new Response(LISTING_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (url === 'https://pixabay.com/photos/first-qr-123/') {
+          return new Response(FIRST_PAGE_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (url === 'https://pixabay.com/photos/second-qr-456/') {
+          return new Response(SECOND_PAGE_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (
+          url === 'https://cdn.pixabay.com/first.png' ||
+          url === 'https://cdn.pixabay.com/second.png'
+        ) {
+          return new Response(Buffer.from(sameBytes), {
+            headers: { 'content-type': 'image/png' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    );
+
+    expect(staged.assets).toHaveLength(2);
+
+    const [firstAsset, secondAsset] = staged.assets;
+    if (!firstAsset || !secondAsset) {
+      throw new Error('expected staged assets');
+    }
+
+    await updateStagedRemoteAsset(staged.stageDir, {
+      ...firstAsset,
+      review: {
+        status: 'approved',
+        reviewer: 'mia',
+        reviewedAt: '2026-04-10T12:00:00.000Z',
+      },
+      confirmedLicense: 'CC0',
+      groundTruth: {
+        qrCount: 1,
+        codes: [
+          {
+            text: 'https://example.com',
+            kind: 'url',
+            verifiedWith: 'iphone camera',
+          },
+        ],
+      },
+      autoScan: {
+        attempted: true,
+        succeeded: true,
+        results: [{ text: 'https://example.com', kind: 'url' }],
+        acceptedAsTruth: true,
+      },
+    });
+
+    await updateStagedRemoteAsset(staged.stageDir, {
+      ...secondAsset,
+      review: {
+        status: 'approved',
+        reviewer: 'mia',
+        reviewedAt: '2026-04-10T12:00:00.000Z',
+      },
+      confirmedLicense: 'CC0',
+      groundTruth: {
+        codes: [
+          {
+            kind: 'url',
+            verifiedWith: 'iphone camera',
+            text: 'https://example.com',
+          },
+        ],
+        qrCount: 1,
+      },
+      autoScan: {
+        attempted: true,
+        succeeded: true,
+        results: [{ kind: 'url', text: 'https://example.com' }],
+        acceptedAsTruth: true,
+      },
+    });
+
+    const result = await importStagedRemoteAssets({
+      repoRoot,
+      stageDir: staged.stageDir,
+    });
+
+    expect(result.imported).toHaveLength(1);
+    expect(result.deduped).toHaveLength(1);
+
+    const manifest = await readCorpusManifest(repoRoot);
+    expect(manifest.assets).toHaveLength(1);
+    expect(manifest.assets[0]?.groundTruth).toEqual({
+      qrCount: 1,
+      codes: [
+        {
+          text: 'https://example.com',
+          kind: 'url',
+          verifiedWith: 'iphone camera',
+        },
+      ],
+    });
   });
 
   it('skips image urls whose host is not in the per-source CDN allowlist', async () => {

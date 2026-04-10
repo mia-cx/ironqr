@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import sharp from 'sharp';
 import { ensureCorpusLayout, getCorpusAssetsRoot } from '../manifest.js';
 import type {
@@ -140,7 +141,7 @@ function mergeCanonicalMetadata<T extends object>(
 ): T | undefined {
   if (existing === undefined) return incoming;
   if (incoming === undefined) return existing;
-  if (JSON.stringify(existing) === JSON.stringify(incoming)) {
+  if (isDeepStrictEqual(existing, incoming)) {
     return existing;
   }
 
