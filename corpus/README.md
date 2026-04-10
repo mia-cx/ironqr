@@ -16,12 +16,17 @@ non-QR-negative image assets into a manifest-driven local corpus.
 Runtime data lives under `corpus/data/`:
 
 - `corpus/data/manifest.json` — canonical manifest
-- `corpus/data/assets/` — imported image files, named by content hash id
+- `corpus/data/assets/` — imported image files, normalized to WebP and named by content hash id
 - `corpus/data/benchmark-real-world.json` — generated benchmark export
 
-`corpus/data/` is gitignored. The code and docs in `corpus/` are tracked; the
-imported dataset is local working data unless the team explicitly chooses to
-version specific approved fixtures later.
+Remote scrape staging lives under `corpus/staging/`:
+
+- `corpus/staging/<run-id>/<asset-id>/image.*` — raw scraped image for manual review
+- `corpus/staging/<run-id>/<asset-id>/manifest.json` — per-image source metadata
+
+Both `corpus/data/` and `corpus/staging/` are gitignored. The code and docs in
+`corpus/` are tracked; the imported dataset is local working data unless the
+team explicitly chooses to version specific approved fixtures later.
 
 ## Lawful sourcing and review expectations
 
@@ -47,9 +52,26 @@ Recommended review checklist:
 
 ```bash
 bun run corpus/cli.ts import-local --label qr-positive --review approved path/to/file.png
-bun run corpus/cli.ts import-local --label non-qr-negative path/to/negative.jpg
+bun run corpus/cli.ts scrape-remote --label qr-positive --limit 25 https://pixabay.com/images/search/qr%20code/
+bun run corpus/cli.ts review-staged corpus/staging/<run-id>
+bun run corpus/cli.ts import-staged corpus/staging/<run-id>
 bun run corpus/cli.ts export-benchmark
 ```
+
+## Review flow
+
+1. `scrape-remote` downloads raw images into `corpus/staging/<run-id>/...`.
+2. `review-staged` prompts for the reviewer GitHub username, then walks the staged
+   queue one image at a time.
+3. On approval, the reviewer confirms or edits the best-effort license, enters the
+   number of QR codes present, then the tool runs the current scanner as a review
+   assist. If the auto-scan result is correct, it can be accepted as ground truth;
+   otherwise the reviewer can enter the payloads manually.
+4. `import-staged` imports approved staged assets into the real corpus manifest.
+
+`import-local` and `import-staged` both normalize imported assets to WebP and
+scale them down to fit within 1000×1000 while preserving aspect ratio. Staged
+assets remain raw so review is based on the original downloaded file.
 
 The benchmark export only includes assets whose review status is `approved`.
 That keeps #5 evaluation tied to reviewed seed data instead of every raw import.
