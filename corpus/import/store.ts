@@ -143,7 +143,9 @@ function mergeReview(
   return {
     status: existing.status,
     ...(mergedReviewer ? { reviewer: mergedReviewer } : {}),
-    reviewedAt: existing.reviewedAt ?? new Date().toISOString(),
+    ...(existing.status !== 'pending'
+      ? { reviewedAt: existing.reviewedAt ?? new Date().toISOString() }
+      : {}),
     ...(mergedNotes ? { notes: mergedNotes } : {}),
   };
 }
@@ -233,7 +235,9 @@ export async function importAssetBytes(
     review: {
       status: options.reviewStatus ?? 'pending',
       ...(options.reviewer ? { reviewer: options.reviewer } : {}),
-      ...(options.reviewStatus ? { reviewedAt: new Date().toISOString() } : {}),
+      ...(options.reviewStatus && options.reviewStatus !== 'pending'
+        ? { reviewedAt: new Date().toISOString() }
+        : {}),
       ...(options.reviewNotes ? { notes: options.reviewNotes } : {}),
     },
     ...(options.groundTruth ? { groundTruth: options.groundTruth } : {}),

@@ -6,13 +6,7 @@ import {
   updateStagedRemoteAsset,
 } from './import/remote.js';
 import type { AutoScan, GroundTruth } from './schema.js';
-
-function assertHttpUrl(value: string, label: string): void {
-  const url = new URL(value);
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`Expected http(s) URL for ${label}, got ${url.protocol}`);
-  }
-}
+import { assertHttpUrl } from './url.js';
 
 interface ScanAssetResult {
   readonly attempted: boolean;

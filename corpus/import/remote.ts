@@ -14,6 +14,7 @@ import type {
   RemoteSource,
   ReviewStatus,
 } from '../schema.js';
+import { assertHttpUrl } from '../url.js';
 import { extensionFromMediaType, hashSha256, importAssetBytes } from './store.js';
 
 const ALLOWED_SOURCE_HOSTS = new Set([
@@ -48,6 +49,9 @@ const ALLOWED_IMAGE_HOSTS: Record<string, readonly string[]> = {
   'pdimagearchive.org': ['pdimagearchive.org'],
   'unsplash.com': ['unsplash.com', 'images.unsplash.com'],
 };
+
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 
 const StageReviewStatusSchema = S.Literals(['pending', 'approved', 'rejected', 'skipped']);
 export type StageReviewStatus = S.Schema.Type<typeof StageReviewStatusSchema>;
@@ -146,13 +150,6 @@ function assertSafeSlug(value: string, label: string): void {
   }
 }
 
-function assertHttpUrl(value: string, label: string): void {
-  const url = new URL(value);
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`Expected http(s) URL for ${label}, got ${url.protocol}`);
-  }
-}
-
 function validateStagedAsset(asset: StagedRemoteAsset): void {
   assertSafeSlug(asset.id, 'asset id');
   assertSafeSlug(asset.imageFileName, 'image filename');
@@ -199,6 +196,10 @@ function dedupe(values: readonly string[]): string[] {
 }
 
 function matchAllGroups(pattern: RegExp, value: string, groupIndex = 1): string[] {
+  if (!pattern.global) {
+    throw new Error('matchAllGroups requires a global regular expression');
+  }
+
   const matches: string[] = [];
   let match = pattern.exec(value);
 
@@ -309,17 +310,69 @@ function detectBestEffortLicense(
   return {};
 }
 
+async function readLimitedBody(
+  response: Response,
+  maxBytes: number,
+  label: string,
+): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`Response for ${label} exceeds ${maxBytes} bytes`);
+  }
+
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(`Response for ${label} exceeds ${maxBytes} bytes`);
+    }
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      total += chunk.byteLength;
+      if (total > maxBytes) {
+        throw new Error(`Response for ${label} exceeds ${maxBytes} bytes`);
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function fetchText(url: string, fetchImpl: FetchLike): Promise<ParsedPage> {
   const response = await fetchImpl(url, {
     headers: {
       accept: 'text/html,application/xhtml+xml',
     },
+    redirect: 'manual',
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`Unexpected redirect while fetching page ${url}`);
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch page ${url}: ${response.status}`);
   }
 
-  const html = await response.text();
+  const htmlBytes = await readLimitedBody(response, MAX_HTML_BYTES, `page ${url}`);
+  const html = new TextDecoder().decode(htmlBytes);
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? null;
   return {
     url,
@@ -385,13 +438,17 @@ async function fetchImage(
     headers: {
       accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1',
     },
+    redirect: 'manual',
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`Unexpected redirect while fetching image ${url}`);
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch image ${url}: ${response.status}`);
   }
 
   return {
-    bytes: new Uint8Array(await response.arrayBuffer()),
+    bytes: await readLimitedBody(response, MAX_IMAGE_BYTES, `image ${url}`),
     mediaType: response.headers.get('content-type') ?? 'application/octet-stream',
   };
 }
@@ -521,7 +578,8 @@ export async function scrapeRemoteAssets(
           const { bytes, mediaType } = await fetchImage(imageUrl, fetchImpl);
           const extension = extensionFromMediaType(mediaType, imageUrl);
           const metadata = await sharp(bytes).metadata();
-          const id = `stage-${hashSha256(bytes).slice(0, 16)}`;
+          const sha256 = hashSha256(bytes);
+          const id = `stage-${sha256.slice(0, 16)}`;
           const asset: StagedRemoteAsset = {
             version: 1,
             id,
@@ -534,7 +592,7 @@ export async function scrapeRemoteAssets(
             fetchedAt: new Date().toISOString(),
             mediaType,
             byteLength: bytes.byteLength,
-            sha256: hashSha256(bytes),
+            sha256,
             width: metadata.width ?? 0,
             height: metadata.height ?? 0,
             ...(page.title ? { pageTitle: page.title } : {}),

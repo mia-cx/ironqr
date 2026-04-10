@@ -84,6 +84,27 @@ describe('real-world corpus toolkit', () => {
     await stat(path.join(repoRoot, 'corpus', 'data', positive?.relativePath ?? 'missing'));
   });
 
+  it('keeps pending reviews timestamp-free', async () => {
+    const repoRoot = await createRepoRoot();
+    const pendingPath = path.join(repoRoot, 'fixtures', 'pending.png');
+
+    await writeFixture(pendingPath, await createPngBytes(10, 20, 30));
+
+    await importLocalAssets({
+      repoRoot,
+      paths: [pendingPath],
+      label: 'non-qr-negative',
+      reviewStatus: 'pending',
+      reviewer: 'mia',
+    });
+
+    const manifest = await readCorpusManifest(repoRoot);
+    expect(manifest.assets[0]?.review).toEqual({
+      status: 'pending',
+      reviewer: 'mia',
+    });
+  });
+
   it('upgrades pending review metadata when a later dedup import is approved', async () => {
     const repoRoot = await createRepoRoot();
     const firstPath = path.join(repoRoot, 'fixtures', 'pending.png');

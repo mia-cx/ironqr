@@ -288,6 +288,85 @@ describe('remote corpus import', () => {
     ).rejects.toThrow('allowlist');
   });
 
+  it('rejects redirects from allowlisted pages', async () => {
+    const repoRoot = await createRepoRoot();
+    const redirectFetch: (input: string | URL) => Promise<Response> = async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://pixabay.com/images/search/qr%20code/') {
+        return new Response('', {
+          status: 302,
+          headers: { location: 'https://example.com/redirected' },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
+    await expect(
+      scrapeRemoteAssets(
+        {
+          repoRoot,
+          seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+          label: 'qr-positive',
+        },
+        redirectFetch,
+      ),
+    ).rejects.toThrow('Unexpected redirect while fetching page');
+  });
+
+  it('skips oversized image responses before buffering the body', async () => {
+    const repoRoot = await createRepoRoot();
+    const oversizedFetch: (input: string | URL) => Promise<Response> = async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url === 'https://pixabay.com/images/search/qr%20code/') {
+        return new Response(LISTING_HTML, {
+          headers: { 'content-type': 'text/html' },
+        });
+      }
+
+      if (url === 'https://pixabay.com/photos/first-qr-123/') {
+        return new Response(FIRST_PAGE_HTML, {
+          headers: { 'content-type': 'text/html' },
+        });
+      }
+
+      if (url === 'https://pixabay.com/photos/second-qr-456/') {
+        return new Response(SECOND_PAGE_HTML, {
+          headers: { 'content-type': 'text/html' },
+        });
+      }
+
+      if (url === 'https://cdn.pixabay.com/first.png') {
+        return new Response(Buffer.from([0]), {
+          headers: { 'content-type': 'image/png', 'content-length': '52428801' },
+        });
+      }
+
+      if (url === 'https://cdn.pixabay.com/second.png') {
+        return new Response(Buffer.from([0]), {
+          headers: { 'content-type': 'image/png', 'content-length': '52428801' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
+    const logs: string[] = [];
+    const staged = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+        log: (line) => logs.push(line),
+      },
+      oversizedFetch,
+    );
+
+    expect(staged.assets).toHaveLength(0);
+    expect(logs.some((line) => line.includes('exceeds'))).toBe(true);
+  });
+
   it('rejects staged manifests with unsafe ids or filenames', async () => {
     const stageDir = await mkdtemp(path.join(tmpdir(), 'qreader-corpus-unsafe-'));
     const safeDir = path.join(stageDir, 'stage-deadbeefcafef00d');
