@@ -7,6 +7,7 @@
   "sideEffects": false,
   "files": [
     "dist",
+    "qr.js",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
@@ -38,6 +39,13 @@
       "default": "./dist/qr.js"
     },
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "qr": [
+        "./dist/qr.d.ts"
+      ]
+    }
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts",
