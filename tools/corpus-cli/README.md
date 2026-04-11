@@ -17,7 +17,12 @@ Runtime data lives under `corpus/data/`:
 
 - `corpus/data/manifest.json` — canonical manifest
 - `corpus/data/assets/` — imported image files, normalized to WebP and named by content hash id
-- `corpus/data/benchmark-real-world.json` — generated benchmark export
+- `corpus/data/benchmark-real-world.json` — optional local export of all approved assets
+
+Committed perfbench fixture lives under `tools/perfbench/fixtures/real-world/`:
+
+- `tools/perfbench/fixtures/real-world/manifest.json` — curated committed benchmark snapshot
+- `tools/perfbench/fixtures/real-world/assets/` — copied fixture assets used by perfbench
 
 Remote scrape staging lives under `corpus/staging/`:
 
@@ -51,27 +56,26 @@ Recommended review checklist:
 ## Commands
 
 ```bash
-bun --filter ironqr-corpus-cli run cli -- import-local --label qr-positive --review approved path/to/file.png
-bun --filter ironqr-corpus-cli run cli -- scrape-remote --label qr-positive --limit 25 https://pixabay.com/images/search/qr%20code/
-bun --filter ironqr-corpus-cli run cli -- review-staged corpus/staging/<run-id>
-bun --filter ironqr-corpus-cli run cli -- import-staged corpus/staging/<run-id>
-bun --filter ironqr-corpus-cli run cli -- export-benchmark
+bun --filter ironqr-corpus-cli run cli --
+bun --filter ironqr-corpus-cli run cli -- scrape --label qr-positive --limit 25 https://pixabay.com/images/search/qr%20code/
+bun --filter ironqr-corpus-cli run cli -- review corpus/staging/<run-id>
+bun --filter ironqr-corpus-cli run cli -- import path/to/file.png
+bun --filter ironqr-corpus-cli run cli -- import corpus/staging/<run-id>
+bun --filter ironqr-corpus-cli run cli -- build-bench
 ```
+
+Missing required args prompt in TTY sessions.
+No subcommand runs guided scrape → review → import flow.
 
 ## Review flow
 
-1. `scrape-remote` downloads raw images into `corpus/staging/<run-id>/...`.
-2. `review-staged` prompts for the reviewer GitHub username, then walks the staged
-   queue one image at a time.
-3. On approval, the reviewer confirms or edits the best-effort license, enters the
-   number of QR codes present, then the tool runs the current scanner as a review
-   assist. If the auto-scan result is correct, it can be accepted as ground truth;
-   otherwise the reviewer can enter the payloads manually.
-4. `import-staged` imports approved staged assets into the real corpus manifest.
+1. `scrape` downloads raw images into `corpus/staging/<run-id>/...`.
+2. `review` prompts for reviewer GitHub username, then walks staged queue one image at a time.
+3. On approval, reviewer confirms or edits best-effort license, enters QR count, then tool runs current scanner as review assist. If auto-scan result is correct, it can be accepted as ground truth; otherwise reviewer can enter payloads manually.
+4. `import` imports approved staged assets into real corpus manifest and fills missing required metadata.
+5. `build-bench` lets user hand-curate committed perfbench fixture from approved corpus assets.
 
-`import-local` and `import-staged` both normalize imported assets to WebP and
-scale them down to fit within 1000×1000 while preserving aspect ratio. Staged
-assets remain raw so review is based on the original downloaded file.
+Local and staged imports both normalize imported assets to WebP and scale them down to fit within 1000×1000 while preserving aspect ratio. Staged assets remain raw so review is based on original downloaded file.
 
-The benchmark export only includes assets whose review status is `approved`.
-That keeps #5 evaluation tied to reviewed seed data instead of every raw import.
+Committed perfbench fixture only includes assets user explicitly selected during `build-bench`.
+That keeps perfbench regression set small, stable, and reviewable.

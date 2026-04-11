@@ -7,7 +7,7 @@ their own workspace package.
 ## Workspaces
 
 - `packages/ironqr`: `ironqr`, the publishable QR SDK package
-- `tools/corpus-cli`: `ironqr-corpus-cli`, local corpus import, review, staging, and export tooling
+- `tools/corpus-cli`: `ironqr-corpus-cli`, local corpus import, review, staging, and bench-curation tooling
 - `tools/perfbench`: `@ironqr/perfbench`, synthetic and real-world benchmark harness
 - `packages/wasm`: `@ironqr/wasm`, the experimental JS-facing wasm boundary over `rust/`
 
@@ -26,11 +26,12 @@ bun run package:quality
 
 ```bash
 bun run benchmark
-bun --filter ironqr-corpus-cli run cli -- import-local --label qr-positive path/to/file.png
-bun --filter ironqr-corpus-cli run cli -- scrape-remote --label qr-positive https://example.com
-bun --filter ironqr-corpus-cli run cli -- review-staged corpus/staging/<run-id>
-bun --filter ironqr-corpus-cli run cli -- import-staged corpus/staging/<run-id>
-bun --filter ironqr-corpus-cli run cli -- export-benchmark
+bun --filter ironqr-corpus-cli run cli --
+bun --filter ironqr-corpus-cli run cli -- scrape --label qr-positive https://example.com
+bun --filter ironqr-corpus-cli run cli -- review corpus/staging/<run-id>
+bun --filter ironqr-corpus-cli run cli -- import path/to/file.png
+bun --filter ironqr-corpus-cli run cli -- import corpus/staging/<run-id>
+bun --filter ironqr-corpus-cli run cli -- build-bench
 ```
 
 The publishable package documentation remains in `packages/ironqr/README.md`.
