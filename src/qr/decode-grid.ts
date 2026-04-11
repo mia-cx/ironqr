@@ -24,6 +24,97 @@ const GBK_DECODER = new TextDecoder('gbk', { fatal: false });
 const EUC_KR_DECODER = new TextDecoder('euc-kr', { fatal: false });
 
 /**
+ * Decodes a logical QR module grid all the way to a public scan result.
+ *
+ * @param input - Square boolean grid representing dark and light modules.
+ * @returns A decoded QR payload with structural metadata.
+ * @throws {ScannerError} Thrown when the grid is malformed or cannot be decoded.
+ */
+export const decodeGridLogical = (input: {
+  readonly grid: readonly (readonly boolean[])[];
+}): Effect.Effect<DecodeGridResult, ScannerError> => {
+  return Effect.try({
+    try: () => {
+      const { grid } = input;
+      if (grid.length === 0) {
+        throw new ScannerError('invalid_input', 'QR grid must not be empty.');
+      }
+
+      const size = grid.length;
+      for (const row of grid) {
+        if (row.length !== size) {
+          throw new ScannerError('invalid_input', 'QR grid must be square.');
+        }
+      }
+
+      const versionFromSize = getVersionFromSize(size);
+      const matrix = grid.map((row) => row.slice());
+      const { errorCorrectionLevel, maskPattern } = decodeFormatInfo(matrix);
+      const decodedVersion = decodeVersionInfo(matrix);
+
+      if (decodedVersion !== versionFromSize) {
+        throw new ScannerError(
+          'decode_failed',
+          `QR version info mismatch: grid size implies v${versionFromSize}, version bits decode to v${decodedVersion}.`,
+        );
+      }
+
+      // Strip the data mask, rebuild RS blocks, correct them, and only then parse the segment stream.
+      const reserved = buildFunctionModuleMask(size, versionFromSize);
+      const unmasked = unmask(matrix, maskPattern, reserved);
+      const dataBits = extractDataBits(unmasked, reserved);
+      const blockInfo = getVersionBlockInfo(versionFromSize, errorCorrectionLevel);
+      const expectedBits = blockInfo.totalCodewords * 8 + getRemainderBits(versionFromSize);
+
+      if (dataBits.length !== expectedBits) {
+        throw new ScannerError(
+          'decode_failed',
+          `Unexpected data module count for version ${versionFromSize}-${errorCorrectionLevel}: got ${dataBits.length}, expected ${expectedBits}.`,
+        );
+      }
+
+      const codewordBits = dataBits.slice(0, blockInfo.totalCodewords * 8);
+      const codewords = Array.from(bytesFromBits(codewordBits));
+      const blocks = splitInterleavedCodewords(codewords, blockInfo);
+      const dataCodewords = correctAndReinterleaveDataCodewords(blocks);
+      const payload = decodePayloadFromDataCodewords(dataCodewords, versionFromSize);
+
+      return {
+        payload: {
+          kind: payload.kind,
+          text: payload.text,
+          bytes: payload.bytes,
+        },
+        confidence: 1,
+        version: versionFromSize,
+        errorCorrectionLevel,
+        bounds: {
+          x: 0,
+          y: 0,
+          width: size,
+          height: size,
+        },
+        corners: {
+          topLeft: { x: 0, y: 0 },
+          topRight: { x: size, y: 0 },
+          bottomRight: { x: size, y: size },
+          bottomLeft: { x: 0, y: size },
+        },
+        headers: payload.headers.length > 0 ? payload.headers : [['mode', 'unknown']],
+        segments: payload.segments,
+      };
+    },
+    catch: (error) =>
+      error instanceof ScannerError
+        ? error
+        : new ScannerError(
+            'internal_error',
+            error instanceof Error ? error.message : `Unexpected decode error: ${String(error)}`,
+          ),
+  });
+};
+
+/**
  * Bit-level reader for QR segment payloads.
  */
 class BitReader {
@@ -567,93 +658,3 @@ const correctAndReinterleaveDataCodewords = (blocks: RawBlock[]): number[] => {
   return result;
 };
 
-/**
- * Decodes a logical QR module grid all the way to a public scan result.
- *
- * @param input - Square boolean grid representing dark and light modules.
- * @returns A decoded QR payload with structural metadata.
- * @throws {ScannerError} Thrown when the grid is malformed or cannot be decoded.
- */
-export const decodeGridLogical = (input: {
-  readonly grid: readonly (readonly boolean[])[];
-}): Effect.Effect<DecodeGridResult, ScannerError> => {
-  return Effect.try({
-    try: () => {
-      const { grid } = input;
-      if (grid.length === 0) {
-        throw new ScannerError('invalid_input', 'QR grid must not be empty.');
-      }
-
-      const size = grid.length;
-      for (const row of grid) {
-        if (row.length !== size) {
-          throw new ScannerError('invalid_input', 'QR grid must be square.');
-        }
-      }
-
-      const versionFromSize = getVersionFromSize(size);
-      const matrix = grid.map((row) => row.slice());
-      const { errorCorrectionLevel, maskPattern } = decodeFormatInfo(matrix);
-      const decodedVersion = decodeVersionInfo(matrix);
-
-      if (decodedVersion !== versionFromSize) {
-        throw new ScannerError(
-          'decode_failed',
-          `QR version info mismatch: grid size implies v${versionFromSize}, version bits decode to v${decodedVersion}.`,
-        );
-      }
-
-      // Strip the data mask, rebuild RS blocks, correct them, and only then parse the segment stream.
-      const reserved = buildFunctionModuleMask(size, versionFromSize);
-      const unmasked = unmask(matrix, maskPattern, reserved);
-      const dataBits = extractDataBits(unmasked, reserved);
-      const blockInfo = getVersionBlockInfo(versionFromSize, errorCorrectionLevel);
-      const expectedBits = blockInfo.totalCodewords * 8 + getRemainderBits(versionFromSize);
-
-      if (dataBits.length !== expectedBits) {
-        throw new ScannerError(
-          'decode_failed',
-          `Unexpected data module count for version ${versionFromSize}-${errorCorrectionLevel}: got ${dataBits.length}, expected ${expectedBits}.`,
-        );
-      }
-
-      const codewordBits = dataBits.slice(0, blockInfo.totalCodewords * 8);
-      const codewords = Array.from(bytesFromBits(codewordBits));
-      const blocks = splitInterleavedCodewords(codewords, blockInfo);
-      const dataCodewords = correctAndReinterleaveDataCodewords(blocks);
-      const payload = decodePayloadFromDataCodewords(dataCodewords, versionFromSize);
-
-      return {
-        payload: {
-          kind: payload.kind,
-          text: payload.text,
-          bytes: payload.bytes,
-        },
-        confidence: 1,
-        version: versionFromSize,
-        errorCorrectionLevel,
-        bounds: {
-          x: 0,
-          y: 0,
-          width: size,
-          height: size,
-        },
-        corners: {
-          topLeft: { x: 0, y: 0 },
-          topRight: { x: size, y: 0 },
-          bottomRight: { x: size, y: size },
-          bottomLeft: { x: 0, y: size },
-        },
-        headers: payload.headers.length > 0 ? payload.headers : [['mode', 'unknown']],
-        segments: payload.segments,
-      };
-    },
-    catch: (error) =>
-      error instanceof ScannerError
-        ? error
-        : new ScannerError(
-            'internal_error',
-            error instanceof Error ? error.message : `Unexpected decode error: ${String(error)}`,
-          ),
-  });
-};

@@ -16,6 +16,58 @@ import {
 } from '../../src/qr/index.js';
 import type { Ecl, PositiveEntry } from './index.js';
 
+const ECL_LEVELS: readonly Ecl[] = ['L', 'M', 'Q', 'H'];
+const BENCHMARK_MESSAGE = 'HI';
+
+export const generatePositiveCorpus = (): PositiveEntry[] => {
+  const entries: PositiveEntry[] = [];
+
+  // v1: all 4 EC levels × all 8 masks
+  for (const ecl of ECL_LEVELS) {
+    for (let mask = 0; mask < 8; mask += 1) {
+      entries.push({
+        id: `v1-${ecl}-m${mask}`,
+        version: 1,
+        ecl,
+        maskPattern: mask,
+        message: BENCHMARK_MESSAGE,
+        rsErrorsInjected: false,
+        grid: buildQrGrid(1, ecl, mask, BENCHMARK_MESSAGE),
+      });
+    }
+  }
+
+  // v7, v20, v40: all 4 EC levels, mask 0
+  for (const version of [7, 20, 40] as const) {
+    for (const ecl of ECL_LEVELS) {
+      entries.push({
+        id: `v${version}-${ecl}-m0`,
+        version,
+        ecl,
+        maskPattern: 0,
+        message: BENCHMARK_MESSAGE,
+        rsErrorsInjected: false,
+        grid: buildQrGrid(version, ecl, 0, BENCHMARK_MESSAGE),
+      });
+    }
+  }
+
+  // RS error-correction fixture: v1-M with 4 corrupted data codewords (t=5)
+  const baseGrid = buildQrGrid(1, 'M', 0, BENCHMARK_MESSAGE);
+  const corruptedGrid = injectRsErrors(baseGrid, 1, 'M', 4);
+  entries.push({
+    id: 'v1-M-m0-rs-corrected',
+    version: 1,
+    ecl: 'M',
+    maskPattern: 0,
+    message: BENCHMARK_MESSAGE,
+    rsErrorsInjected: true,
+    grid: corruptedGrid,
+  });
+
+  return entries;
+};
+
 // ─── Bit helpers ──────────────────────────────────────────────────────────────
 
 const appendBits = (bits: number[], value: number, length: number): void => {
@@ -281,56 +333,3 @@ export const injectRsErrors = (
   return corrupted;
 };
 
-// ─── Corpus generation ────────────────────────────────────────────────────────
-
-const ECL_LEVELS: readonly Ecl[] = ['L', 'M', 'Q', 'H'];
-const BENCHMARK_MESSAGE = 'HI';
-
-export const generatePositiveCorpus = (): PositiveEntry[] => {
-  const entries: PositiveEntry[] = [];
-
-  // v1: all 4 EC levels × all 8 masks
-  for (const ecl of ECL_LEVELS) {
-    for (let mask = 0; mask < 8; mask += 1) {
-      entries.push({
-        id: `v1-${ecl}-m${mask}`,
-        version: 1,
-        ecl,
-        maskPattern: mask,
-        message: BENCHMARK_MESSAGE,
-        rsErrorsInjected: false,
-        grid: buildQrGrid(1, ecl, mask, BENCHMARK_MESSAGE),
-      });
-    }
-  }
-
-  // v7, v20, v40: all 4 EC levels, mask 0
-  for (const version of [7, 20, 40] as const) {
-    for (const ecl of ECL_LEVELS) {
-      entries.push({
-        id: `v${version}-${ecl}-m0`,
-        version,
-        ecl,
-        maskPattern: 0,
-        message: BENCHMARK_MESSAGE,
-        rsErrorsInjected: false,
-        grid: buildQrGrid(version, ecl, 0, BENCHMARK_MESSAGE),
-      });
-    }
-  }
-
-  // RS error-correction fixture: v1-M with 4 corrupted data codewords (t=5)
-  const baseGrid = buildQrGrid(1, 'M', 0, BENCHMARK_MESSAGE);
-  const corruptedGrid = injectRsErrors(baseGrid, 1, 'M', 4);
-  entries.push({
-    id: 'v1-M-m0-rs-corrected',
-    version: 1,
-    ecl: 'M',
-    maskPattern: 0,
-    message: BENCHMARK_MESSAGE,
-    rsErrorsInjected: true,
-    grid: corruptedGrid,
-  });
-
-  return entries;
-};

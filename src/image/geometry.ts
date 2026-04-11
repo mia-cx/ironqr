@@ -24,21 +24,6 @@ export interface GridResolution {
 }
 
 /**
- * Returns the Euclidean distance between two points.
- */
-const dist = (a: Point, b: Point): number => {
-  return Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
-};
-
-/**
- * Returns the cross product of vectors (b-a) and (c-a).
- * Positive = c is below/right of the directed line a→b (image coords, y increases downward).
- */
-const cross = (a: Point, b: Point, c: Point): number => {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-};
-
-/**
  * Resolves a QR grid layout from three finder pattern candidates.
  *
  * Determines which finder is top-left / top-right / bottom-left, estimates
@@ -160,4 +145,19 @@ export const resolveGrid = (finders: readonly FinderCandidate[]): GridResolution
   };
 
   return { version, size, corners, bounds, samplePoint };
+};
+
+/**
+ * Returns the Euclidean distance between two points.
+ */
+const dist = (a: Point, b: Point): number => {
+  return Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
+};
+
+/**
+ * Returns the cross product of vectors (b-a) and (c-a).
+ * Positive = c is below/right of the directed line a→b (image coords, y increases downward).
+ */
+const cross = (a: Point, b: Point, c: Point): number => {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 };

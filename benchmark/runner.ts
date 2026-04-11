@@ -31,31 +31,6 @@ export interface BenchmarkResult {
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
-const runPositive = async (entry: PositiveEntry): Promise<PositiveResult> => {
-  try {
-    const result = await decodeGrid({ grid: entry.grid });
-    const decodedText = result.payload.text;
-    const passed = decodedText === entry.message;
-    return { entry, passed, decodedText, error: null };
-  } catch (error) {
-    return {
-      entry,
-      passed: false,
-      decodedText: null,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-};
-
-const runNegative = async (entry: NegativeEntry): Promise<NegativeResult> => {
-  try {
-    const result = await decodeGrid({ grid: entry.grid });
-    return { entry, falsePositive: true, decodedText: result.payload.text };
-  } catch {
-    return { entry, falsePositive: false, decodedText: null };
-  }
-};
-
 export const runBenchmark = async (): Promise<BenchmarkResult> => {
   const corpus = {
     positives: generatePositiveCorpus(),
@@ -82,4 +57,29 @@ export const runBenchmark = async (): Promise<BenchmarkResult> => {
     decodeRate: positiveResults.length > 0 ? decodeSuccesses / positiveResults.length : 0,
     falsePositiveRate: negativeResults.length > 0 ? falsePositives / negativeResults.length : 0,
   };
+};
+
+const runPositive = async (entry: PositiveEntry): Promise<PositiveResult> => {
+  try {
+    const result = await decodeGrid({ grid: entry.grid });
+    const decodedText = result.payload.text;
+    const passed = decodedText === entry.message;
+    return { entry, passed, decodedText, error: null };
+  } catch (error) {
+    return {
+      entry,
+      passed: false,
+      decodedText: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const runNegative = async (entry: NegativeEntry): Promise<NegativeResult> => {
+  try {
+    const result = await decodeGrid({ grid: entry.grid });
+    return { entry, falsePositive: true, decodedText: result.payload.text };
+  } catch {
+    return { entry, falsePositive: false, decodedText: null };
+  }
 };

@@ -62,6 +62,92 @@ export const extensionFromMediaType = (mediaType: string, fallbackPath: string):
   throw new Error(`Unsupported image media type: ${mediaType}`);
 };
 
+export const importAssetBytes = (
+  options: ImportAssetBytesOptions,
+): Promise<ImportAssetBytesResult> => {
+  return Effect.runPromise(importAssetBytesEffect(options));
+};
+
+export const importAssetBytesEffect = (
+  options: ImportAssetBytesOptions,
+): Effect.Effect<ImportAssetBytesResult, unknown> => {
+  return Effect.gen(function* () {
+    yield* Effect.tryPromise(() => ensureCorpusLayout(options.repoRoot));
+
+    const normalizedBytes = yield* normalizeImportedImage(options.bytes);
+    const mediaType = NORMALIZED_IMAGE_MEDIA_TYPE;
+    const sha256 = hashSha256(normalizedBytes);
+    const id = buildAssetId(sha256);
+    const fileExtension = extensionFromMediaType(mediaType, options.sourcePathForExtension);
+    const relativePath = `assets/${id}${fileExtension}`;
+    const existingIndex = options.assets.findIndex((asset) => asset.id === id);
+
+    if (existingIndex >= 0) {
+      const existing = options.assets[existingIndex];
+      if (!existing) throw new Error(`Missing asset at index ${existingIndex}`);
+
+      if (existing.label !== options.label) {
+        throw new Error(`Asset ${id} already exists with label ${existing.label}`);
+      }
+
+      const asset: CorpusAsset = {
+        ...existing,
+        provenance: mergeProvenance(existing.provenance, options.provenance),
+        review: mergeReview(existing.review, {
+          ...(options.reviewStatus ? { status: options.reviewStatus } : {}),
+          ...(options.reviewer ? { reviewer: options.reviewer } : {}),
+          ...(options.reviewNotes ? { reviewNotes: options.reviewNotes } : {}),
+          ...(options.reviewedAt ? { reviewedAt: options.reviewedAt } : {}),
+        }),
+        groundTruth: mergeCanonicalMetadata(
+          existing.groundTruth,
+          options.groundTruth,
+          'ground truth',
+        ),
+        autoScan: mergeCanonicalMetadata(existing.autoScan, options.autoScan, 'auto-scan evidence'),
+        licenseReview: mergeCanonicalMetadata(
+          existing.licenseReview,
+          options.licenseReview,
+          'license review',
+        ),
+      };
+      options.assets[existingIndex] = asset;
+      return { asset, deduped: true };
+    }
+
+    const asset: CorpusAsset = {
+      id,
+      label: options.label,
+      mediaType,
+      fileExtension,
+      relativePath,
+      sha256,
+      byteLength: normalizedBytes.byteLength,
+      provenance: [options.provenance],
+      review: {
+        status: options.reviewStatus ?? 'pending',
+        ...(options.reviewer ? { reviewer: options.reviewer } : {}),
+        ...(options.reviewStatus && options.reviewStatus !== 'pending'
+          ? { reviewedAt: options.reviewedAt ?? new Date().toISOString() }
+          : {}),
+        ...(options.reviewNotes ? { notes: options.reviewNotes } : {}),
+      },
+      ...(options.groundTruth ? { groundTruth: options.groundTruth } : {}),
+      ...(options.autoScan ? { autoScan: options.autoScan } : {}),
+      ...(options.licenseReview ? { licenseReview: options.licenseReview } : {}),
+    };
+
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(getCorpusAssetsRoot(options.repoRoot), `${id}${fileExtension}`),
+        normalizedBytes,
+      ),
+    );
+    options.assets.push(asset);
+    return { asset, deduped: false };
+  });
+};
+
 const sameProvenance = (left: ProvenanceRecord, right: ProvenanceRecord): boolean => {
   if (left.kind !== right.kind) return false;
 
@@ -255,90 +341,4 @@ const normalizeImportedImage = (bytes: Uint8Array) => {
 
     return new Uint8Array(normalized);
   });
-};
-
-export const importAssetBytesEffect = (
-  options: ImportAssetBytesOptions,
-): Effect.Effect<ImportAssetBytesResult, unknown> => {
-  return Effect.gen(function* () {
-    yield* Effect.tryPromise(() => ensureCorpusLayout(options.repoRoot));
-
-    const normalizedBytes = yield* normalizeImportedImage(options.bytes);
-    const mediaType = NORMALIZED_IMAGE_MEDIA_TYPE;
-    const sha256 = hashSha256(normalizedBytes);
-    const id = buildAssetId(sha256);
-    const fileExtension = extensionFromMediaType(mediaType, options.sourcePathForExtension);
-    const relativePath = `assets/${id}${fileExtension}`;
-    const existingIndex = options.assets.findIndex((asset) => asset.id === id);
-
-    if (existingIndex >= 0) {
-      const existing = options.assets[existingIndex];
-      if (!existing) throw new Error(`Missing asset at index ${existingIndex}`);
-
-      if (existing.label !== options.label) {
-        throw new Error(`Asset ${id} already exists with label ${existing.label}`);
-      }
-
-      const asset: CorpusAsset = {
-        ...existing,
-        provenance: mergeProvenance(existing.provenance, options.provenance),
-        review: mergeReview(existing.review, {
-          ...(options.reviewStatus ? { status: options.reviewStatus } : {}),
-          ...(options.reviewer ? { reviewer: options.reviewer } : {}),
-          ...(options.reviewNotes ? { reviewNotes: options.reviewNotes } : {}),
-          ...(options.reviewedAt ? { reviewedAt: options.reviewedAt } : {}),
-        }),
-        groundTruth: mergeCanonicalMetadata(
-          existing.groundTruth,
-          options.groundTruth,
-          'ground truth',
-        ),
-        autoScan: mergeCanonicalMetadata(existing.autoScan, options.autoScan, 'auto-scan evidence'),
-        licenseReview: mergeCanonicalMetadata(
-          existing.licenseReview,
-          options.licenseReview,
-          'license review',
-        ),
-      };
-      options.assets[existingIndex] = asset;
-      return { asset, deduped: true };
-    }
-
-    const asset: CorpusAsset = {
-      id,
-      label: options.label,
-      mediaType,
-      fileExtension,
-      relativePath,
-      sha256,
-      byteLength: normalizedBytes.byteLength,
-      provenance: [options.provenance],
-      review: {
-        status: options.reviewStatus ?? 'pending',
-        ...(options.reviewer ? { reviewer: options.reviewer } : {}),
-        ...(options.reviewStatus && options.reviewStatus !== 'pending'
-          ? { reviewedAt: options.reviewedAt ?? new Date().toISOString() }
-          : {}),
-        ...(options.reviewNotes ? { notes: options.reviewNotes } : {}),
-      },
-      ...(options.groundTruth ? { groundTruth: options.groundTruth } : {}),
-      ...(options.autoScan ? { autoScan: options.autoScan } : {}),
-      ...(options.licenseReview ? { licenseReview: options.licenseReview } : {}),
-    };
-
-    yield* Effect.tryPromise(() =>
-      writeFile(
-        path.join(getCorpusAssetsRoot(options.repoRoot), `${id}${fileExtension}`),
-        normalizedBytes,
-      ),
-    );
-    options.assets.push(asset);
-    return { asset, deduped: false };
-  });
-};
-
-export const importAssetBytes = (
-  options: ImportAssetBytesOptions,
-): Promise<ImportAssetBytesResult> => {
-  return Effect.runPromise(importAssetBytesEffect(options));
 };

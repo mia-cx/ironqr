@@ -8,6 +8,21 @@ import {
 } from '../manifest.js';
 import type { RealWorldBenchmarkCorpus, RealWorldBenchmarkEntry } from '../schema.js';
 
+export interface WriteRealWorldBenchmarkCorpusResult {
+  readonly outputPath: string;
+  readonly corpus: RealWorldBenchmarkCorpus;
+}
+
+export const writeRealWorldBenchmarkCorpus = async (
+  repoRoot: string,
+): Promise<WriteRealWorldBenchmarkCorpusResult> => {
+  const corpus = await buildRealWorldBenchmarkCorpus(repoRoot);
+  await ensureCorpusLayout(repoRoot);
+  const outputPath = getBenchmarkExportPath(repoRoot);
+  await writeFile(outputPath, `${JSON.stringify(corpus, null, 2)}\n`, 'utf8');
+  return { outputPath, corpus };
+};
+
 export const buildRealWorldBenchmarkCorpus = async (
   repoRoot: string,
 ): Promise<RealWorldBenchmarkCorpus> => {
@@ -41,19 +56,4 @@ export const buildRealWorldBenchmarkCorpus = async (
     positives: entries.filter((entry) => entry.label === 'qr-positive'),
     negatives: entries.filter((entry) => entry.label === 'non-qr-negative'),
   };
-};
-
-export interface WriteRealWorldBenchmarkCorpusResult {
-  readonly outputPath: string;
-  readonly corpus: RealWorldBenchmarkCorpus;
-}
-
-export const writeRealWorldBenchmarkCorpus = async (
-  repoRoot: string,
-): Promise<WriteRealWorldBenchmarkCorpusResult> => {
-  const corpus = await buildRealWorldBenchmarkCorpus(repoRoot);
-  await ensureCorpusLayout(repoRoot);
-  const outputPath = getBenchmarkExportPath(repoRoot);
-  await writeFile(outputPath, `${JSON.stringify(corpus, null, 2)}\n`, 'utf8');
-  return { outputPath, corpus };
 };

@@ -34,60 +34,6 @@ interface ReviewSummary {
   readonly quitEarly: boolean;
 }
 
-const toAutoScan = (result: ScanAssetResult, acceptedAsTruth?: boolean): AutoScan => {
-  return {
-    attempted: result.attempted,
-    succeeded: result.succeeded,
-    results: result.results.map((entry) => ({
-      text: entry.text,
-      ...(entry.kind ? { kind: entry.kind } : {}),
-    })),
-    ...(acceptedAsTruth !== undefined ? { acceptedAsTruth } : {}),
-  };
-};
-
-const promptQrCount = async (
-  prompt: (message: string) => Promise<string>,
-  log: (line: string) => void,
-): Promise<number> => {
-  while (true) {
-    const value = (await prompt('How many QR codes are present in this image?')).trim();
-    if (value === '') {
-      log('QR count is required.');
-      continue;
-    }
-
-    const qrCount = Number(value);
-    if (Number.isInteger(qrCount) && qrCount >= 0) {
-      return qrCount;
-    }
-
-    log(`Invalid QR count: ${value}`);
-  }
-};
-
-const promptManualGroundTruth = async (
-  prompt: (message: string) => Promise<string>,
-  qrCount: number,
-): Promise<GroundTruth> => {
-  const codes: Array<GroundTruth['codes'][number]> = [];
-
-  for (let index = 0; index < qrCount; index += 1) {
-    const label = index + 1;
-    const text = await prompt(`QR #${label} text:`);
-    const kind = await prompt(`QR #${label} kind (optional):`);
-    const verifiedWith = await prompt(`QR #${label} verified with (optional):`);
-
-    codes.push({
-      text,
-      ...(kind ? { kind } : {}),
-      ...(verifiedWith ? { verifiedWith } : {}),
-    });
-  }
-
-  return { qrCount, codes };
-};
-
 export const reviewStagedAssets = async (
   options: ReviewStagedAssetsOptions,
 ): Promise<ReviewSummary> => {
@@ -212,6 +158,60 @@ export const reviewStagedAssets = async (
   }
 
   return { approved, rejected, skipped, quitEarly: false };
+};
+
+const promptQrCount = async (
+  prompt: (message: string) => Promise<string>,
+  log: (line: string) => void,
+): Promise<number> => {
+  while (true) {
+    const value = (await prompt('How many QR codes are present in this image?')).trim();
+    if (value === '') {
+      log('QR count is required.');
+      continue;
+    }
+
+    const qrCount = Number(value);
+    if (Number.isInteger(qrCount) && qrCount >= 0) {
+      return qrCount;
+    }
+
+    log(`Invalid QR count: ${value}`);
+  }
+};
+
+const promptManualGroundTruth = async (
+  prompt: (message: string) => Promise<string>,
+  qrCount: number,
+): Promise<GroundTruth> => {
+  const codes: Array<GroundTruth['codes'][number]> = [];
+
+  for (let index = 0; index < qrCount; index += 1) {
+    const label = index + 1;
+    const text = await prompt(`QR #${label} text:`);
+    const kind = await prompt(`QR #${label} kind (optional):`);
+    const verifiedWith = await prompt(`QR #${label} verified with (optional):`);
+
+    codes.push({
+      text,
+      ...(kind ? { kind } : {}),
+      ...(verifiedWith ? { verifiedWith } : {}),
+    });
+  }
+
+  return { qrCount, codes };
+};
+
+const toAutoScan = (result: ScanAssetResult, acceptedAsTruth?: boolean): AutoScan => {
+  return {
+    attempted: result.attempted,
+    succeeded: result.succeeded,
+    results: result.results.map((entry) => ({
+      text: entry.text,
+      ...(entry.kind ? { kind: entry.kind } : {}),
+    })),
+    ...(acceptedAsTruth !== undefined ? { acceptedAsTruth } : {}),
+  };
 };
 
 export type { ReviewStagedAssetsOptions, ReviewSummary, ScanAssetResult, StageReviewStatus };

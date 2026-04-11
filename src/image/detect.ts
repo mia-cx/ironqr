@@ -8,6 +8,103 @@ export interface FinderCandidate {
 }
 
 /**
+ * Scans a binarized image for QR finder pattern candidates.
+ *
+ * Walks each row looking for 1:1:3:1:1 dark/light run ratios, then cross-checks
+ * each candidate vertically. Returns up to 3 best non-overlapping candidates.
+ *
+ * @param binary - Binarized pixel array (0 = dark, 255 = light).
+ * @param width - Image width in pixels.
+ * @param height - Image height in pixels.
+ * @returns Up to 3 finder pattern candidates sorted by confidence.
+ */
+export const detectFinderPatterns = (
+  binary: Uint8Array,
+  width: number,
+  height: number,
+): FinderCandidate[] => {
+  const candidates: FinderCandidate[] = [];
+
+  for (let row = 0; row < height; row += 1) {
+    const runs: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+    let runPhase = 0; // 0..4
+    let currentColor = 255; // start assuming light
+    let col = 0;
+
+    // Skip leading light pixels
+    while (col < width && (binary[row * width + col] ?? 255) === 255) {
+      col += 1;
+    }
+
+    if (col >= width) continue;
+    currentColor = 0; // now on dark
+    let runStart = col;
+
+    for (; col <= width; col += 1) {
+      const pixel = col < width ? (binary[row * width + col] ?? 255) : 255 ^ currentColor;
+      if (pixel === currentColor) continue;
+
+      runs[runPhase] = col - runStart;
+
+      if (runPhase === 4) {
+        if (isFinderRatio(runs)) {
+          const moduleSize = (runs[0] + runs[1] + runs[2] + runs[3] + runs[4]) / 7;
+          const cx = col - runs[4] - runs[3] - runs[2] / 2 - 0.5;
+          const vCheck = crossCheckVertical(binary, width, height, cx, row, moduleSize);
+
+          if (vCheck !== null) {
+            const finalModuleSize = (moduleSize + vCheck.moduleSize) / 2;
+            const refinedCy = vCheck.cy;
+
+            // Deduplicate: skip if too close to an existing candidate
+            const duplicate = candidates.some(
+              (c) =>
+                Math.abs(c.cx - cx) < finalModuleSize * 5 &&
+                Math.abs(c.cy - refinedCy) < finalModuleSize * 5,
+            );
+
+            if (!duplicate) {
+              candidates.push({ cx, cy: refinedCy, moduleSize: finalModuleSize });
+            }
+          }
+        }
+
+        // Slide window: drop first run, shift remaining
+        runs[0] = runs[2];
+        runs[1] = runs[3];
+        runs[2] = runs[4];
+        runs[3] = 0;
+        runs[4] = 0;
+        runPhase = 3;
+      } else {
+        runPhase += 1;
+      }
+
+      currentColor = pixel;
+      runStart = col;
+    }
+  }
+
+  // Return up to 3 non-overlapping candidates with largest module size (most confident)
+  candidates.sort((a, b) => b.moduleSize - a.moduleSize);
+
+  const result: FinderCandidate[] = [];
+  for (const candidate of candidates) {
+    const overlaps = result.some(
+      (existing) =>
+        Math.abs(existing.cx - candidate.cx) < candidate.moduleSize * 7 &&
+        Math.abs(existing.cy - candidate.cy) < candidate.moduleSize * 7,
+    );
+    if (!overlaps) {
+      result.push(candidate);
+    }
+    if (result.length === 3) break;
+  }
+
+  return result;
+};
+
+/**
  * Checks whether five run lengths satisfy the QR finder 1:1:3:1:1 ratio.
  *
  * @param runs - Five consecutive run lengths.
@@ -135,99 +232,3 @@ const crossCheckVertical = (
   return { moduleSize: vModuleSize, cy: refinedCy };
 };
 
-/**
- * Scans a binarized image for QR finder pattern candidates.
- *
- * Walks each row looking for 1:1:3:1:1 dark/light run ratios, then cross-checks
- * each candidate vertically. Returns up to 3 best non-overlapping candidates.
- *
- * @param binary - Binarized pixel array (0 = dark, 255 = light).
- * @param width - Image width in pixels.
- * @param height - Image height in pixels.
- * @returns Up to 3 finder pattern candidates sorted by confidence.
- */
-export const detectFinderPatterns = (
-  binary: Uint8Array,
-  width: number,
-  height: number,
-): FinderCandidate[] => {
-  const candidates: FinderCandidate[] = [];
-
-  for (let row = 0; row < height; row += 1) {
-    const runs: [number, number, number, number, number] = [0, 0, 0, 0, 0];
-    let runPhase = 0; // 0..4
-    let currentColor = 255; // start assuming light
-    let col = 0;
-
-    // Skip leading light pixels
-    while (col < width && (binary[row * width + col] ?? 255) === 255) {
-      col += 1;
-    }
-
-    if (col >= width) continue;
-    currentColor = 0; // now on dark
-    let runStart = col;
-
-    for (; col <= width; col += 1) {
-      const pixel = col < width ? (binary[row * width + col] ?? 255) : 255 ^ currentColor;
-      if (pixel === currentColor) continue;
-
-      runs[runPhase] = col - runStart;
-
-      if (runPhase === 4) {
-        if (isFinderRatio(runs)) {
-          const moduleSize = (runs[0] + runs[1] + runs[2] + runs[3] + runs[4]) / 7;
-          const cx = col - runs[4] - runs[3] - runs[2] / 2 - 0.5;
-          const vCheck = crossCheckVertical(binary, width, height, cx, row, moduleSize);
-
-          if (vCheck !== null) {
-            const finalModuleSize = (moduleSize + vCheck.moduleSize) / 2;
-            const refinedCy = vCheck.cy;
-
-            // Deduplicate: skip if too close to an existing candidate
-            const duplicate = candidates.some(
-              (c) =>
-                Math.abs(c.cx - cx) < finalModuleSize * 5 &&
-                Math.abs(c.cy - refinedCy) < finalModuleSize * 5,
-            );
-
-            if (!duplicate) {
-              candidates.push({ cx, cy: refinedCy, moduleSize: finalModuleSize });
-            }
-          }
-        }
-
-        // Slide window: drop first run, shift remaining
-        runs[0] = runs[2];
-        runs[1] = runs[3];
-        runs[2] = runs[4];
-        runs[3] = 0;
-        runs[4] = 0;
-        runPhase = 3;
-      } else {
-        runPhase += 1;
-      }
-
-      currentColor = pixel;
-      runStart = col;
-    }
-  }
-
-  // Return up to 3 non-overlapping candidates with largest module size (most confident)
-  candidates.sort((a, b) => b.moduleSize - a.moduleSize);
-
-  const result: FinderCandidate[] = [];
-  for (const candidate of candidates) {
-    const overlaps = result.some(
-      (existing) =>
-        Math.abs(existing.cx - candidate.cx) < candidate.moduleSize * 7 &&
-        Math.abs(existing.cy - candidate.cy) < candidate.moduleSize * 7,
-    );
-    if (!overlaps) {
-      result.push(candidate);
-    }
-    if (result.length === 3) break;
-  }
-
-  return result;
-};

@@ -10,15 +10,8 @@ import type {
 } from '../schema.js';
 import { importAssetBytesEffect, mediaTypeFromExtension } from './store.js';
 
-const buildSourceRecord = (sourcePath: string, options: ImportLocalAssetOptions): LocalSource => {
-  return {
-    kind: 'local',
-    originalPath: sourcePath,
-    importedAt: new Date().toISOString(),
-    ...(options.attribution ? { attribution: options.attribution } : {}),
-    ...(options.license ? { license: options.license } : {}),
-    ...(options.provenanceNotes ? { notes: options.provenanceNotes } : {}),
-  };
+export const importLocalAssets = (options: ImportLocalAssetOptions): Promise<ImportLocalAssetResult> => {
+  return Effect.runPromise(importLocalAssetsEffect(options));
 };
 
 const importLocalAssetsEffect = (
@@ -72,6 +65,13 @@ const importLocalAssetsEffect = (
   });
 };
 
-export const importLocalAssets = (options: ImportLocalAssetOptions): Promise<ImportLocalAssetResult> => {
-  return Effect.runPromise(importLocalAssetsEffect(options));
+const buildSourceRecord = (sourcePath: string, options: ImportLocalAssetOptions): LocalSource => {
+  return {
+    kind: 'local',
+    originalPath: sourcePath,
+    importedAt: new Date().toISOString(),
+    ...(options.attribution ? { attribution: options.attribution } : {}),
+    ...(options.license ? { license: options.license } : {}),
+    ...(options.provenanceNotes ? { notes: options.provenanceNotes } : {}),
+  };
 };

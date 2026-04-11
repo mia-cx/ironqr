@@ -28,25 +28,30 @@ export interface RealWorldBenchmarkResult {
   readonly falsePositiveRate: number;
 }
 
-const expectedTextFor = (entry: RealWorldBenchmarkEntry): string | null => {
-  const first = entry.groundTruth?.codes[0];
-  return first ? first.text : null;
-};
+export const runRealWorldBenchmark = async (
+  repoRoot: string,
+): Promise<RealWorldBenchmarkResult> => {
+  const corpus = await buildRealWorldBenchmarkCorpus(repoRoot);
 
-export const scoreRealWorldPositive = (
-  entry: RealWorldBenchmarkEntry,
-  scan: { readonly succeeded: boolean; readonly results: readonly { readonly text: string }[] },
-): RealWorldPositiveResult => {
-  const expected = expectedTextFor(entry);
-  const decodedText = scan.results[0]?.text ?? null;
-  const passed = expected === null ? scan.succeeded : scan.succeeded && decodedText === expected;
+  const positiveResults = await Promise.all(
+    corpus.positives.map((entry) => runRealWorldPositive(repoRoot, entry)),
+  );
+  const negativeResults = await Promise.all(
+    corpus.negatives.map((entry) => runRealWorldNegative(repoRoot, entry)),
+  );
+
+  const decodeSuccesses = positiveResults.filter((r) => r.passed).length;
+  const decodeFailures = positiveResults.length - decodeSuccesses;
+  const falsePositives = negativeResults.filter((r) => r.falsePositive).length;
 
   return {
-    entry,
-    passed,
-    decodedText,
-    expectedText: expected,
-    error: passed ? null : scan.succeeded ? 'text mismatch' : 'decode failed',
+    positives: positiveResults,
+    negatives: negativeResults,
+    decodeSuccesses,
+    decodeFailures,
+    falsePositives,
+    decodeRate: positiveResults.length > 0 ? decodeSuccesses / positiveResults.length : 1,
+    falsePositiveRate: negativeResults.length > 0 ? falsePositives / negativeResults.length : 0,
   };
 };
 
@@ -83,29 +88,24 @@ const runRealWorldNegative = async (
   }
 };
 
-export const runRealWorldBenchmark = async (
-  repoRoot: string,
-): Promise<RealWorldBenchmarkResult> => {
-  const corpus = await buildRealWorldBenchmarkCorpus(repoRoot);
-
-  const positiveResults = await Promise.all(
-    corpus.positives.map((entry) => runRealWorldPositive(repoRoot, entry)),
-  );
-  const negativeResults = await Promise.all(
-    corpus.negatives.map((entry) => runRealWorldNegative(repoRoot, entry)),
-  );
-
-  const decodeSuccesses = positiveResults.filter((r) => r.passed).length;
-  const decodeFailures = positiveResults.length - decodeSuccesses;
-  const falsePositives = negativeResults.filter((r) => r.falsePositive).length;
+export const scoreRealWorldPositive = (
+  entry: RealWorldBenchmarkEntry,
+  scan: { readonly succeeded: boolean; readonly results: readonly { readonly text: string }[] },
+): RealWorldPositiveResult => {
+  const expected = expectedTextFor(entry);
+  const decodedText = scan.results[0]?.text ?? null;
+  const passed = expected === null ? scan.succeeded : scan.succeeded && decodedText === expected;
 
   return {
-    positives: positiveResults,
-    negatives: negativeResults,
-    decodeSuccesses,
-    decodeFailures,
-    falsePositives,
-    decodeRate: positiveResults.length > 0 ? decodeSuccesses / positiveResults.length : 1,
-    falsePositiveRate: negativeResults.length > 0 ? falsePositives / negativeResults.length : 0,
+    entry,
+    passed,
+    decodedText,
+    expectedText: expected,
+    error: passed ? null : scan.succeeded ? 'text mismatch' : 'decode failed',
   };
+};
+
+const expectedTextFor = (entry: RealWorldBenchmarkEntry): string | null => {
+  const first = entry.groundTruth?.codes[0];
+  return first ? first.text : null;
 };
