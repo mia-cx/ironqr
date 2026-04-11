@@ -51,11 +51,11 @@ Recommended review checklist:
 ## Commands
 
 ```bash
-bun run corpus/cli.ts import-local --label qr-positive --review approved path/to/file.png
-bun run corpus/cli.ts scrape-remote --label qr-positive --limit 25 https://pixabay.com/images/search/qr%20code/
-bun run corpus/cli.ts review-staged corpus/staging/<run-id>
-bun run corpus/cli.ts import-staged corpus/staging/<run-id>
-bun run corpus/cli.ts export-benchmark
+bun --filter ironqr-corpus-cli run cli -- import-local --label qr-positive --review approved path/to/file.png
+bun --filter ironqr-corpus-cli run cli -- scrape-remote --label qr-positive --limit 25 https://pixabay.com/images/search/qr%20code/
+bun --filter ironqr-corpus-cli run cli -- review-staged corpus/staging/<run-id>
+bun --filter ironqr-corpus-cli run cli -- import-staged corpus/staging/<run-id>
+bun --filter ironqr-corpus-cli run cli -- export-benchmark
 ```
 
 ## Review flow
