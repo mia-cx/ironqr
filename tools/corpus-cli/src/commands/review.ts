@@ -2,8 +2,12 @@ import path from 'node:path';
 import { getOption, type ParsedArgs } from '../args.js';
 import { buildFilteredCliCommand } from '../command-text.js';
 import type { AppContext } from '../context.js';
-import { resolveStagedAssetPath } from '../import/remote.js';
-import { type ReviewAction, type ReviewSummary, reviewStagedAssets } from '../review.js';
+import {
+  resolveStagedAssetPath,
+  type StagedRemoteAsset,
+  streamStagedRemoteAssets,
+} from '../import/remote.js';
+import { type ReviewSummary, reviewStagedAssets } from '../review.js';
 import { scanLocalImageFile } from '../scan.js';
 import {
   promptManualGroundTruth,
@@ -18,27 +22,15 @@ interface ReviewCommandResult {
   readonly summary: ReviewSummary;
 }
 
-const promptAction = (context: AppContext, assetId: string): Promise<ReviewAction> => {
-  return context.ui.select({
-    message: `Review ${assetId}`,
-    options: [
-      { value: 'approve', label: 'approve', hint: 'approve and capture truth' },
-      { value: 'reject', label: 'reject', hint: 'reject with notes' },
-      { value: 'skip', label: 'skip', hint: 'mark skipped for now' },
-      { value: 'open-source', label: 'open source', hint: 'open source page in browser' },
-      { value: 'open-image', label: 'open image', hint: 'open staged image locally' },
-      { value: 'quit', label: 'quit', hint: 'stop review loop' },
-    ],
-  });
-};
-
 export const runReviewCommand = async (
   context: AppContext,
   args: ParsedArgs,
   explicitStageDir?: string,
+  explicitReviewer?: string,
+  explicitAssets?: AsyncIterable<StagedRemoteAsset>,
 ): Promise<ReviewCommandResult> => {
   const stageDir = await promptStageDir(context, explicitStageDir ?? args.positionals[0]);
-  const reviewer = await resolveReviewer(context, getOption(args, 'reviewer'));
+  const reviewer = await resolveReviewer(context, explicitReviewer ?? getOption(args, 'reviewer'));
 
   if (!reviewer) {
     throw new Error('Reviewer GitHub username is required for review');
@@ -47,33 +39,46 @@ export const runReviewCommand = async (
   const summary = await reviewStagedAssets({
     stageDir,
     reviewer,
-    chooseAction: async (asset) => promptAction(context, asset.id),
-    promptRejectionNotes: async () => {
-      const notes = await context.ui.text({ message: 'Rejection notes (optional)' });
-      return notes.trim().length > 0 ? notes.trim() : undefined;
-    },
+    assets: explicitAssets ?? streamStagedRemoteAssets(stageDir),
     promptConfirmedLicense: async (asset, suggestedLicense) => {
+      if (suggestedLicense) {
+        const keep = await context.ui.confirm({
+          message: `Keep detected license for ${asset.id}: ${suggestedLicense}?`,
+          initialValue: true,
+        });
+        if (keep) {
+          return suggestedLicense;
+        }
+      }
+
       const value = await context.ui.text({
-        message: `Confirmed license for ${asset.id}`,
-        ...(suggestedLicense ? { initialValue: suggestedLicense } : {}),
+        message: `Confirmed license / permission basis for ${asset.id}`,
+        ...(suggestedLicense ? { initialValue: suggestedLicense } : { placeholder: 'unknown' }),
       });
       return value.trim().length > 0 ? value.trim() : undefined;
     },
-    promptQrCount: async () =>
-      promptQrCount(context.ui, 'How many QR codes are present in this image?'),
-    confirmAcceptAutoScan: async () =>
+    promptAllowInCorpus: async (asset) =>
       context.ui.confirm({
-        message: 'Accept auto-scan results as ground truth?',
-        initialValue: false,
+        message: `Allow ${asset.id} in corpus?`,
+        initialValue: true,
       }),
-    promptManualGroundTruth: async (_, qrCount) => promptManualGroundTruth(context.ui, qrCount),
+    promptQrCount: async (_, initialValue) =>
+      promptQrCount(context.ui, 'How many QR codes are present in this image?', initialValue),
+    promptGroundTruth: async (_, qrCount, scanResult) => {
+      const prefills = scanResult.succeeded
+        ? scanResult.results.map((entry) => ({
+            text: entry.text,
+            ...(entry.kind ? { kind: entry.kind } : {}),
+          }))
+        : [];
+      return promptManualGroundTruth(context.ui, qrCount, prefills);
+    },
     scanAsset: async (asset) =>
       context.ui.spin(`Scanning ${asset.id}`, async () => {
         const imagePath = resolveStagedAssetPath(stageDir, asset.id, asset.imageFileName);
         return scanLocalImageFile(imagePath);
       }),
-    openLocalImage: context.openTarget,
-    openSourcePage: context.openTarget,
+    openSourcePage: context.openExternal,
     log: (line) => context.ui.info(line),
   });
 

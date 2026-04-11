@@ -74,10 +74,11 @@ export const importAssetBytesEffect = (
   return Effect.gen(function* () {
     yield* Effect.tryPromise(() => ensureCorpusLayout(options.repoRoot));
 
+    const sourceSha256 = options.sourceSha256 ?? hashSha256(options.bytes);
     const normalizedBytes = yield* normalizeImportedImage(options.bytes);
     const mediaType = NORMALIZED_IMAGE_MEDIA_TYPE;
     const sha256 = hashSha256(normalizedBytes);
-    const id = buildAssetId(sha256);
+    const id = buildAssetId(sourceSha256);
     const fileExtension = extensionFromMediaType(mediaType, options.sourcePathForExtension);
     const relativePath = `assets/${id}${fileExtension}`;
     const existingIndex = options.assets.findIndex((asset) => asset.id === id);
@@ -123,6 +124,7 @@ export const importAssetBytesEffect = (
       relativePath,
       sha256,
       byteLength: normalizedBytes.byteLength,
+      sourceSha256,
       provenance: [options.provenance],
       review: {
         status: options.reviewStatus ?? 'pending',
@@ -312,6 +314,12 @@ interface ImportAssetBytesOptions {
   readonly sourcePathForExtension: string;
   readonly label: CorpusAssetLabel;
   readonly provenance: ProvenanceRecord;
+  /**
+   * sha256 of the original fetched/input bytes before normalization. When
+   * provided, used as the stable asset identity + dedup key. Defaults to
+   * hashing `bytes` if omitted, which is correct for local file imports.
+   */
+  readonly sourceSha256?: string;
   readonly reviewStatus?: ReviewStatus;
   readonly reviewer?: string;
   readonly reviewNotes?: string;

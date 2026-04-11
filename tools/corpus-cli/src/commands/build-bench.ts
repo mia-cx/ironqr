@@ -136,7 +136,7 @@ const selectBenchAssets = async (
         note = `Opening ${path.basename(current.previewPath)}...`;
         render();
         try {
-          await context.openTarget(current.previewPath);
+          await context.openImage(current.previewPath);
           note = `Opened ${path.basename(current.previewPath)}`;
         } catch (error) {
           note = error instanceof Error ? error.message : String(error);

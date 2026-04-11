@@ -82,8 +82,11 @@ export const CorpusAssetSchema = S.Struct({
   mediaType: S.String,
   fileExtension: S.String,
   relativePath: S.String,
+  /** sha256 of the normalized on-disk bytes, used for file integrity checks. */
   sha256: S.String,
   byteLength: S.Number,
+  /** sha256 of the original fetched/input bytes, used as the stable identity + dedup key. */
+  sourceSha256: S.String,
   provenance: S.Array(ProvenanceRecordSchema),
   review: AssetReviewSchema,
   groundTruth: S.optional(GroundTruthSchema),

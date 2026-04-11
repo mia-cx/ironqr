@@ -1,5 +1,4 @@
 import {
-  readStagedRemoteAssets,
   resolveStagedAssetPath,
   type StagedRemoteAsset,
   type StageReviewStatus,
@@ -17,29 +16,22 @@ interface ScanAssetResult {
   }>;
 }
 
-export type ReviewAction = 'approve' | 'reject' | 'skip' | 'open-source' | 'open-image' | 'quit';
-
 interface ReviewStagedAssetsOptions {
   readonly stageDir: string;
   readonly reviewer: string;
-  readonly chooseAction: (asset: StagedRemoteAsset) => Promise<ReviewAction>;
-  readonly promptRejectionNotes: (asset: StagedRemoteAsset) => Promise<string | undefined>;
+  readonly assets: AsyncIterable<StagedRemoteAsset>;
   readonly promptConfirmedLicense: (
     asset: StagedRemoteAsset,
     suggestedLicense?: string,
   ) => Promise<string | undefined>;
-  readonly promptQrCount: (asset: StagedRemoteAsset) => Promise<number>;
-  readonly confirmAcceptAutoScan: (
+  readonly promptAllowInCorpus: (asset: StagedRemoteAsset) => Promise<boolean>;
+  readonly promptQrCount: (asset: StagedRemoteAsset, initialValue?: number) => Promise<number>;
+  readonly promptGroundTruth: (
     asset: StagedRemoteAsset,
+    qrCount: number,
     scanResult: ScanAssetResult,
-    qrCount: number,
-  ) => Promise<boolean>;
-  readonly promptManualGroundTruth: (
-    asset: StagedRemoteAsset,
-    qrCount: number,
   ) => Promise<GroundTruth>;
   readonly scanAsset: (asset: StagedRemoteAsset) => Promise<ScanAssetResult>;
-  readonly openLocalImage: (filePath: string) => Promise<void>;
   readonly openSourcePage: (url: string) => Promise<void>;
   readonly log: (line: string) => void;
 }
@@ -51,15 +43,45 @@ interface ReviewSummary {
   readonly quitEarly: boolean;
 }
 
+const logAssetMetadata = (
+  asset: StagedRemoteAsset,
+  imagePath: string,
+  log: (line: string) => void,
+): void => {
+  log(`Reviewing ${asset.id}`);
+  log(`Source: ${asset.sourcePageUrl}`);
+  log(`Image URL: ${asset.imageUrl}`);
+  log(`Local: ${imagePath}`);
+  log(`Size: ${asset.width}×${asset.height}`);
+  if (asset.pageTitle) {
+    log(`Page title: ${asset.pageTitle}`);
+  }
+  if (asset.bestEffortLicense) {
+    log(`License hint: ${asset.bestEffortLicense}`);
+  }
+  if (asset.licenseEvidenceText) {
+    log(`License evidence: ${asset.licenseEvidenceText}`);
+  }
+  if (asset.altText) {
+    log(`Alt text: ${asset.altText}`);
+  }
+};
+
+const groundTruthMatchesScan = (groundTruth: GroundTruth, scanResult: ScanAssetResult): boolean => {
+  if (!scanResult.succeeded) return false;
+  if (groundTruth.codes.length !== scanResult.results.length) return false;
+
+  return groundTruth.codes.every((code, index) => code.text === scanResult.results[index]?.text);
+};
+
 export const reviewStagedAssets = async (
   options: ReviewStagedAssetsOptions,
 ): Promise<ReviewSummary> => {
-  const assets = await readStagedRemoteAssets(options.stageDir);
   let approved = 0;
   let rejected = 0;
-  let skipped = 0;
+  const skipped = 0;
 
-  for (const asset of assets) {
+  for await (const asset of options.assets) {
     if (asset.importedAssetId || asset.review.status !== 'pending') {
       continue;
     }
@@ -67,106 +89,57 @@ export const reviewStagedAssets = async (
     const imagePath = resolveStagedAssetPath(options.stageDir, asset.id, asset.imageFileName);
     assertHttpUrl(asset.sourcePageUrl, 'source page URL');
 
-    options.log(`Reviewing ${asset.id}`);
-    options.log(`Source: ${asset.sourcePageUrl}`);
-    options.log(`Local: ${imagePath}`);
+    logAssetMetadata(asset, imagePath, options.log);
+    await options.openSourcePage(asset.sourcePageUrl);
 
-    while (true) {
-      const action = await options.chooseAction(asset);
+    const confirmedLicense = await options.promptConfirmedLicense(
+      asset,
+      asset.confirmedLicense ?? asset.bestEffortLicense,
+    );
+    const allowInCorpus = await options.promptAllowInCorpus(asset);
 
-      if (action === 'open-source') {
-        await options.openSourcePage(asset.sourcePageUrl);
-        continue;
-      }
-
-      if (action === 'open-image') {
-        await options.openLocalImage(imagePath);
-        continue;
-      }
-
-      if (action === 'skip') {
-        await updateStagedRemoteAsset(options.stageDir, {
-          ...asset,
-          review: {
-            status: 'skipped',
-            reviewer: options.reviewer,
-            reviewedAt: new Date().toISOString(),
-          },
-        });
-        skipped += 1;
-        break;
-      }
-
-      if (action === 'quit') {
-        return { approved, rejected, skipped, quitEarly: true };
-      }
-
-      if (action === 'reject') {
-        const notes = await options.promptRejectionNotes(asset);
-        await updateStagedRemoteAsset(options.stageDir, {
-          ...asset,
-          review: {
-            status: 'rejected',
-            reviewer: options.reviewer,
-            reviewedAt: new Date().toISOString(),
-            ...(notes ? { notes } : {}),
-          },
-        });
-        rejected += 1;
-        break;
-      }
-
-      if (action === 'approve') {
-        const confirmedLicense = await options.promptConfirmedLicense(
-          asset,
-          asset.bestEffortLicense,
-        );
-        const qrCount = await options.promptQrCount(asset);
-
-        const scanResult = await options.scanAsset(asset);
-        let groundTruth: GroundTruth;
-        let autoScan: AutoScan;
-
-        if (qrCount === 0) {
-          groundTruth = { qrCount: 0, codes: [] };
-          autoScan = toAutoScan(scanResult, scanResult.results.length === 0);
-        } else if (scanResult.succeeded && scanResult.results.length === qrCount) {
-          const accept = await options.confirmAcceptAutoScan(asset, scanResult, qrCount);
-          if (accept) {
-            groundTruth = {
-              qrCount,
-              codes: scanResult.results.map((entry) => ({
-                text: entry.text,
-                ...(entry.kind ? { kind: entry.kind } : {}),
-              })),
-            };
-            autoScan = toAutoScan(scanResult, true);
-          } else {
-            groundTruth = await options.promptManualGroundTruth(asset, qrCount);
-            autoScan = toAutoScan(scanResult, false);
-          }
-        } else {
-          groundTruth = await options.promptManualGroundTruth(asset, qrCount);
-          autoScan = toAutoScan(scanResult, false);
-        }
-
-        await updateStagedRemoteAsset(options.stageDir, {
-          ...asset,
-          review: {
-            status: 'approved',
-            reviewer: options.reviewer,
-            reviewedAt: new Date().toISOString(),
-          },
-          ...(confirmedLicense || asset.bestEffortLicense
-            ? { confirmedLicense: confirmedLicense || asset.bestEffortLicense }
-            : {}),
-          groundTruth,
-          autoScan,
-        });
-        approved += 1;
-        break;
-      }
+    if (!allowInCorpus) {
+      await updateStagedRemoteAsset(options.stageDir, {
+        ...asset,
+        review: {
+          status: 'rejected',
+          reviewer: options.reviewer,
+          reviewedAt: new Date().toISOString(),
+        },
+        ...(confirmedLicense ? { confirmedLicense } : {}),
+      });
+      rejected += 1;
+      continue;
     }
+
+    const scanResult = await options.scanAsset(asset);
+    const qrCount = await options.promptQrCount(
+      asset,
+      scanResult.succeeded ? scanResult.results.length : 0,
+    );
+
+    const groundTruth =
+      qrCount === 0
+        ? ({ qrCount: 0, codes: [] } as GroundTruth)
+        : await options.promptGroundTruth(asset, qrCount, scanResult);
+
+    const autoScan = toAutoScan(scanResult, groundTruthMatchesScan(groundTruth, scanResult));
+
+    await updateStagedRemoteAsset(options.stageDir, {
+      ...asset,
+      suggestedLabel: qrCount === 0 ? 'non-qr-negative' : 'qr-positive',
+      review: {
+        status: 'approved',
+        reviewer: options.reviewer,
+        reviewedAt: new Date().toISOString(),
+      },
+      ...(confirmedLicense || asset.bestEffortLicense
+        ? { confirmedLicense: confirmedLicense || asset.bestEffortLicense }
+        : {}),
+      groundTruth,
+      autoScan,
+    });
+    approved += 1;
   }
 
   return { approved, rejected, skipped, quitEarly: false };

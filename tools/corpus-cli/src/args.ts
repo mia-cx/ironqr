@@ -7,6 +7,7 @@ export interface ParsedArgs {
   readonly positionals: readonly string[];
   readonly options: Readonly<Record<string, string | true>>;
   readonly help: boolean;
+  readonly verbose: boolean;
 }
 
 const COMMAND_NAMES = new Set<CommandName>(['scrape', 'review', 'import', 'build-bench']);
@@ -18,6 +19,7 @@ export const parseArgv = (argv: readonly string[]): ParsedArgs => {
     first && COMMAND_NAMES.has(first as CommandName) ? (rest.shift() as CommandName) : undefined;
   const options: Record<string, string | true> = {};
   const positionals: string[] = [];
+  let verbose = false;
 
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
@@ -31,7 +33,13 @@ export const parseArgv = (argv: readonly string[]): ParsedArgs => {
         positionals,
         options,
         help: true,
+        verbose,
       };
+    }
+
+    if (token === '--verbose' || token === '-v') {
+      verbose = true;
+      continue;
     }
 
     if (!token.startsWith('--')) {
@@ -55,6 +63,7 @@ export const parseArgv = (argv: readonly string[]): ParsedArgs => {
     positionals,
     options,
     help: false,
+    verbose,
   };
 };
 

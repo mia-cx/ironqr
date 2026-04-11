@@ -25,29 +25,39 @@
       "cache": false,
       "outputs": []
     },
+    "corpus": {
+      "dependsOn": ["build", "^build"],
+      "cache": false,
+      "persistent": true,
+      "interactive": true,
+      "outputs": []
+    },
     "corpus:import": {
       "dependsOn": ["build", "^build"],
       "cache": false,
+      "persistent": true,
+      "interactive": true,
       "outputs": []
     },
     "corpus:scrape": {
       "dependsOn": ["build", "^build"],
       "cache": false,
+      "persistent": true,
+      "interactive": true,
       "outputs": []
     },
     "corpus:review": {
       "dependsOn": ["build", "^build"],
       "cache": false,
+      "persistent": true,
+      "interactive": true,
       "outputs": []
     },
-    "corpus:import-staged": {
+    "corpus:build-bench": {
       "dependsOn": ["build", "^build"],
       "cache": false,
-      "outputs": []
-    },
-    "corpus:export": {
-      "dependsOn": ["build", "^build"],
-      "cache": false,
+      "persistent": true,
+      "interactive": true,
       "outputs": []
     },
     "clean": {
@@ -57,5 +67,7 @@
       "cache": false,
       "persistent": true
     }
-  }
+  },
+  
+  "ui": "tui"
 }

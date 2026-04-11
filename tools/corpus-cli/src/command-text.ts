@@ -11,10 +11,13 @@ export const buildFilteredCliCommand = (command?: string, args: readonly string[
 export const getUsageText = (): string => {
   return `Usage:
   ${buildFilteredCliCommand()}
-  ${buildFilteredCliCommand('scrape')} [--label qr-positive|non-qr-negative] [--limit 25] <seed-urls...>
+  ${buildFilteredCliCommand('scrape')} [--limit 25] <seed-urls...>
   ${buildFilteredCliCommand('review')} [<stage-dir>] [--reviewer github-login]
   ${buildFilteredCliCommand('import')} [<files...>|<stage-dir>] [--label qr-positive|non-qr-negative] [--review pending|approved|rejected]
   ${buildFilteredCliCommand('build-bench')} [<asset-id...>]
+
+Global flags:
+  --verbose / -v    log skipped candidates, same-host redirects, and other scrape details
 
 Notes:
   - no subcommand = guided scrape → review → import flow

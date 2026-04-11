@@ -11,5 +11,6 @@ test-results
 *.tsbuildinfo
 benchmark-results.json
 .turbo/
+.sc/corpus-cli.json
 corpus/data/
 corpus/staging/

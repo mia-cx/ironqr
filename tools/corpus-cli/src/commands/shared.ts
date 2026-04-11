@@ -59,8 +59,12 @@ export const promptOptionalText = async (
   message: string,
   initialValue?: string,
 ): Promise<string | undefined> => {
-  const value = (await ui.text({ message, ...(initialValue ? { initialValue } : {}) })).trim();
-  return value.length > 0 ? value : undefined;
+  const rawValue = await ui.text({
+    message,
+    ...(initialValue ? { initialValue } : {}),
+  });
+  const trimmed = (typeof rawValue === 'string' ? rawValue : '').trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 };
 
 export const resolveReviewer = async (
@@ -169,10 +173,12 @@ export const promptLocalPaths = async (
 export const promptQrCount = async (
   ui: CliUi,
   message = 'How many QR codes are present?',
+  initialValue?: number,
 ): Promise<number> => {
   assertInteractiveSession('QR count required in non-interactive mode');
   const value = await ui.text({
     message,
+    ...(initialValue !== undefined ? { initialValue: String(initialValue) } : {}),
     validate: (input) => {
       if (input.trim().length === 0) {
         return 'QR count is required';
@@ -186,17 +192,25 @@ export const promptQrCount = async (
   return Number(value);
 };
 
-export const promptManualGroundTruth = async (ui: CliUi, qrCount: number): Promise<GroundTruth> => {
+export const promptManualGroundTruth = async (
+  ui: CliUi,
+  qrCount: number,
+  prefills: ReadonlyArray<{ readonly text?: string; readonly kind?: string }> = [],
+): Promise<GroundTruth> => {
   assertInteractiveSession('Ground truth required in non-interactive mode');
   const codes: Array<GroundTruth['codes'][number]> = [];
 
   for (let index = 0; index < qrCount; index += 1) {
     const label = index + 1;
+    const prefill = prefills[index];
+
     const text = await ui.text({
-      message: `QR #${label} text`,
-      validate: (value) => (value.trim().length > 0 ? undefined : 'QR text is required'),
+      message: `QR #${label} data (Enter newline, Esc then Enter submit)`,
+      multiline: true,
+      ...(prefill?.text ? { initialValue: prefill.text } : {}),
+      validate: (value) => (value.trim().length > 0 ? undefined : 'QR data is required'),
     });
-    const kind = await promptOptionalText(ui, `QR #${label} kind (optional)`);
+    const kind = await promptOptionalText(ui, `QR #${label} kind (optional)`, prefill?.kind);
     const verifiedWith = await promptOptionalText(ui, `QR #${label} verified with (optional)`);
 
     codes.push({

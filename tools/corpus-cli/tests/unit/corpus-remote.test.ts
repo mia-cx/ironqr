@@ -8,7 +8,9 @@ import {
   readStagedRemoteAsset,
   resolveStagedAssetPath,
   scrapeRemoteAssets,
+  startScrapeRemoteAssets,
   updateStagedRemoteAsset,
+  writeStagedRemoteAsset,
 } from '../../src/import/remote.js';
 import { readCorpusManifest } from '../../src/manifest.js';
 
@@ -118,7 +120,8 @@ describe('remote corpus import', () => {
     );
 
     expect(staged.assets).toHaveLength(2);
-    expect(staged.assets[0]?.imageFileName).toBe('image.png');
+    expect(staged.assets[0]?.imageFileName).toBe('image.webp');
+    expect(staged.assets[0]?.mediaType).toBe('image/webp');
 
     const stagedAssetPath = path.join(
       staged.stageDir,
@@ -158,6 +161,125 @@ describe('remote corpus import', () => {
 
     const storedAssetPath = path.join(repoRoot, 'corpus', 'data', firstAsset?.relativePath ?? '');
     expect((await readFile(storedAssetPath)).length).toBeGreaterThan(0);
+  });
+
+  it('starts review stream after first staged asset instead of waiting for all detail pages', async () => {
+    const repoRoot = await createRepoRoot();
+    const secondPageControl: { release: () => void } = {
+      release: () => {
+        throw new Error('expected second page release');
+      },
+    };
+    const secondPageGate = new Promise<void>((resolve) => {
+      secondPageControl.release = resolve;
+    });
+
+    const session = await startScrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 2,
+      },
+      async (input) => {
+        const url = typeof input === 'string' ? input : input.toString();
+
+        if (url === 'https://pixabay.com/images/search/qr%20code/') {
+          return new Response(LISTING_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (url === 'https://pixabay.com/photos/first-qr-123/') {
+          return new Response(FIRST_PAGE_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (url === 'https://pixabay.com/photos/second-qr-456/') {
+          await secondPageGate;
+          return new Response(SECOND_PAGE_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (url === 'https://cdn.pixabay.com/first.png') {
+          return new Response(Buffer.from(await createPngBytes(255, 255, 255)), {
+            headers: { 'content-type': 'image/png' },
+          });
+        }
+
+        if (url === 'https://cdn.pixabay.com/second.png') {
+          return new Response(Buffer.from(await createPngBytes(0, 0, 0)), {
+            headers: { 'content-type': 'image/png' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    );
+
+    const iterator = session.assets[Symbol.asyncIterator]();
+    const firstYield = await iterator.next();
+    expect(firstYield.done).toBe(false);
+    expect(firstYield.value?.sourcePageUrl).toBe('https://pixabay.com/photos/first-qr-123/');
+
+    secondPageControl.release();
+    const staged = await session.done;
+    expect(staged).toHaveLength(2);
+  });
+
+  it('prefers image-linked detail pages over unrelated matching anchors', async () => {
+    const repoRoot = await createRepoRoot();
+
+    const staged = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      async (input) => {
+        const url = typeof input === 'string' ? input : input.toString();
+
+        if (url === 'https://pixabay.com/images/search/qr%20code/') {
+          return new Response(
+            `<html><body>
+              <a href="/photos/unrelated-nav-999/">nav link without image</a>
+              <a href="/photos/first-qr-123/"><img src="https://cdn.pixabay.com/thumb-first.png" /></a>
+            </body></html>`,
+            { headers: { 'content-type': 'text/html' } },
+          );
+        }
+
+        if (url === 'https://pixabay.com/photos/first-qr-123/') {
+          return new Response(FIRST_PAGE_HTML, {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        if (url === 'https://cdn.pixabay.com/first.png') {
+          return new Response(Buffer.from(await createPngBytes(255, 255, 255)), {
+            headers: { 'content-type': 'image/png' },
+          });
+        }
+
+        if (url === 'https://cdn.pixabay.com/thumb-first.png') {
+          return new Response(Buffer.from(await createPngBytes(240, 240, 240)), {
+            headers: { 'content-type': 'image/png' },
+          });
+        }
+
+        if (url === 'https://pixabay.com/photos/unrelated-nav-999/') {
+          throw new Error('should not follow unrelated non-image anchor');
+        }
+
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    );
+
+    expect(staged.assets).toHaveLength(1);
+    expect(staged.assets[0]?.sourcePageUrl).toBe('https://pixabay.com/photos/first-qr-123/');
   });
 
   it('stages multiple images from a page that has no linked detail pages', async () => {
@@ -202,7 +324,7 @@ describe('remote corpus import', () => {
     ]);
   });
 
-  it('keeps staged assets unique when different urls resolve to identical bytes', async () => {
+  it('dedupes scraped assets by sourceSha256 when different urls resolve to identical bytes', async () => {
     const repoRoot = await createRepoRoot();
     const sameBytes = await createPngBytes(64, 64, 64);
 
@@ -250,9 +372,35 @@ describe('remote corpus import', () => {
       },
     );
 
-    expect(staged.assets).toHaveLength(2);
-    expect(staged.assets[0]?.id).not.toBe(staged.assets[1]?.id);
-    expect(staged.assets[0]?.sha256).toBe(staged.assets[1]?.sha256);
+    expect(staged.assets).toHaveLength(1);
+  });
+
+  it('skips prior-run duplicates without counting them against stage limit', async () => {
+    const repoRoot = await createRepoRoot();
+
+    const first = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      buildMockFetch(),
+    );
+    expect(first.assets).toHaveLength(1);
+    expect(first.assets[0]?.sourcePageUrl).toBe('https://pixabay.com/photos/first-qr-123/');
+
+    const second = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      buildMockFetch(),
+    );
+    expect(second.assets).toHaveLength(1);
+    expect(second.assets[0]?.sourcePageUrl).toBe('https://pixabay.com/photos/second-qr-456/');
   });
 
   it('imports approved staged metadata for license review, ground truth, and auto-scan evidence', async () => {
@@ -385,7 +533,46 @@ describe('remote corpus import', () => {
       stageDir: firstStage.stageDir,
     });
 
-    const secondStage = await scrapeRemoteAssets(
+    const secondStageDir = path.join(repoRoot, 'corpus', 'staging', 'manual-run-2');
+    await mkdir(secondStageDir, { recursive: true });
+    const sourcePath = path.join(firstStage.stageDir, firstAsset.id, firstAsset.imageFileName);
+    const reusedBytes = new Uint8Array(await readFile(sourcePath));
+    await writeStagedRemoteAsset(
+      secondStageDir,
+      {
+        ...firstAsset,
+        review: {
+          status: 'approved',
+          reviewer: 'mia',
+          reviewedAt: '2026-04-10T12:00:00.000Z',
+        },
+        confirmedLicense: 'CC0',
+        groundTruth: {
+          codes: [{ kind: 'url', text: 'https://different.example.com' }],
+          qrCount: 1,
+        },
+        autoScan: {
+          attempted: true,
+          succeeded: true,
+          results: [{ kind: 'url', text: 'https://different.example.com' }],
+          acceptedAsTruth: true,
+        },
+      },
+      reusedBytes,
+    );
+
+    await expect(
+      importStagedRemoteAssets({
+        repoRoot,
+        stageDir: secondStageDir,
+      }),
+    ).rejects.toThrow('Cannot change ground truth on dedupe');
+  });
+
+  it('accepts canonical metadata with different key order on dedup imports', async () => {
+    const repoRoot = await createRepoRoot();
+
+    const firstStage = await scrapeRemoteAssets(
       {
         repoRoot,
         seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
@@ -395,92 +582,12 @@ describe('remote corpus import', () => {
       buildMockFetch(),
     );
 
-    const secondAsset = secondStage.assets[0];
-    if (!secondAsset) {
-      throw new Error('expected second staged asset');
+    const firstAsset = firstStage.assets[0];
+    if (!firstAsset) {
+      throw new Error('expected first staged asset');
     }
 
-    await updateStagedRemoteAsset(secondStage.stageDir, {
-      ...secondAsset,
-      review: {
-        status: 'approved',
-        reviewer: 'mia',
-        reviewedAt: '2026-04-10T12:00:00.000Z',
-      },
-      confirmedLicense: 'CC0',
-      groundTruth: {
-        codes: [{ kind: 'url', text: 'https://different.example.com' }],
-        qrCount: 1,
-      },
-      autoScan: {
-        attempted: true,
-        succeeded: true,
-        results: [{ kind: 'url', text: 'https://different.example.com' }],
-        acceptedAsTruth: true,
-      },
-    });
-
-    await expect(
-      importStagedRemoteAssets({
-        repoRoot,
-        stageDir: secondStage.stageDir,
-      }),
-    ).rejects.toThrow('Cannot change ground truth on dedupe');
-  });
-
-  it('accepts canonical metadata with different key order on dedup imports', async () => {
-    const repoRoot = await createRepoRoot();
-    const sameBytes = await createPngBytes(64, 64, 64);
-
-    const staged = await scrapeRemoteAssets(
-      {
-        repoRoot,
-        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
-        label: 'qr-positive',
-        limit: 2,
-      },
-      async (input) => {
-        const url = typeof input === 'string' ? input : input.toString();
-
-        if (url === 'https://pixabay.com/images/search/qr%20code/') {
-          return new Response(LISTING_HTML, {
-            headers: { 'content-type': 'text/html' },
-          });
-        }
-
-        if (url === 'https://pixabay.com/photos/first-qr-123/') {
-          return new Response(FIRST_PAGE_HTML, {
-            headers: { 'content-type': 'text/html' },
-          });
-        }
-
-        if (url === 'https://pixabay.com/photos/second-qr-456/') {
-          return new Response(SECOND_PAGE_HTML, {
-            headers: { 'content-type': 'text/html' },
-          });
-        }
-
-        if (
-          url === 'https://cdn.pixabay.com/first.png' ||
-          url === 'https://cdn.pixabay.com/second.png'
-        ) {
-          return new Response(Buffer.from(sameBytes), {
-            headers: { 'content-type': 'image/png' },
-          });
-        }
-
-        throw new Error(`Unexpected fetch: ${url}`);
-      },
-    );
-
-    expect(staged.assets).toHaveLength(2);
-
-    const [firstAsset, secondAsset] = staged.assets;
-    if (!firstAsset || !secondAsset) {
-      throw new Error('expected staged assets');
-    }
-
-    await updateStagedRemoteAsset(staged.stageDir, {
+    await updateStagedRemoteAsset(firstStage.stageDir, {
       ...firstAsset,
       review: {
         status: 'approved',
@@ -506,38 +613,51 @@ describe('remote corpus import', () => {
       },
     });
 
-    await updateStagedRemoteAsset(staged.stageDir, {
-      ...secondAsset,
-      review: {
-        status: 'approved',
-        reviewer: 'mia',
-        reviewedAt: '2026-04-10T12:00:00.000Z',
-      },
-      confirmedLicense: 'CC0',
-      groundTruth: {
-        codes: [
-          {
-            kind: 'url',
-            verifiedWith: 'iphone camera',
-            text: 'https://example.com',
-          },
-        ],
-        qrCount: 1,
-      },
-      autoScan: {
-        attempted: true,
-        succeeded: true,
-        results: [{ kind: 'url', text: 'https://example.com' }],
-        acceptedAsTruth: true,
-      },
+    await importStagedRemoteAssets({
+      repoRoot,
+      stageDir: firstStage.stageDir,
     });
+
+    const secondStageDir = path.join(repoRoot, 'corpus', 'staging', 'manual-run-2');
+    await mkdir(secondStageDir, { recursive: true });
+    const sourcePath = path.join(firstStage.stageDir, firstAsset.id, firstAsset.imageFileName);
+    const reusedBytes = new Uint8Array(await readFile(sourcePath));
+    await writeStagedRemoteAsset(
+      secondStageDir,
+      {
+        ...firstAsset,
+        review: {
+          status: 'approved',
+          reviewer: 'mia',
+          reviewedAt: '2026-04-10T12:00:00.000Z',
+        },
+        confirmedLicense: 'CC0',
+        groundTruth: {
+          codes: [
+            {
+              kind: 'url',
+              verifiedWith: 'iphone camera',
+              text: 'https://example.com',
+            },
+          ],
+          qrCount: 1,
+        },
+        autoScan: {
+          attempted: true,
+          succeeded: true,
+          results: [{ kind: 'url', text: 'https://example.com' }],
+          acceptedAsTruth: true,
+        },
+      },
+      reusedBytes,
+    );
 
     const result = await importStagedRemoteAssets({
       repoRoot,
-      stageDir: staged.stageDir,
+      stageDir: secondStageDir,
     });
 
-    expect(result.imported).toHaveLength(1);
+    expect(result.imported).toHaveLength(0);
     expect(result.deduped).toHaveLength(1);
 
     const manifest = await readCorpusManifest(repoRoot);
@@ -600,7 +720,7 @@ describe('remote corpus import', () => {
     ).rejects.toThrow('allowlist');
   });
 
-  it('rejects redirects from allowlisted pages', async () => {
+  it('rejects cross-host redirects from allowlisted pages', async () => {
     const repoRoot = await createRepoRoot();
     const redirectFetch: (input: string | URL) => Promise<Response> = async (input) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -622,7 +742,64 @@ describe('remote corpus import', () => {
         },
         redirectFetch,
       ),
-    ).rejects.toThrow('Unexpected redirect while fetching page');
+    ).rejects.toThrow('Cross-host redirect not allowed');
+  });
+
+  it('follows same-host redirects when fetching staged pages', async () => {
+    const repoRoot = await createRepoRoot();
+    const redirectFetch: (input: string | URL) => Promise<Response> = async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url === 'https://pixabay.com/images/search/qr%20code/') {
+        return new Response(
+          `<html><body><a href="/photos/first-qr-123/"><img src="https://cdn.pixabay.com/thumb.png" /></a></body></html>`,
+          { headers: { 'content-type': 'text/html' } },
+        );
+      }
+
+      if (url === 'https://pixabay.com/photos/first-qr-123/') {
+        return new Response('', {
+          status: 301,
+          headers: { location: 'https://pixabay.com/photos/first-qr-123-resolved/' },
+        });
+      }
+
+      if (url === 'https://pixabay.com/photos/first-qr-123-resolved/') {
+        return new Response(
+          `<html><head><meta property="og:image" content="https://cdn.pixabay.com/first.png" /></head></html>`,
+          { headers: { 'content-type': 'text/html' } },
+        );
+      }
+
+      if (url === 'https://cdn.pixabay.com/first.png') {
+        return new Response(Buffer.from(await createPngBytes(255, 255, 255)), {
+          headers: { 'content-type': 'image/png' },
+        });
+      }
+
+      if (url === 'https://cdn.pixabay.com/thumb.png') {
+        return new Response(Buffer.from(await createPngBytes(240, 240, 240)), {
+          headers: { 'content-type': 'image/png' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
+    const staged = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      redirectFetch,
+    );
+
+    expect(staged.assets).toHaveLength(1);
+    expect(staged.assets[0]?.sourcePageUrl).toBe(
+      'https://pixabay.com/photos/first-qr-123-resolved/',
+    );
   });
 
   it('skips oversized image responses before buffering the body', async () => {
@@ -695,9 +872,12 @@ describe('remote corpus import', () => {
         seedUrl: 'https://pixabay.com/',
         sourceHost: 'pixabay.com',
         fetchedAt: '2026-04-10T00:00:00.000Z',
-        mediaType: 'image/png',
+        mediaType: 'image/webp',
         byteLength: 0,
         sha256: '00',
+        sourceSha256: '11',
+        sourceMediaType: 'image/png',
+        sourceByteLength: 0,
         width: 0,
         height: 0,
         review: { status: 'pending' },
@@ -740,9 +920,12 @@ describe('remote corpus import', () => {
         seedUrl: 'https://pixabay.com/',
         sourceHost: 'pixabay.com',
         fetchedAt: '2026-04-10T00:00:00.000Z',
-        mediaType: 'image/png',
+        mediaType: 'image/webp',
         byteLength: 0,
         sha256: '00',
+        sourceSha256: '11',
+        sourceMediaType: 'image/png',
+        sourceByteLength: 0,
         width: 0,
         height: 0,
         review: { status: 'pending' },
