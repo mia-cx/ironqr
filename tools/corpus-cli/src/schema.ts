@@ -142,6 +142,12 @@ export interface ImportRemoteAssetResult {
   readonly manifest: CorpusManifest;
 }
 
+export const ScrapeProgressSchema = S.Struct({
+  version: S.Literal(1),
+  visitedSourcePageUrls: S.Array(S.String),
+});
+export type ScrapeProgress = S.Schema.Type<typeof ScrapeProgressSchema>;
+
 export const CorpusRejectionReasonSchema = S.Literals([
   'license',
   'quality',

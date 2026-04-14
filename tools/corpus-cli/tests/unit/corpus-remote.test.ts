@@ -375,6 +375,50 @@ describe('remote corpus import', () => {
     expect(staged.assets).toHaveLength(1);
   });
 
+  it('skips previously visited source pages without fetching them on a subsequent scrape', async () => {
+    const repoRoot = await createRepoRoot();
+    const fetchedUrls: string[] = [];
+
+    const trackingFetch = async (input: string | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+      fetchedUrls.push(url);
+      return buildMockFetch()(url);
+    };
+
+    // First scrape: visits first-qr-123 and stages its image
+    await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      trackingFetch,
+    );
+    expect(fetchedUrls).toContain('https://pixabay.com/photos/first-qr-123/');
+
+    const fetchedAfterFirst = [...fetchedUrls];
+    fetchedUrls.length = 0;
+
+    // Second scrape: first-qr-123 is in scrape-progress.json, must not be fetched again
+    const second = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      trackingFetch,
+    );
+
+    expect(second.assets).toHaveLength(1);
+    expect(second.assets[0]?.sourcePageUrl).toBe('https://pixabay.com/photos/second-qr-456/');
+    expect(fetchedUrls).not.toContain('https://pixabay.com/photos/first-qr-123/');
+    expect(fetchedUrls).toContain('https://pixabay.com/photos/second-qr-456/');
+    // Seed page always re-fetched; only detail pages that were already visited get skipped
+    expect(fetchedAfterFirst.length).toBeGreaterThan(fetchedUrls.length);
+  });
+
   it('skips prior-run duplicates without counting them against stage limit', async () => {
     const repoRoot = await createRepoRoot();
 

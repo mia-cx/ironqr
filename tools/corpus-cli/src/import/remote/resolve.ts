@@ -11,6 +11,8 @@ interface ResolveSourcePagesEnv {
 interface ResolveSourcePagesState {
   readonly seenPages: Set<string>;
   readonly yieldedLeaves: Set<string>;
+  /** URLs of detail pages already fully processed in previous scrape runs. */
+  readonly visitedSourcePageUrls?: ReadonlySet<string>;
 }
 
 export const resolveSourcePagesEffect = (
@@ -45,6 +47,10 @@ export const resolveSourcePagesEffect = (
     env.log(`Walking ${pageLinks.length} page link(s) from ${page.url}`);
 
     for (const pageLink of pageLinks) {
+      if (state.visitedSourcePageUrls?.has(pageLink)) {
+        env.log(`Skipped ${pageLink}: visited in a previous scrape`);
+        continue;
+      }
       env.log(`Fetching page ${pageLink}`);
       let nextPage: SourcePage | null;
       try {

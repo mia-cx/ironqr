@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import sharp from 'sharp';
+import { appendVisitedSourcePage, readScrapeProgress } from '../../manifest.js';
 import type { ImportRemoteAssetOptions } from '../../schema.js';
 import { AsyncQueue } from '../queue.js';
 import { hashSha256 } from '../store.js';
@@ -105,6 +106,15 @@ const scrapeRemoteAssetsLoopEffect = (
       log(`Cross-run dedup: ${seenSourceSha256.size} previously staged image(s) will be skipped`);
     }
 
+    const scrapeProgress = await readScrapeProgress(options.repoRoot);
+    const seenSourcePageUrls = new Set<string>(scrapeProgress.visitedSourcePageUrls);
+
+    if (seenSourcePageUrls.size > 0) {
+      log(
+        `Page-level dedup: ${seenSourcePageUrls.size} previously visited page(s) will be skipped`,
+      );
+    }
+
     for (const seedUrl of options.seedUrls) {
       if (assets.length >= limit) break;
 
@@ -115,6 +125,7 @@ const scrapeRemoteAssetsLoopEffect = (
       const state = {
         seenPages: new Set<string>(),
         yieldedLeaves: new Set<string>(),
+        visitedSourcePageUrls: seenSourcePageUrls,
       };
 
       for await (const page of resolveSourcePagesEffect(seedPage, { fetchImpl, log }, state)) {
@@ -187,6 +198,11 @@ const scrapeRemoteAssetsLoopEffect = (
           seenSourceSha256.add(asset.sourceSha256);
           onStagedAsset(asset);
         }
+
+        // Mark the source page as visited so the next scrape session skips
+        // fetching it entirely rather than re-deduping all its images.
+        seenSourcePageUrls.add(page.url);
+        await appendVisitedSourcePage(options.repoRoot, page.url);
       }
 
       log(`Resolved ${resolvedSourcePages} source page(s) for ${seed.toString()}`);

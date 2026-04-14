@@ -7,6 +7,8 @@ import {
   type CorpusRejectionEntry,
   type CorpusRejectionsLog,
   CorpusRejectionsLogSchema,
+  type ScrapeProgress,
+  ScrapeProgressSchema,
 } from './schema.js';
 
 const decodeManifest = (value: unknown): CorpusManifest => {
@@ -117,6 +119,36 @@ export const appendCorpusRejection = async (
   const updated: CorpusRejectionsLog = { version: 1, rejections: [...log.rejections, entry] };
   await writeFile(
     getCorpusRejectionsPath(repoRoot),
+    `${JSON.stringify(updated, null, 2)}\n`,
+    'utf8',
+  );
+};
+
+export const getCorpusScrapeProgressPath = (repoRoot: string): string =>
+  path.join(getCorpusDataRoot(repoRoot), 'scrape-progress.json');
+
+export const readScrapeProgress = async (repoRoot: string): Promise<ScrapeProgress> => {
+  try {
+    const raw = await readFile(getCorpusScrapeProgressPath(repoRoot), 'utf8');
+    return S.decodeUnknownSync(ScrapeProgressSchema)(JSON.parse(raw));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { version: 1, visitedSourcePageUrls: [] };
+    }
+    throw error;
+  }
+};
+
+export const appendVisitedSourcePage = async (repoRoot: string, url: string): Promise<void> => {
+  await ensureCorpusLayout(repoRoot);
+  const progress = await readScrapeProgress(repoRoot);
+  if (progress.visitedSourcePageUrls.includes(url)) return;
+  const updated: ScrapeProgress = {
+    version: 1,
+    visitedSourcePageUrls: [...progress.visitedSourcePageUrls, url],
+  };
+  await writeFile(
+    getCorpusScrapeProgressPath(repoRoot),
     `${JSON.stringify(updated, null, 2)}\n`,
     'utf8',
   );
