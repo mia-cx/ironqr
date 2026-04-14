@@ -1,7 +1,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as S from 'effect/Schema';
-import { type CorpusManifest, CorpusManifestSchema } from './schema.js';
+import {
+  type CorpusManifest,
+  CorpusManifestSchema,
+  type CorpusRejectionEntry,
+  type CorpusRejectionsLog,
+  CorpusRejectionsLogSchema,
+} from './schema.js';
 
 const decodeManifest = (value: unknown): CorpusManifest => {
   return S.decodeUnknownSync(CorpusManifestSchema)(value);
@@ -81,6 +87,39 @@ export const writeCorpusManifest = async (
   };
 
   await writeFile(getCorpusManifestPath(repoRoot), `${JSON.stringify(sorted, null, 2)}\n`, 'utf8');
+};
+
+export const getCorpusRejectionsPath = (repoRoot: string): string => {
+  return path.join(getCorpusDataRoot(repoRoot), 'rejections.json');
+};
+
+export const readCorpusRejections = async (repoRoot: string): Promise<CorpusRejectionsLog> => {
+  try {
+    const raw = await readFile(getCorpusRejectionsPath(repoRoot), 'utf8');
+    return S.decodeUnknownSync(CorpusRejectionsLogSchema)(JSON.parse(raw));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { version: 1, rejections: [] };
+    }
+    throw error;
+  }
+};
+
+export const appendCorpusRejection = async (
+  repoRoot: string,
+  entry: CorpusRejectionEntry,
+): Promise<void> => {
+  await ensureCorpusLayout(repoRoot);
+  const log = await readCorpusRejections(repoRoot);
+  if (log.rejections.some((r) => r.sourceSha256 === entry.sourceSha256)) {
+    return;
+  }
+  const updated: CorpusRejectionsLog = { version: 1, rejections: [...log.rejections, entry] };
+  await writeFile(
+    getCorpusRejectionsPath(repoRoot),
+    `${JSON.stringify(updated, null, 2)}\n`,
+    'utf8',
+  );
 };
 
 export const toRepoRelativePath = (repoRoot: string, targetPath: string): string => {

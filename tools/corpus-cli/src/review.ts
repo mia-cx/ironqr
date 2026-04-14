@@ -5,7 +5,7 @@ import {
   type StageReviewStatus,
   updateStagedRemoteAsset,
 } from './import/remote.js';
-import type { AutoScan, GroundTruth } from './schema.js';
+import type { AutoScan, CorpusRejectionReason, GroundTruth } from './schema.js';
 
 interface ScanAssetResult {
   readonly attempted: boolean;
@@ -25,6 +25,7 @@ interface ReviewStagedAssetsOptions {
     suggestedLicense?: string,
   ) => Promise<string | undefined>;
   readonly promptAllowInCorpus: (asset: StagedRemoteAsset) => Promise<boolean>;
+  readonly promptRejectReason: (asset: StagedRemoteAsset) => Promise<CorpusRejectionReason>;
   readonly promptQrCount: (asset: StagedRemoteAsset, initialValue?: number) => Promise<number>;
   readonly promptGroundTruth: (
     asset: StagedRemoteAsset,
@@ -121,17 +122,16 @@ export const reviewStagedAssets = async (
     const allowInCorpus = await options.promptAllowInCorpus(asset);
 
     if (!allowInCorpus) {
-      await updateStagedRemoteAsset(
-        options.stageDir,
-        buildReviewedAsset(asset, {
-          review: {
-            status: 'rejected',
-            reviewer: options.reviewer,
-            reviewedAt: new Date().toISOString(),
-          },
-          ...(confirmedLicense ? { confirmedLicense } : {}),
-        }),
-      );
+      const rejectionReason = await options.promptRejectReason(asset);
+      const reviewed = buildReviewedAsset(asset, {
+        review: {
+          status: 'rejected',
+          reviewer: options.reviewer,
+          reviewedAt: new Date().toISOString(),
+        },
+        ...(confirmedLicense ? { confirmedLicense } : {}),
+      });
+      await updateStagedRemoteAsset(options.stageDir, { ...reviewed, rejectionReason });
       rejected += 1;
       continue;
     }

@@ -62,6 +62,17 @@ export const runReviewCommand = async (
         message: `Allow ${asset.id} in corpus?`,
         initialValue: true,
       }),
+    promptRejectReason: async (_asset) =>
+      context.ui.select({
+        message: 'Rejection reason',
+        initialValue: 'license' as const,
+        options: [
+          { value: 'license' as const, label: 'License', hint: 'incompatible or unclear license' },
+          { value: 'quality' as const, label: 'Quality', hint: 'too low resolution or corrupted' },
+          { value: 'irrelevant' as const, label: 'Irrelevant', hint: 'not a QR image' },
+          { value: 'other' as const, label: 'Other' },
+        ],
+      }),
     promptQrCount: async (_, initialValue) =>
       promptQrCount(context.ui, 'How many QR codes are present in this image?', initialValue),
     promptGroundTruth: async (_, qrCount, scanResult) => {

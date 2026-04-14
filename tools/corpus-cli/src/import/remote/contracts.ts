@@ -1,5 +1,11 @@
 import * as S from 'effect/Schema';
-import type { CorpusAssetLabel, ImportRemoteAssetResult, ReviewStatus } from '../../schema.js';
+import type {
+  CorpusAssetLabel,
+  CorpusRejectionReason,
+  ImportRemoteAssetResult,
+  ReviewStatus,
+} from '../../schema.js';
+import { CorpusRejectionReasonSchema } from '../../schema.js';
 
 export const StageReviewStatusSchema = S.Literals(['pending', 'approved', 'rejected', 'skipped']);
 export type StageReviewStatus = S.Schema.Type<typeof StageReviewStatusSchema>;
@@ -63,6 +69,7 @@ export const StagedRemoteAssetSchema = S.Struct({
     }),
   ),
   importedAssetId: S.optional(S.String),
+  rejectionReason: S.optional(CorpusRejectionReasonSchema),
 });
 export type StagedRemoteAsset = S.Schema.Type<typeof StagedRemoteAssetSchema>;
 
@@ -89,4 +96,4 @@ export interface ImportStagedRemoteAssetsOptions {
   readonly provenanceNotes?: string;
 }
 
-export type { ImportRemoteAssetResult };
+export type { CorpusRejectionReason, ImportRemoteAssetResult };

@@ -3,10 +3,12 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import {
+  importStagedRemoteAssets,
   readStagedRemoteAsset,
   scrapeRemoteAssets,
   streamStagedRemoteAssets,
 } from '../../src/import/remote.js';
+import { readCorpusRejections } from '../../src/manifest.js';
 import { reviewStagedAssets } from '../../src/review.js';
 import { makeTestDir } from '../helpers.js';
 
@@ -98,6 +100,7 @@ describe('interactive staged review', () => {
       assets: streamStagedRemoteAssets(staged.stageDir),
       promptConfirmedLicense: async (_asset, suggestedLicense) => suggestedLicense,
       promptAllowInCorpus: async () => true,
+      promptRejectReason: async () => 'license' as const,
       promptQrCount: async (_asset, initialValue) => {
         qrCountPrefills.push(initialValue);
         return initialValue ?? 0;
@@ -164,6 +167,7 @@ describe('interactive staged review', () => {
       assets: streamStagedRemoteAssets(staged.stageDir),
       promptConfirmedLicense: async () => undefined,
       promptAllowInCorpus: async () => true,
+      promptRejectReason: async () => 'license' as const,
       promptQrCount: async () => 1,
       promptGroundTruth: async () => ({
         qrCount: 1,
@@ -204,6 +208,7 @@ describe('interactive staged review', () => {
       assets: streamStagedRemoteAssets(staged.stageDir),
       promptConfirmedLicense: async (_asset, suggestedLicense) => suggestedLicense,
       promptAllowInCorpus: async () => true,
+      promptRejectReason: async () => 'license' as const,
       promptQrCount: async () => 1,
       promptGroundTruth: async () => ({
         qrCount: 1,
@@ -252,6 +257,7 @@ describe('interactive staged review', () => {
       assets: streamStagedRemoteAssets(staged.stageDir),
       promptConfirmedLicense: async (_asset, suggestedLicense) => suggestedLicense,
       promptAllowInCorpus: async () => false,
+      promptRejectReason: async () => 'license' as const,
       promptQrCount: async () => {
         throw new Error('rejected assets should not ask qr count');
       },
@@ -308,6 +314,7 @@ describe('interactive staged review', () => {
         })(),
         promptConfirmedLicense: async () => undefined,
         promptAllowInCorpus: async () => true,
+        promptRejectReason: async () => 'license' as const,
         promptQrCount: async () => 0,
         promptGroundTruth: async () => ({ qrCount: 0, codes: [] }),
         scanAsset: async () => ({ attempted: false, succeeded: false, results: [] }),
@@ -339,6 +346,7 @@ describe('interactive staged review', () => {
       assets: streamStagedRemoteAssets(staged.stageDir),
       promptConfirmedLicense: async (_asset, suggestedLicense) => suggestedLicense,
       promptAllowInCorpus: async () => true,
+      promptRejectReason: async () => 'license' as const,
       promptQrCount: async () => 0,
       promptGroundTruth: async () => ({ qrCount: 0, codes: [] }),
       scanAsset: async () => ({
@@ -356,5 +364,69 @@ describe('interactive staged review', () => {
     );
     expect(reviewed.suggestedLabel).toBe('non-qr-negative');
     expect(reviewed.groundTruth).toEqual({ qrCount: 0, codes: [] });
+  });
+
+  it('records rejection reason to rejections log on import and skips the asset in subsequent scrapes', async () => {
+    const repoRoot = await createRepoRoot();
+
+    // Scrape and reject the first image with reason 'license'
+    const first = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      buildMockFetch(),
+    );
+    expect(first.assets).toHaveLength(1);
+
+    await reviewStagedAssets({
+      stageDir: first.stageDir,
+      reviewer: 'mia',
+      assets: streamStagedRemoteAssets(first.stageDir),
+      promptConfirmedLicense: async () => undefined,
+      promptAllowInCorpus: async () => false,
+      promptRejectReason: async () => 'license' as const,
+      promptQrCount: async () => {
+        throw new Error('should not be called');
+      },
+      promptGroundTruth: async () => {
+        throw new Error('should not be called');
+      },
+      scanAsset: async () => {
+        throw new Error('should not be called');
+      },
+      openSourcePage: async () => {},
+      log: () => {},
+    });
+
+    // Import persists the rejection entry
+    await importStagedRemoteAssets({ repoRoot, stageDir: first.stageDir });
+
+    const rejectionsLog = await readCorpusRejections(repoRoot);
+    expect(rejectionsLog.rejections).toHaveLength(1);
+    expect(rejectionsLog.rejections[0]).toMatchObject({
+      reason: 'license',
+      rejectedBy: 'mia',
+      sourcePageUrl: 'https://pixabay.com/photos/first-qr-123/',
+    });
+
+    // Second scrape with staging cleared: rejected image must be skipped
+    // (mock listing only has the one image, so nothing fresh gets staged)
+    const { rm } = await import('node:fs/promises');
+    await rm(first.stageDir, { recursive: true, force: true });
+
+    const second = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 2,
+      },
+      buildMockFetch(),
+    );
+
+    expect(second.assets).toHaveLength(0);
   });
 });

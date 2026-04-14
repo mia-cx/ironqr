@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { Effect } from 'effect';
-import { readCorpusManifest, writeCorpusManifest } from '../../manifest.js';
+import { appendCorpusRejection, readCorpusManifest, writeCorpusManifest } from '../../manifest.js';
 import type {
   AutoScan,
   CorpusAsset,
@@ -68,6 +68,21 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
         stagedAsset.review.status === 'pending'
           ? (options.reviewStatus ?? 'pending')
           : stagedAsset.review.status;
+
+      if (effectiveReviewStatus === 'rejected') {
+        yield* tryPromise(() =>
+          appendCorpusRejection(options.repoRoot, {
+            sourceSha256: stagedAsset.sourceSha256,
+            reason: stagedAsset.rejectionReason ?? 'other',
+            ...(stagedAsset.review.notes ? { notes: stagedAsset.review.notes } : {}),
+            sourcePageUrl: stagedAsset.sourcePageUrl,
+            imageUrl: stagedAsset.imageUrl,
+            ...(stagedAsset.review.reviewer ? { rejectedBy: stagedAsset.review.reviewer } : {}),
+            rejectedAt: stagedAsset.review.reviewedAt ?? new Date().toISOString(),
+          }),
+        );
+        continue;
+      }
 
       if (effectiveReviewStatus !== 'approved') {
         continue;

@@ -142,6 +142,31 @@ export interface ImportRemoteAssetResult {
   readonly manifest: CorpusManifest;
 }
 
+export const CorpusRejectionReasonSchema = S.Literals([
+  'license',
+  'quality',
+  'irrelevant',
+  'other',
+]);
+export type CorpusRejectionReason = S.Schema.Type<typeof CorpusRejectionReasonSchema>;
+
+export const CorpusRejectionEntrySchema = S.Struct({
+  sourceSha256: S.String,
+  reason: CorpusRejectionReasonSchema,
+  notes: S.optional(S.String),
+  sourcePageUrl: S.optional(S.String),
+  imageUrl: S.optional(S.String),
+  rejectedBy: S.optional(S.String),
+  rejectedAt: S.String,
+});
+export type CorpusRejectionEntry = S.Schema.Type<typeof CorpusRejectionEntrySchema>;
+
+export const CorpusRejectionsLogSchema = S.Struct({
+  version: S.Literal(1),
+  rejections: S.Array(CorpusRejectionEntrySchema),
+});
+export type CorpusRejectionsLog = S.Schema.Type<typeof CorpusRejectionsLogSchema>;
+
 export const RealWorldBenchmarkEntrySchema = S.Struct({
   id: S.String,
   label: CorpusAssetLabelSchema,
