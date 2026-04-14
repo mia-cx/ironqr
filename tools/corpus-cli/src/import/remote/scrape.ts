@@ -10,7 +10,7 @@ import type {
   StagedRemoteAsset,
 } from './contracts.js';
 import { tryPromise } from './effect.js';
-import { type FetchLike, fetchImage, fetchText } from './fetch.js';
+import { type FetchLike, fetchCommonsFileMeta, fetchImage, fetchText } from './fetch.js';
 import {
   detectBestEffortLicense,
   extractCommonsAttribution,
@@ -147,9 +147,25 @@ const scrapeRemoteAssetsLoopEffect = (
 
         const imageCandidates = extractImageCandidates(page.url, page.html, page.isDetail);
         const host = normalizeHost(new URL(page.url).hostname);
-        const licenseHint = detectBestEffortLicense(host, page.html);
-        const attributionText =
+        let licenseHint = detectBestEffortLicense(host, page.html);
+        let attributionText =
           host === 'commons.wikimedia.org' ? extractCommonsAttribution(page.html) : null;
+
+        // For Commons detail pages prefer the structured API over HTML parsing —
+        // the HTML can have multiple licensetpl_short spans at different versions.
+        if (host === 'commons.wikimedia.org' && page.isDetail) {
+          await new Promise((r) => setTimeout(r, fetchDelayMs));
+          const apiMeta = await fetchCommonsFileMeta(page.url, fetchImpl);
+          if (apiMeta?.license) {
+            licenseHint = {
+              bestEffortLicense: apiMeta.license,
+              licenseEvidenceText: `Wikimedia API: ${apiMeta.license}`,
+            };
+          }
+          if (apiMeta?.attribution) {
+            attributionText = apiMeta.attribution;
+          }
+        }
 
         log(`Considering ${imageCandidates.length} image(s) from ${page.url}`);
 

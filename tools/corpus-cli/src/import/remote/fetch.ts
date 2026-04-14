@@ -134,6 +134,74 @@ export const fetchText = (url: string, fetchImpl: FetchLike, isDetail: boolean) 
   });
 };
 
+// ── Wikimedia Commons structured metadata ─────────────────────────────
+
+export interface CommonsFileMeta {
+  readonly license?: string;
+  readonly attribution?: string;
+}
+
+const stripHtmlTags = (fragment: string): string =>
+  fragment
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * Fetches structured file metadata from the Wikimedia Commons `imageinfo` API.
+ * Returns null on any error so callers can gracefully fall back to HTML parsing.
+ */
+export const fetchCommonsFileMeta = async (
+  pageUrl: string,
+  fetchImpl: FetchLike,
+): Promise<CommonsFileMeta | null> => {
+  const match = /\/wiki\/(File:[^?#]+)/i.exec(pageUrl);
+  if (!match?.[1]) return null;
+
+  const title = decodeURIComponent(match[1]);
+  const apiUrl =
+    `https://commons.wikimedia.org/w/api.php?action=query` +
+    `&titles=${encodeURIComponent(title)}` +
+    `&prop=imageinfo&iiprop=extmetadata&format=json&origin=*`;
+
+  try {
+    const response = await fetchImpl(apiUrl, {
+      headers: { ...BROWSER_HEADERS, accept: 'application/json' },
+    });
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as {
+      query?: {
+        pages?: Record<
+          string,
+          {
+            imageinfo?: Array<{ extmetadata?: Record<string, { value?: string }> }>;
+          }
+        >;
+      };
+    };
+
+    const extmeta = Object.values(data?.query?.pages ?? {})[0]?.imageinfo?.[0]?.extmetadata;
+    if (!extmeta) return null;
+
+    const license = extmeta['LicenseShortName']?.value?.trim() || undefined;
+    const artistRaw = extmeta['Artist']?.value;
+    const attribution = artistRaw ? stripHtmlTags(artistRaw) || undefined : undefined;
+
+    return {
+      ...(license ? { license } : {}),
+      ...(attribution ? { attribution } : {}),
+    };
+  } catch {
+    return null;
+  }
+};
+
 export const fetchImage = (url: string, fetchImpl: FetchLike) => {
   return Effect.gen(function* () {
     const { response, finalUrl } = yield* fetchFollowingSameHost(
