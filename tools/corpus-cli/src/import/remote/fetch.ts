@@ -9,6 +9,11 @@ const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_SAME_HOST_REDIRECTS = 5;
 
+// Identify as a browser so sites that block bare fetch() don't 403 us.
+// Corpus acquisition is manual/interactive, not mass automated scraping.
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 const readLimitedBody = (response: Response, maxBytes: number, label: string) => {
   return tryPromise(async () => {
     const declaredLength = Number(response.headers.get('content-length'));
@@ -70,7 +75,7 @@ export const fetchFollowingSameHost = (
     let currentUrl = url;
     for (let hop = 0; hop <= MAX_SAME_HOST_REDIRECTS; hop += 1) {
       const response = await fetchImpl(currentUrl, {
-        headers: { accept },
+        headers: { accept, 'user-agent': USER_AGENT },
         redirect: 'manual',
       });
 
