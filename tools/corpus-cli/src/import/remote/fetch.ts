@@ -189,8 +189,8 @@ export const fetchCommonsFileMeta = async (
     const extmeta = Object.values(data?.query?.pages ?? {})[0]?.imageinfo?.[0]?.extmetadata;
     if (!extmeta) return null;
 
-    const license = extmeta['LicenseShortName']?.value?.trim() || undefined;
-    const artistRaw = extmeta['Artist']?.value;
+    const license = extmeta.LicenseShortName?.value?.trim() || undefined;
+    const artistRaw = extmeta.Artist?.value;
     const attribution = artistRaw ? stripHtmlTags(artistRaw) || undefined : undefined;
 
     return {

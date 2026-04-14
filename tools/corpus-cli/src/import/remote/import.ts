@@ -20,7 +20,6 @@ import {
   readStagedRemoteAssetsEffect,
   removeRunDirIfEmptyEffect,
   removeStagedAssetDirEffect,
-  updateStagedRemoteAssetEffect,
 } from './stage-store.js';
 
 const buildRemoteSource = (
