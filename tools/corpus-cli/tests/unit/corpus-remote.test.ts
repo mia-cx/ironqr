@@ -937,7 +937,7 @@ describe('remote corpus import', () => {
   });
 
   it('resolveStagedAssetPath rejects components containing path separators or parent traversal', async () => {
-    const stageDir = '/tmp/ironqr-stage';
+    const stageDir = '/corpus/staging/ironqr-stage';
 
     expect(() => resolveStagedAssetPath(stageDir, 'stage-abc', '../../etc/passwd')).toThrow(
       /Unsafe image filename/,

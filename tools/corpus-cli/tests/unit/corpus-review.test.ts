@@ -288,7 +288,7 @@ describe('interactive staged review', () => {
 
     await expect(
       reviewStagedAssets({
-        stageDir: '/tmp/ironqr-stage',
+        stageDir: '/corpus/staging/ironqr-stage',
         reviewer: 'mia',
         assets: (async function* () {
           yield {
