@@ -103,10 +103,11 @@ export const reviewStagedAssets = async (
 ): Promise<ReviewSummary> => {
   let approved = 0;
   let rejected = 0;
-  const skipped = 0;
+  let skipped = 0;
 
   for await (const asset of options.assets) {
     if (asset.importedAssetId || asset.review.status !== 'pending') {
+      skipped += 1;
       continue;
     }
 

@@ -56,6 +56,11 @@ const readLimitedBody = (response: Response, maxBytes: number, label: string) =>
         chunks.push(chunk);
       }
     } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // cancel may fail if the stream is already closed
+      }
       reader.releaseLock();
     }
 
@@ -70,8 +75,13 @@ const readLimitedBody = (response: Response, maxBytes: number, label: string) =>
 };
 
 const assertSameHostRedirect = (from: string, to: string): void => {
-  if (normalizeHost(new URL(from).hostname) !== normalizeHost(new URL(to).hostname)) {
+  const fromUrl = new URL(from);
+  const toUrl = new URL(to);
+  if (normalizeHost(fromUrl.hostname) !== normalizeHost(toUrl.hostname)) {
     throw new Error(`Cross-host redirect not allowed: ${from} -> ${to}`);
+  }
+  if (fromUrl.protocol === 'https:' && toUrl.protocol !== 'https:') {
+    throw new Error(`Protocol downgrade not allowed: ${from} -> ${to}`);
   }
 };
 
@@ -141,14 +151,20 @@ export interface CommonsFileMeta {
   readonly attribution?: string;
 }
 
+const ENTITY_MAP: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&nbsp;': ' ',
+};
+const ENTITY_PATTERN = /&(?:amp|lt|gt|quot|nbsp);/g;
+
+/** Strips HTML tags and decodes entities in a single pass (no double-decode). */
 const stripHtmlTags = (fragment: string): string =>
   fragment
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&nbsp;/g, ' ')
+    .replace(ENTITY_PATTERN, (entity) => ENTITY_MAP[entity] ?? entity)
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -169,13 +185,18 @@ export const fetchCommonsFileMeta = async (
     `&titles=${encodeURIComponent(title)}` +
     `&prop=imageinfo&iiprop=extmetadata&format=json&origin=*`;
 
+  const MAX_API_BYTES = 1 * 1024 * 1024;
+
   try {
     const response = await fetchImpl(apiUrl, {
       headers: { ...BROWSER_HEADERS, accept: 'application/json' },
     });
     if (!response.ok) return null;
 
-    const data = (await response.json()) as {
+    const bodyBytes = await Effect.runPromise(
+      readLimitedBody(response, MAX_API_BYTES, 'Wikimedia API'),
+    );
+    const data = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
       query?: {
         pages?: Record<
           string,

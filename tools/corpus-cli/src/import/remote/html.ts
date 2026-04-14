@@ -47,15 +47,21 @@ const matchAllGroups = (pattern: RegExp, value: string, groupIndex = 1): string[
 /**
  * Strips HTML tags and decodes common HTML entities from a raw HTML fragment.
  */
+const ENTITY_MAP: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#039;': "'",
+  '&nbsp;': ' ',
+};
+const ENTITY_PATTERN = /&(?:amp|lt|gt|quot|nbsp|#039);/g;
+
+/** Strips HTML tags and decodes entities in a single pass (no double-decode). */
 const htmlToText = (fragment: string): string =>
   fragment
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(ENTITY_PATTERN, (entity) => ENTITY_MAP[entity] ?? entity)
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -88,10 +94,12 @@ const extractOgLicense = (html: string): string | null => {
 };
 
 const extractCcUrl = (html: string): string | null => {
-  // CC license URL like https://creativecommons.org/licenses/by-sa/4.0/
-  const m = /https:\/\/creativecommons\.org\/licenses\/([a-z-]+)\/([0-9.]+)/i.exec(html);
+  // Match CC license URLs in href/content attributes to avoid matching inside
+  // longer redirect URLs. The lookbehind anchors to a quote or whitespace.
+  const m = /(?<=["'\s])https:\/\/creativecommons\.org\/licenses\/([a-z-]+)\/([0-9.]+)/i.exec(html);
   if (m?.[1] && m[2]) return `CC ${m[1].toUpperCase()} ${m[2]}`;
-  if (/creativecommons\.org\/publicdomain\/zero/i.test(html)) return 'CC0 1.0';
+  if (/(?<=["'\s])https?:\/\/creativecommons\.org\/publicdomain\/zero/i.test(html))
+    return 'CC0 1.0';
   return null;
 };
 

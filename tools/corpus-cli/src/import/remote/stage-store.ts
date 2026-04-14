@@ -48,6 +48,8 @@ export const getAssetManifestPath = (stageDir: string, assetId: string): string 
 };
 
 export const getAssetImagePath = (stageDir: string, asset: StagedRemoteAsset): string => {
+  assertSafeSlug(asset.id, 'asset id');
+  assertSafeSlug(asset.imageFileName, 'image filename');
   return path.join(getAssetDir(stageDir, asset.id), asset.imageFileName);
 };
 
