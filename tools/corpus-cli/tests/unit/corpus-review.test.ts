@@ -448,6 +448,20 @@ describe('QR kind detector', () => {
     );
   });
 
+  it('does not misclassify a valid URL containing MEBKM: in its path as bookmark', () => {
+    expect(detectQrKind('https://example.com/api/MEBKM:resource')).toBe('url');
+  });
+
+  it('validates otpauth and crypto as structured URIs not just prefixes', () => {
+    expect(
+      detectQrKind(
+        'otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example',
+      ),
+    ).toBe('otpauth');
+    expect(detectQrKind('bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf?amount=0.001')).toBe('crypto');
+    expect(detectQrKind('ethereum:0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BA')).toBe('crypto');
+  });
+
   it('detects email', () => {
     expect(detectQrKind('mailto:user@example.com')).toBe('email');
     expect(detectQrKind('user@example.com')).toBe('email');

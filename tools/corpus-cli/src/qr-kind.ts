@@ -18,16 +18,25 @@ const isValidUrl = (text: string, protocols: readonly string[]): boolean => {
 export const detectQrKind = (text: string): string => {
   const t = text.trim();
 
-  // MEBKM bookmark — Japanese mobile standard; may begin with a plain URL
-  // fallback before the MEBKM: record. Must be checked before the URL rule
-  // because the payload can start with http:// yet not be a plain URL.
+  // ── URI schemes validated strictly with new URL() ───────────────────────────
+  // These must be structurally valid (no unencoded whitespace, parseable).
+  // URL check runs before MEBKM so that a valid URL containing "MEBKM:" in its
+  // path (e.g. https://example.com/api/MEBKM:foo) is not misclassified.
+  if (isValidUrl(t, ['http:', 'https:', 'ftp:'])) return 'url';
+  if (isValidUrl(t, ['otpauth:'])) return 'otpauth';
+  if (isValidUrl(t, ['bitcoin:', 'bitcoincash:', 'ethereum:'])) return 'crypto';
+
+  // ── MEBKM bookmark ──────────────────────────────────────────────────────────
+  // Japanese mobile bookmark standard. Payload often begins with a plain URL
+  // fallback (for basic readers) followed by the MEBKM: record, e.g.:
+  //   http://sagasou.mobi MEBKM:TITLE:…;URL:http\://sagasou.mobi;;
+  // That URL prefix has an unencoded space so it failed isValidUrl above.
   if (/MEBKM:/i.test(t)) return 'bookmark';
 
-  // Validate URLs strictly — unencoded spaces or other invalid chars disqualify.
-  if (isValidUrl(t, ['http:', 'https:', 'ftp:'])) return 'url';
-
-  // Structured schemes — prefix matching is correct here; spaces are allowed
-  // within the value portion of these formats (e.g. SSID, phone number display).
+  // ── Structured schemes — prefix matching only ───────────────────────────────
+  // Spaces are allowed within the value portion of these formats (SSID, phone
+  // number display form, email subject/body, etc.) so strict URL parsing would
+  // produce false negatives.
   if (/^mailto:/i.test(t)) return 'email';
   if (/^tel:/i.test(t)) return 'phone';
   if (/^sms:|^smsto:/i.test(t)) return 'sms';
@@ -37,10 +46,8 @@ export const detectQrKind = (text: string): string => {
   if (/^BEGIN:VCARD/i.test(t)) return 'vcard';
   if (/^BEGIN:VEVENT/i.test(t)) return 'vevent';
   if (/^MECARD:/i.test(t)) return 'mecard';
-  if (/^otpauth:/i.test(t)) return 'otpauth';
-  if (/^bitcoin:|^bitcoincash:|^ethereum:/i.test(t)) return 'crypto';
 
-  // Bare email address with no scheme
+  // ── Bare email address (no scheme) ─────────────────────────────────────────
   if (/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(t)) return 'email';
 
   return 'text';
