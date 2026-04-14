@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Effect } from 'effect';
 import * as S from 'effect/Schema';
+import { readCorpusManifest } from '../../manifest.js';
 import { assertHttpUrl } from '../../url.js';
 import { type StagedRemoteAsset, StagedRemoteAssetSchema } from './contracts.js';
 import { tryPromise } from './effect.js';
@@ -160,9 +161,21 @@ export const readStagedRemoteAssets = (stageDir: string): Promise<readonly Stage
 
 export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
   return tryPromise(async () => {
-    const stagingRoot = getStagingRoot(repoRoot);
     const seenSourceSha256 = new Set<string>();
 
+    // Collect hashes from already-approved corpus assets so scraping never
+    // re-presents an image that has already been imported, even after staging
+    // directories are cleared.
+    const manifest = await readCorpusManifest(repoRoot);
+    for (const asset of manifest.assets) {
+      if (asset.sourceSha256) {
+        seenSourceSha256.add(asset.sourceSha256);
+      }
+    }
+
+    // Also collect from any remaining staging run dirs (cross-run dedup within
+    // the same staging lifetime).
+    const stagingRoot = getStagingRoot(repoRoot);
     let runDirs: readonly string[];
     try {
       const entries = await readdir(stagingRoot, { withFileTypes: true });

@@ -403,6 +403,52 @@ describe('remote corpus import', () => {
     expect(second.assets[0]?.sourcePageUrl).toBe('https://pixabay.com/photos/second-qr-456/');
   });
 
+  it('skips already-approved corpus assets on a fresh scrape after staging is cleared', async () => {
+    const repoRoot = await createRepoRoot();
+
+    // First run: scrape and approve the first image
+    const first = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 1,
+      },
+      buildMockFetch(),
+    );
+    expect(first.assets).toHaveLength(1);
+    const firstAsset = first.assets[0];
+    if (!firstAsset) throw new Error('expected staged asset');
+
+    await updateStagedRemoteAsset(first.stageDir, {
+      ...firstAsset,
+      review: { status: 'approved', reviewer: 'mia', reviewedAt: '2026-04-10T12:00:00.000Z' },
+    });
+    await importStagedRemoteAssets({ repoRoot, stageDir: first.stageDir });
+
+    const manifest = await readCorpusManifest(repoRoot);
+    expect(manifest.assets).toHaveLength(1);
+
+    // Simulate clearing staging (delete staging dir so cross-run dedup has nothing to find there)
+    const { rm } = await import('node:fs/promises');
+    await rm(first.stageDir, { recursive: true, force: true });
+
+    // Second run with limit: 2 — the already-approved first image must be skipped,
+    // so only the second image gets staged
+    const second = await scrapeRemoteAssets(
+      {
+        repoRoot,
+        seedUrls: ['https://pixabay.com/images/search/qr%20code/'],
+        label: 'qr-positive',
+        limit: 2,
+      },
+      buildMockFetch(),
+    );
+
+    expect(second.assets).toHaveLength(1);
+    expect(second.assets[0]?.sourcePageUrl).toBe('https://pixabay.com/photos/second-qr-456/');
+  });
+
   it('imports approved staged metadata for license review, ground truth, and auto-scan evidence', async () => {
     const repoRoot = await createRepoRoot();
 
