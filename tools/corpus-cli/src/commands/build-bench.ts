@@ -10,12 +10,17 @@ import {
 import { assertInteractiveSession } from '../tty.js';
 import { CliCancelledError } from '../ui.js';
 
+const MAX_SNIPPET_DISPLAY_LENGTH = 28;
+const KEYBINDINGS_HELP = 'space toggle · p/o preview · enter confirm · ctrl+c cancel';
+
 const truncate = (value: string, maxLength: number): string => {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
 };
 
 const renderAssetRow = (asset: BenchEligibleAsset): string => {
-  const snippet = asset.textSnippet ? ` ${JSON.stringify(truncate(asset.textSnippet, 28))}` : '';
+  const snippet = asset.textSnippet
+    ? ` ${JSON.stringify(truncate(asset.textSnippet, MAX_SNIPPET_DISPLAY_LENGTH))}`
+    : '';
   const qrCount = asset.qrCount === null ? 'qr=?' : `qr=${asset.qrCount}`;
   return `${asset.id}  ${asset.label}  ${asset.width}×${asset.height}  ${qrCount}${snippet}`;
 };
@@ -30,7 +35,7 @@ const selectBenchAssets = async (
 
   const selected = new Set<string>();
   let cursor = 0;
-  let note = 'space toggle · p/o preview · enter confirm · ctrl+c cancel';
+  let note = KEYBINDINGS_HELP;
   let previewing = false;
 
   const render = () => {
@@ -87,14 +92,14 @@ const selectBenchAssets = async (
 
       if (key.name === 'up' || key.name === 'k') {
         cursor = cursor === 0 ? assets.length - 1 : cursor - 1;
-        note = 'space toggle · p/o preview · enter confirm · ctrl+c cancel';
+        note = KEYBINDINGS_HELP;
         render();
         return;
       }
 
       if (key.name === 'down' || key.name === 'j') {
         cursor = cursor === assets.length - 1 ? 0 : cursor + 1;
-        note = 'space toggle · p/o preview · enter confirm · ctrl+c cancel';
+        note = KEYBINDINGS_HELP;
         render();
         return;
       }
@@ -151,6 +156,10 @@ const selectBenchAssets = async (
   });
 };
 
+/**
+ * Run the `build-bench` command: select approved corpus assets and write the perfbench fixture.
+ * @returns Number of selected assets and the output manifest path.
+ */
 export const runBuildBenchCommand = async (
   context: AppContext,
   args: ParsedArgs,

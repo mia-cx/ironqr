@@ -2,8 +2,10 @@ import { mkdir, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises
 import path from 'node:path';
 import { Effect } from 'effect';
 import * as S from 'effect/Schema';
+import { isEnoentError } from '../../fs-error.js';
 import { readCorpusManifest, readCorpusRejections } from '../../manifest.js';
 import { assertHttpUrl } from '../../url.js';
+import { assertCompatibleVersion } from '../../version.js';
 import { type StagedRemoteAsset, StagedRemoteAssetSchema } from './contracts.js';
 import { tryPromise } from './effect.js';
 import { assertAllowedStagedAssetUrls } from './policy.js';
@@ -26,10 +28,12 @@ const validateStagedAsset = (asset: StagedRemoteAsset): void => {
   assertAllowedStagedAssetUrls(asset);
 };
 
+/** Returns the absolute path to the corpus staging root directory. */
 export const getStagingRoot = (repoRoot: string): string => {
   return path.join(repoRoot, 'corpus', 'staging');
 };
 
+/** Creates and returns a timestamped run directory inside the staging root. */
 export const ensureStageDir = (repoRoot: string) => {
   return tryPromise(async () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -43,16 +47,28 @@ const getAssetDir = (stageDir: string, assetId: string): string => {
   return path.join(stageDir, assetId);
 };
 
+/** Returns the path to an asset's `manifest.json` inside `stageDir`. */
 export const getAssetManifestPath = (stageDir: string, assetId: string): string => {
   return path.join(getAssetDir(stageDir, assetId), 'manifest.json');
 };
 
+/** Returns the absolute path to the staged image file for `asset`. */
 export const getAssetImagePath = (stageDir: string, asset: StagedRemoteAsset): string => {
-  assertSafeSlug(asset.id, 'asset id');
-  assertSafeSlug(asset.imageFileName, 'image filename');
-  return path.join(getAssetDir(stageDir, asset.id), asset.imageFileName);
+  return resolveStagedAssetPath(stageDir, asset.id, asset.imageFileName);
 };
 
+const writeAssetManifest = async (stageDir: string, asset: StagedRemoteAsset): Promise<void> => {
+  await writeFile(
+    getAssetManifestPath(stageDir, asset.id),
+    `${JSON.stringify(asset, null, 2)}\n`,
+    'utf8',
+  );
+};
+
+/**
+ * Resolves `fileName` inside `assetId`'s subdirectory of `stageDir`.
+ * Throws if the result would escape the stage directory (path-traversal guard).
+ */
 export const resolveStagedAssetPath = (
   stageDir: string,
   assetId: string,
@@ -74,6 +90,7 @@ export const resolveStagedAssetPath = (
   return absoluteTarget;
 };
 
+/** Validates and writes `asset`'s manifest JSON and image `bytes` to `stageDir`. Returns an Effect. */
 export const writeStagedRemoteAssetEffect = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -84,14 +101,11 @@ export const writeStagedRemoteAssetEffect = (
     const assetDir = getAssetDir(stageDir, asset.id);
     await mkdir(assetDir, { recursive: true });
     await writeFile(path.join(assetDir, asset.imageFileName), bytes);
-    await writeFile(
-      getAssetManifestPath(stageDir, asset.id),
-      `${JSON.stringify(asset, null, 2)}\n`,
-      'utf8',
-    );
+    await writeAssetManifest(stageDir, asset);
   });
 };
 
+/** Validates and writes `asset`'s manifest JSON and image `bytes` to `stageDir`. */
 export const writeStagedRemoteAsset = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -100,20 +114,18 @@ export const writeStagedRemoteAsset = (
   return Effect.runPromise(writeStagedRemoteAssetEffect(stageDir, asset, bytes));
 };
 
+/** Overwrites the manifest JSON for an already-staged asset. Returns an Effect. */
 export const updateStagedRemoteAssetEffect = (
   stageDir: string,
   asset: StagedRemoteAsset,
 ): Effect.Effect<void, unknown> => {
   return tryPromise(async () => {
     validateStagedAsset(asset);
-    await writeFile(
-      getAssetManifestPath(stageDir, asset.id),
-      `${JSON.stringify(asset, null, 2)}\n`,
-      'utf8',
-    );
+    await writeAssetManifest(stageDir, asset);
   });
 };
 
+/** Overwrites the manifest JSON for an already-staged asset. */
 export const updateStagedRemoteAsset = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -121,6 +133,7 @@ export const updateStagedRemoteAsset = (
   return Effect.runPromise(updateStagedRemoteAssetEffect(stageDir, asset));
 };
 
+/** Reads, decodes, and validates a single staged asset by ID. Returns an Effect. */
 export const readStagedRemoteAssetEffect = (
   stageDir: string,
   assetId: string,
@@ -128,12 +141,15 @@ export const readStagedRemoteAssetEffect = (
   return Effect.gen(function* () {
     assertSafeSlug(assetId, 'asset id');
     const raw = yield* tryPromise(() => readFile(getAssetManifestPath(stageDir, assetId), 'utf8'));
+    const manifestPath = getAssetManifestPath(stageDir, assetId);
     const asset = decodeStagedAsset(JSON.parse(raw));
+    assertCompatibleVersion(asset.version, manifestPath);
     validateStagedAsset(asset);
     return asset;
   });
 };
 
+/** Reads, decodes, and validates a single staged asset by ID. */
 export const readStagedRemoteAsset = (
   stageDir: string,
   assetId: string,
@@ -141,6 +157,7 @@ export const readStagedRemoteAsset = (
   return Effect.runPromise(readStagedRemoteAssetEffect(stageDir, assetId));
 };
 
+/** Reads all staged assets from `stageDir`, sorted by ID. Returns an Effect. */
 export const readStagedRemoteAssetsEffect = (
   stageDir: string,
 ): Effect.Effect<readonly StagedRemoteAsset[], unknown> => {
@@ -157,10 +174,12 @@ export const readStagedRemoteAssetsEffect = (
   });
 };
 
+/** Reads all staged assets from `stageDir`, sorted by ID. */
 export const readStagedRemoteAssets = (stageDir: string): Promise<readonly StagedRemoteAsset[]> => {
   return Effect.runPromise(readStagedRemoteAssetsEffect(stageDir));
 };
 
+/** Deletes the asset subdirectory for `assetId` from `stageDir`. */
 export const removeStagedAssetDirEffect = (stageDir: string, assetId: string) => {
   return tryPromise(async () => {
     assertSafeSlug(assetId, 'asset id');
@@ -182,17 +201,42 @@ export const removeRunDirIfEmptyEffect = (stageDir: string) => {
   });
 };
 
-export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
+/** Normalize a URL for dedup comparison (decode percent-encoding so File%3A matches File:). */
+export const normalizeUrlForDedup = (url: string): string => {
+  try {
+    return decodeURIComponent(url);
+  } catch {
+    return url;
+  }
+};
+
+export interface ExistingScrapeState {
+  readonly seenSourceSha256: Set<string>;
+  readonly seenSourcePageUrls: Set<string>;
+}
+
+/**
+ * Collects `sourceSha256` hashes and source page URLs from the corpus manifest,
+ * rejections log, and any live staging runs. Used to skip images and pages that
+ * have already been staged, imported, or rejected.
+ */
+export const collectExistingScrapeStateEffect = (repoRoot: string) => {
   return tryPromise(async () => {
     const seenSourceSha256 = new Set<string>();
+    const seenSourcePageUrls = new Set<string>();
 
-    // Collect hashes from already-approved corpus assets so scraping never
-    // re-presents an image that has already been imported, even after staging
-    // directories are cleared.
+    // Collect hashes and source page URLs from already-imported corpus assets
+    // so scraping never re-presents an image that has already been imported,
+    // even after staging directories are cleared.
     const manifest = await readCorpusManifest(repoRoot);
     for (const asset of manifest.assets) {
       if (asset.sourceSha256) {
         seenSourceSha256.add(asset.sourceSha256);
+      }
+      for (const source of asset.provenance) {
+        if (source.kind === 'remote') {
+          seenSourcePageUrls.add(normalizeUrlForDedup(source.sourcePageUrl));
+        }
       }
     }
 
@@ -212,8 +256,8 @@ export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
         .filter((entry) => entry.isDirectory())
         .map((entry) => path.join(stagingRoot, entry.name));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return seenSourceSha256;
+      if (isEnoentError(error)) {
+        return { seenSourceSha256, seenSourcePageUrls };
       }
       throw error;
     }
@@ -225,18 +269,24 @@ export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
         const manifestPath = path.join(runDir, assetEntry.name, 'manifest.json');
         try {
           const raw = await readFile(manifestPath, 'utf8');
-          const parsed = JSON.parse(raw) as { readonly sourceSha256?: unknown };
+          const parsed = JSON.parse(raw) as {
+            readonly sourceSha256?: unknown;
+            readonly sourcePageUrl?: unknown;
+          };
           if (typeof parsed.sourceSha256 === 'string' && parsed.sourceSha256.length > 0) {
             seenSourceSha256.add(parsed.sourceSha256);
           }
+          if (typeof parsed.sourcePageUrl === 'string' && parsed.sourcePageUrl.length > 0) {
+            seenSourcePageUrls.add(normalizeUrlForDedup(parsed.sourcePageUrl));
+          }
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          if (!isEnoentError(error)) {
             throw error;
           }
         }
       }
     }
 
-    return seenSourceSha256;
+    return { seenSourceSha256, seenSourcePageUrls } satisfies ExistingScrapeState;
   });
 };

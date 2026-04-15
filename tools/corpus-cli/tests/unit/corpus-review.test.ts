@@ -12,6 +12,7 @@ import { classifyLicense, isAutoRejectLicense } from '../../src/license.js';
 import { readCorpusRejections } from '../../src/manifest.js';
 import { detectQrKind } from '../../src/qr-kind.js';
 import { reviewStagedAssets } from '../../src/review.js';
+import { MAJOR_VERSION } from '../../src/version.js';
 import { makeTestDir } from '../helpers.js';
 
 const LISTING_HTML = `
@@ -294,7 +295,7 @@ describe('interactive staged review', () => {
         reviewer: 'mia',
         assets: (async function* () {
           yield {
-            version: 1 as const,
+            version: MAJOR_VERSION,
             id: 'stage-deadbeefcafef00d',
             suggestedLabel: 'qr-positive' as const,
             imageFileName: 'image.webp',

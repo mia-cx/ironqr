@@ -1,5 +1,6 @@
 import type { CliUi } from './ui.js';
 
+/** Runtime dependencies injected into every CLI command handler. */
 export interface AppContext {
   readonly repoRoot: string;
   readonly ui: CliUi;

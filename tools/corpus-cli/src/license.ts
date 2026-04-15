@@ -8,6 +8,7 @@
  */
 export type LicensePermissiveness = 'permissive' | 'non-commercial' | 'restricted' | 'unknown';
 
+/** Classify a license string by its permissiveness for corpus use. */
 export const classifyLicense = (license: string): LicensePermissiveness => {
   const s = license.toLowerCase().trim();
 
@@ -34,5 +35,6 @@ export const classifyLicense = (license: string): LicensePermissiveness => {
   return 'unknown';
 };
 
+/** Return `true` if the license string should trigger automatic rejection (restricted). */
 export const isAutoRejectLicense = (license: string): boolean =>
   classifyLicense(license) === 'restricted';

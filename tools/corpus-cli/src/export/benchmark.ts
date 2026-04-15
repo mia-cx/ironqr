@@ -1,7 +1,8 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as S from 'effect/Schema';
 import sharp from 'sharp';
+import { isEnoentError } from '../fs-error.js';
 import { classifyLicense } from '../license.js';
 import {
   ensureCorpusLayout,
@@ -15,11 +16,13 @@ import {
 import type { CorpusAsset, RealWorldBenchmarkCorpus, RealWorldBenchmarkEntry } from '../schema.js';
 import { RealWorldBenchmarkCorpusSchema } from '../schema.js';
 
+/** Result of writing a real-world benchmark corpus file. */
 export interface WriteRealWorldBenchmarkCorpusResult {
   readonly outputPath: string;
   readonly corpus: RealWorldBenchmarkCorpus;
 }
 
+/** An approved corpus asset enriched with image dimensions for the bench-selection UI. */
 export interface BenchEligibleAsset {
   readonly id: string;
   readonly label: RealWorldBenchmarkEntry['label'];
@@ -66,6 +69,7 @@ const toBenchmarkEntry = (repoRoot: string, asset: CorpusAsset): RealWorldBenchm
   };
 };
 
+/** Build the full real-world benchmark corpus from all approved assets and write it to disk. */
 export const writeRealWorldBenchmarkCorpus = async (
   repoRoot: string,
 ): Promise<WriteRealWorldBenchmarkCorpusResult> => {
@@ -76,6 +80,7 @@ export const writeRealWorldBenchmarkCorpus = async (
   return { outputPath, corpus };
 };
 
+/** Build the real-world benchmark corpus object from all approved corpus assets (without writing). */
 export const buildRealWorldBenchmarkCorpus = async (
   repoRoot: string,
 ): Promise<RealWorldBenchmarkCorpus> => {
@@ -92,6 +97,7 @@ export const buildRealWorldBenchmarkCorpus = async (
   };
 };
 
+/** List all approved corpus assets with image dimensions, suitable for the bench-selection UI. */
 export const listBenchEligibleAssets = async (
   repoRoot: string,
 ): Promise<readonly BenchEligibleAsset[]> => {
@@ -122,6 +128,7 @@ export const listBenchEligibleAssets = async (
   );
 };
 
+/** Read the committed perfbench fixture manifest; returns an empty corpus when not yet written. */
 export const readRealWorldBenchmarkFixture = async (
   repoRoot: string,
 ): Promise<RealWorldBenchmarkCorpus> => {
@@ -131,7 +138,7 @@ export const readRealWorldBenchmarkFixture = async (
     const raw = await readFile(fixturePath, 'utf8');
     return decodeRealWorldBenchmarkCorpus(JSON.parse(raw));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (isEnoentError(error)) {
       return { positives: [], negatives: [] };
     }
 
@@ -139,6 +146,7 @@ export const readRealWorldBenchmarkFixture = async (
   }
 };
 
+/** Generate an `ATTRIBUTION.md` string for benchmark entries that require attribution. */
 export const generateAttributionMd = (entries: readonly RealWorldBenchmarkEntry[]): string => {
   const needsAttribution = entries.filter((e) => {
     const license = e.confirmedLicense;
@@ -177,6 +185,10 @@ export const generateAttributionMd = (entries: readonly RealWorldBenchmarkEntry[
   return lines.join('\n');
 };
 
+/**
+ * Write the committed perfbench fixture for a selected subset of approved corpus assets.
+ * Atomically replaces the fixture directory and regenerates `ATTRIBUTION.md`.
+ */
 export const writeSelectedRealWorldBenchmarkFixture = async (
   repoRoot: string,
   assetIds: readonly string[],
@@ -194,20 +206,23 @@ export const writeSelectedRealWorldBenchmarkFixture = async (
   });
 
   const fixtureRoot = getPerfbenchFixtureRoot(repoRoot);
+  const tmpRoot = `${fixtureRoot}.tmp`;
   const fixtureAssetsRoot = getPerfbenchFixtureAssetsRoot(repoRoot);
-  await rm(fixtureRoot, { recursive: true, force: true });
-  await mkdir(fixtureAssetsRoot, { recursive: true });
+  const tmpAssetsRoot = path.join(tmpRoot, path.relative(fixtureRoot, fixtureAssetsRoot));
+  await rm(tmpRoot, { recursive: true, force: true });
+  await mkdir(tmpAssetsRoot, { recursive: true });
 
   const copiedEntries = await Promise.all(
     selectedEntries.map(async (entry) => {
       const sourcePath = path.join(repoRoot, entry.assetPath);
       const extension = path.extname(sourcePath) || '.webp';
-      const targetPath = path.join(fixtureAssetsRoot, `${entry.id}${extension}`);
-      await copyFile(sourcePath, targetPath);
+      const finalTargetPath = path.join(fixtureAssetsRoot, `${entry.id}${extension}`);
+      const tmpTargetPath = path.join(tmpAssetsRoot, `${entry.id}${extension}`);
+      await copyFile(sourcePath, tmpTargetPath);
 
       return {
         ...entry,
-        assetPath: toRepoRelativePath(repoRoot, targetPath),
+        assetPath: toRepoRelativePath(repoRoot, finalTargetPath),
       } satisfies RealWorldBenchmarkEntry;
     }),
   );
@@ -222,11 +237,15 @@ export const writeSelectedRealWorldBenchmarkFixture = async (
   };
 
   const outputPath = getPerfbenchFixtureManifestPath(repoRoot);
-  await writeFile(outputPath, `${JSON.stringify(nextCorpus, null, 2)}\n`, 'utf8');
+  const tmpManifestPath = path.join(tmpRoot, path.relative(fixtureRoot, outputPath));
+  await writeFile(tmpManifestPath, `${JSON.stringify(nextCorpus, null, 2)}\n`, 'utf8');
 
   const allEntries = [...nextCorpus.positives, ...nextCorpus.negatives];
   const attributionMd = generateAttributionMd(allEntries);
-  await writeFile(path.join(fixtureRoot, 'ATTRIBUTION.md'), attributionMd, 'utf8');
+  await writeFile(path.join(tmpRoot, 'ATTRIBUTION.md'), attributionMd, 'utf8');
+
+  await rm(fixtureRoot, { recursive: true, force: true });
+  await rename(tmpRoot, fixtureRoot);
 
   return { outputPath, corpus: nextCorpus };
 };

@@ -1,5 +1,5 @@
-import { assertAllowedStagedAssetUrls } from './import/remote/policy.js';
 import {
+  assertAllowedStagedAssetUrls,
   resolveStagedAssetPath,
   type StagedRemoteAsset,
   type StageReviewStatus,
@@ -8,14 +8,7 @@ import {
 import { isAutoRejectLicense } from './license.js';
 import type { AutoScan, CorpusRejectionReason, GroundTruth } from './schema.js';
 
-interface ScanAssetResult {
-  readonly attempted: boolean;
-  readonly succeeded: boolean;
-  readonly results: ReadonlyArray<{
-    readonly text: string;
-    readonly kind?: string | undefined;
-  }>;
-}
+type ScanAssetResult = Omit<AutoScan, 'acceptedAsTruth'>;
 
 interface ReviewStagedAssetsOptions {
   readonly stageDir: string;
@@ -97,6 +90,10 @@ const buildReviewedAsset = (
   };
 };
 
+/**
+ * Iterate over staged assets and run the interactive review flow for each pending one.
+ * @returns Counts of approved, rejected, and skipped assets.
+ */
 export const reviewStagedAssets = async (
   options: ReviewStagedAssetsOptions,
 ): Promise<ReviewSummary> => {
@@ -189,16 +186,9 @@ export const reviewStagedAssets = async (
   return { approved, rejected, skipped };
 };
 
-const toAutoScan = (result: ScanAssetResult, acceptedAsTruth?: boolean): AutoScan => {
-  return {
-    attempted: result.attempted,
-    succeeded: result.succeeded,
-    results: result.results.map((entry) => ({
-      text: entry.text,
-      ...(entry.kind ? { kind: entry.kind } : {}),
-    })),
-    ...(acceptedAsTruth !== undefined ? { acceptedAsTruth } : {}),
-  };
-};
+const toAutoScan = (result: ScanAssetResult, acceptedAsTruth?: boolean): AutoScan => ({
+  ...result,
+  ...(acceptedAsTruth !== undefined ? { acceptedAsTruth } : {}),
+});
 
 export type { ReviewStagedAssetsOptions, ReviewSummary, ScanAssetResult, StageReviewStatus };

@@ -1,55 +1,35 @@
 import path from 'node:path';
-import { getOption, type ParsedArgs, parseLimit } from '../args.js';
+import { getOption, type ParsedArgs } from '../args.js';
 import { buildFilteredCliCommand } from '../command-text.js';
 import type { AppContext } from '../context.js';
 import { type ScrapeRemoteAssetsResult, scrapeRemoteAssets } from '../import/remote.js';
-import { assertInteractiveSession } from '../tty.js';
-import { splitUrlInput } from './shared.js';
+import { isInteractiveSession } from '../tty.js';
+import { resolveSeedUrls, resolveStageLimit } from './shared.js';
+
+const DEFAULT_FETCH_DELAY_MS = 1000;
 
 interface ScrapeInputs {
   readonly seedUrls: readonly string[];
   readonly limit?: number;
 }
 
+/** Resolve seed URLs and optional limit from args or interactive prompts. */
 export const resolveScrapeInputs = async (
   context: AppContext,
   args: ParsedArgs,
 ): Promise<ScrapeInputs> => {
-  let seedUrls = [...args.positionals];
-  if (seedUrls.length === 0) {
-    assertInteractiveSession('Seed URL required in non-interactive mode');
-    seedUrls = splitUrlInput(
-      await context.ui.text({
-        message: 'Seed URL(s), separated by spaces or commas',
-        placeholder:
-          'https://commons.wikimedia.org/w/index.php?search=QR+Code&title=Special%3AMediaSearch&type=image',
-        validate: (value) =>
-          splitUrlInput(value).length > 0 ? undefined : 'At least one URL is required',
-      }),
-    );
-  }
+  const seedUrls = await resolveSeedUrls(context, args);
 
-  let limit = getOption(args, 'limit') ? parseLimit(getOption(args, 'limit')) : undefined;
-  if (getOption(args, 'limit') === undefined && process.stdin.isTTY && process.stdout.isTTY) {
-    limit = parseLimit(
-      await context.ui.text({
-        message: 'How many images should be staged this round?',
-        initialValue: '25',
-        validate: (value) => {
-          try {
-            parseLimit(value);
-            return undefined;
-          } catch (error) {
-            return error instanceof Error ? error.message : String(error);
-          }
-        },
-      }),
-    );
+  const limitOption = getOption(args, 'limit');
+  let limit: number | undefined;
+  if (limitOption || isInteractiveSession()) {
+    limit = await resolveStageLimit(context, args);
   }
 
   return { seedUrls, ...(limit ? { limit } : {}) };
 };
 
+/** Run the `scrape` command: fetch remote images into a new staging directory. */
 export const runScrapeCommand = async (
   context: AppContext,
   args: ParsedArgs,
@@ -61,7 +41,7 @@ export const runScrapeCommand = async (
       seedUrls: inputs.seedUrls,
       label: 'qr-positive',
       ...(inputs.limit ? { limit: inputs.limit } : {}),
-      fetchDelayMs: 1000,
+      fetchDelayMs: DEFAULT_FETCH_DELAY_MS,
       log: (line) => {
         if (context.ui.verbose) {
           context.ui.debug(line);

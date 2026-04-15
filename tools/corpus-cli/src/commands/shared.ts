@@ -1,11 +1,14 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { getOption, type ParsedArgs, parseLimit } from '../args.js';
 import type { AppContext } from '../context.js';
+import { isEnoentError } from '../fs-error.js';
 import { detectQrKind } from '../qr-kind.js';
 import type { AutoScan, CorpusAssetLabel, GroundTruth, ReviewStatus } from '../schema.js';
 import { assertInteractiveSession } from '../tty.js';
 import type { CliUi } from '../ui.js';
 
+/** Split a whitespace/comma-separated URL string into individual URL strings. */
 export const splitUrlInput = (value: string): string[] => {
   return value
     .split(/[\s,]+/)
@@ -13,6 +16,7 @@ export const splitUrlInput = (value: string): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
+/** Split a newline/comma-separated path string into individual path strings. */
 export const splitPathInput = (value: string): string[] => {
   return value
     .split(/[\n,]+/)
@@ -20,6 +24,7 @@ export const splitPathInput = (value: string): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
+/** Interactively prompt the user to choose a corpus asset label. */
 export const promptLabel = async (
   ui: CliUi,
   initialValue: CorpusAssetLabel = 'qr-positive',
@@ -39,6 +44,7 @@ export const promptLabel = async (
   });
 };
 
+/** Interactively prompt the user to choose a review status. */
 export const promptReviewStatus = async (
   ui: CliUi,
   initialValue: ReviewStatus = 'approved',
@@ -55,6 +61,7 @@ export const promptReviewStatus = async (
   });
 };
 
+/** Prompt for optional freeform text; returns `undefined` when the input is blank. */
 export const promptOptionalText = async (
   ui: CliUi,
   message: string,
@@ -68,6 +75,7 @@ export const promptOptionalText = async (
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+/** Resolve the reviewer username from an explicit value, GitHub CLI detection, or interactive prompt. */
 export const resolveReviewer = async (
   context: Pick<AppContext, 'detectGithubLogin' | 'ui'>,
   explicitReviewer?: string,
@@ -94,6 +102,7 @@ const getStageRoot = (repoRoot: string): string => {
   return path.join(repoRoot, 'corpus', 'staging');
 };
 
+/** List all staging run directories under `corpus/staging`, newest first. */
 export const listStageDirectories = async (repoRoot: string): Promise<readonly string[]> => {
   try {
     const entries = await readdir(getStageRoot(repoRoot), { withFileTypes: true });
@@ -102,7 +111,7 @@ export const listStageDirectories = async (repoRoot: string): Promise<readonly s
       .map((entry) => path.join(getStageRoot(repoRoot), entry.name))
       .sort((left, right) => right.localeCompare(left));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (isEnoentError(error)) {
       return [];
     }
 
@@ -110,6 +119,7 @@ export const listStageDirectories = async (repoRoot: string): Promise<readonly s
   }
 };
 
+/** Return `true` if the path appears to be a staging directory (exists, is a directory with sub-entries). */
 export const isLikelyStageDir = async (targetPath: string): Promise<boolean> => {
   try {
     const absolutePath = path.resolve(targetPath);
@@ -125,6 +135,7 @@ export const isLikelyStageDir = async (targetPath: string): Promise<boolean> => 
   }
 };
 
+/** Resolve a staging directory from an explicit path or by prompting the user to choose one. */
 export const promptStageDir = async (
   context: Pick<AppContext, 'repoRoot' | 'ui'>,
   explicitStageDir?: string,
@@ -133,9 +144,10 @@ export const promptStageDir = async (
     return path.resolve(explicitStageDir);
   }
 
+  assertInteractiveSession('Stage dir required in non-interactive mode');
+
   const stageDirs = await listStageDirectories(context.repoRoot);
   if (stageDirs.length === 0) {
-    assertInteractiveSession('Stage dir required in non-interactive mode');
     return path.resolve(
       await context.ui.text({
         message: 'Stage directory',
@@ -145,7 +157,6 @@ export const promptStageDir = async (
     );
   }
 
-  assertInteractiveSession('Stage dir required in non-interactive mode');
   return context.ui.select({
     message: 'Choose staged scrape run',
     options: stageDirs.map((stageDir) => ({
@@ -155,6 +166,7 @@ export const promptStageDir = async (
   });
 };
 
+/** Interactively prompt for one or more local image file paths. */
 export const promptLocalPaths = async (
   ui: CliUi,
   initialPaths: readonly string[] = [],
@@ -171,6 +183,7 @@ export const promptLocalPaths = async (
   return splitPathInput(value).map((entry) => path.resolve(entry));
 };
 
+/** Interactively prompt the reviewer for the number of QR codes visible in an image. */
 export const promptQrCount = async (
   ui: CliUi,
   message = 'How many QR codes are present?',
@@ -193,6 +206,10 @@ export const promptQrCount = async (
   return Number(value);
 };
 
+/**
+ * Interactively prompt the reviewer to enter ground-truth QR data for each code in an image.
+ * @param prefills Pre-populated text/kind values from an automated scan.
+ */
 export const promptManualGroundTruth = async (
   ui: CliUi,
   qrCount: number,
@@ -212,11 +229,11 @@ export const promptManualGroundTruth = async (
       validate: (value) => (value.trim().length > 0 ? undefined : 'QR data is required'),
     });
     const autoKind = detectQrKind(text);
-    const kind = await promptOptionalText(
-      ui,
-      `QR #${label} kind (optional)`,
-      prefill?.kind ?? autoKind,
-    );
+    // Prefer autoKind over a generic 'text' from the scanner — detectQrKind
+    // understands structured payloads (WIFI:, BEGIN:VCARD, etc.) that ironqr
+    // reports as plain 'text'.
+    const suggestedKind = prefill?.kind && prefill.kind !== 'text' ? prefill.kind : autoKind;
+    const kind = await promptOptionalText(ui, `QR #${label} kind (optional)`, suggestedKind);
     const verifiedWith = await promptOptionalText(ui, `QR #${label} verified with (optional)`);
 
     codes.push({
@@ -229,6 +246,10 @@ export const promptManualGroundTruth = async (
   return { qrCount, codes };
 };
 
+/**
+ * Derive a `GroundTruth` directly from a successful `AutoScan` result when the QR count matches.
+ * Returns `undefined` when the scan did not succeed or the count differs.
+ */
 export const buildAutoScanGroundTruth = (
   autoScan: AutoScan,
   qrCount: number,
@@ -244,4 +265,52 @@ export const buildAutoScanGroundTruth = (
       ...(result.kind ? { kind: result.kind } : {}),
     })),
   };
+};
+
+/** Resolve scrape seed URLs from positional args or an interactive prompt. */
+export const resolveSeedUrls = async (
+  context: Pick<AppContext, 'ui'>,
+  args: ParsedArgs,
+): Promise<readonly string[]> => {
+  if (args.positionals.length > 0) {
+    return args.positionals;
+  }
+
+  assertInteractiveSession('Seed URL required in non-interactive mode');
+  return splitUrlInput(
+    await context.ui.text({
+      message: 'Seed URL(s), separated by spaces or commas',
+      placeholder:
+        'https://commons.wikimedia.org/w/index.php?search=QR+Code&title=Special%3AMediaSearch&type=image',
+      validate: (value) =>
+        splitUrlInput(value).length > 0 ? undefined : 'At least one URL is required',
+    }),
+  );
+};
+
+/** Resolve the staging limit from `--limit` option or an interactive prompt. */
+export const resolveStageLimit = async (
+  context: Pick<AppContext, 'ui'>,
+  args: ParsedArgs,
+): Promise<number> => {
+  const explicitLimit = getOption(args, 'limit');
+  if (explicitLimit) {
+    return parseLimit(explicitLimit);
+  }
+
+  assertInteractiveSession('Stage limit required in non-interactive mode');
+  return parseLimit(
+    await context.ui.text({
+      message: 'How many images should be staged this round?',
+      initialValue: '25',
+      validate: (value) => {
+        try {
+          parseLimit(value);
+          return undefined;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+    }),
+  );
 };

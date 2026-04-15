@@ -1,3 +1,7 @@
+/**
+ * A backpressure-free async queue that bridges push-based producers with async-iteration consumers.
+ * Call `push` to enqueue items and `close` when the producer is done.
+ */
 export class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
   private readonly waiters: Array<(value: IteratorResult<T>) => void> = [];
@@ -22,7 +26,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     while (this.waiters.length > 0) {
       const waiter = this.waiters.shift();
       if (!waiter) break;
-      waiter({ value: undefined as unknown as T, done: true });
+      waiter({ value: undefined, done: true } as IteratorResult<T>);
     }
   }
 
@@ -30,12 +34,11 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     return {
       next: () => {
         if (this.items.length > 0) {
-          const value = this.items.shift() as T;
-          return Promise.resolve({ value, done: false });
+          return Promise.resolve({ value: this.items.shift()!, done: false });
         }
 
         if (this.closed) {
-          return Promise.resolve({ value: undefined as unknown as T, done: true });
+          return Promise.resolve({ value: undefined, done: true } as IteratorResult<T>);
         }
 
         return new Promise((resolve) => {

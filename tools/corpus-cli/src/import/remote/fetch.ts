@@ -2,7 +2,10 @@ import { Effect } from 'effect';
 import { tryPromise } from './effect.js';
 import type { SourcePage } from './page.js';
 import { normalizeHost } from './policy.js';
+import { normalizeUrlForDedup } from './stage-store.js';
+import { htmlToText, stripAnsi } from './text.js';
 
+/** Minimal subset of the Fetch API required by scrape utilities; compatible with `globalThis.fetch`. */
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
@@ -85,6 +88,10 @@ const assertSameHostRedirect = (from: string, to: string): void => {
   }
 };
 
+/**
+ * Fetches `url` following same-host redirects up to `MAX_SAME_HOST_REDIRECTS`.
+ * Throws on cross-host redirects, protocol downgrades, or non-2xx responses.
+ */
 export const fetchFollowingSameHost = (
   url: string,
   fetchImpl: FetchLike,
@@ -122,6 +129,10 @@ export const fetchFollowingSameHost = (
   });
 };
 
+/**
+ * Fetches an HTML page at `url` and returns a `SourcePage` with its final URL, title, and raw HTML.
+ * `isDetail` flags whether this is a detail page (vs. a listing/seed page).
+ */
 export const fetchText = (url: string, fetchImpl: FetchLike, isDetail: boolean) => {
   return Effect.gen(function* () {
     const { response, finalUrl } = yield* fetchFollowingSameHost(
@@ -146,83 +157,227 @@ export const fetchText = (url: string, fetchImpl: FetchLike, isDetail: boolean) 
 
 // ── Wikimedia Commons structured metadata ─────────────────────────────
 
+/** Structured license and attribution metadata retrieved from the Wikimedia Commons API. */
 export interface CommonsFileMeta {
   readonly license?: string;
   readonly attribution?: string;
 }
 
-const ENTITY_MAP: Record<string, string> = {
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&nbsp;': ' ',
-};
-const ENTITY_PATTERN = /&(?:amp|lt|gt|quot|nbsp);/g;
+const MAX_COMMONS_API_BYTES = 1 * 1024 * 1024;
 
-/** Strips HTML tags and decodes entities in a single pass (no double-decode). */
-const stripHtmlTags = (fragment: string): string =>
-  fragment
-    .replace(/<[^>]+>/g, ' ')
-    .replace(ENTITY_PATTERN, (entity) => ENTITY_MAP[entity] ?? entity)
-    .replace(/\s+/g, ' ')
-    .trim();
+interface WikimediaApiResponse {
+  readonly query?: {
+    readonly pages?: Record<
+      string,
+      {
+        readonly imageinfo?: ReadonlyArray<{
+          readonly extmetadata?: Record<string, { readonly value?: string }>;
+        }>;
+      }
+    >;
+  };
+}
+
+const isWikimediaApiResponse = (value: unknown): value is WikimediaApiResponse => {
+  return typeof value === 'object' && value !== null;
+};
 
 /**
  * Fetches structured file metadata from the Wikimedia Commons `imageinfo` API.
  * Returns null on any error so callers can gracefully fall back to HTML parsing.
  */
-export const fetchCommonsFileMeta = async (
+export const fetchCommonsFileMeta = (
   pageUrl: string,
   fetchImpl: FetchLike,
-): Promise<CommonsFileMeta | null> => {
-  const match = /\/wiki\/(File:[^?#]+)/i.exec(pageUrl);
-  if (!match?.[1]) return null;
+): Effect.Effect<CommonsFileMeta | null, unknown> => {
+  return Effect.gen(function* () {
+    const match = /\/wiki\/(File:[^?#]+)/i.exec(pageUrl);
+    if (!match?.[1]) return null;
 
-  const title = decodeURIComponent(match[1]);
-  const apiUrl =
-    `https://commons.wikimedia.org/w/api.php?action=query` +
-    `&titles=${encodeURIComponent(title)}` +
-    `&prop=imageinfo&iiprop=extmetadata&format=json&origin=*`;
+    const title = decodeURIComponent(match[1]);
+    const apiUrl =
+      `https://commons.wikimedia.org/w/api.php?action=query` +
+      `&titles=${encodeURIComponent(title)}` +
+      `&prop=imageinfo&iiprop=extmetadata&format=json&origin=*`;
 
-  const MAX_API_BYTES = 1 * 1024 * 1024;
-
-  try {
-    const response = await fetchImpl(apiUrl, {
-      headers: { ...BROWSER_HEADERS, accept: 'application/json' },
-    });
+    const response = yield* tryPromise(() =>
+      fetchImpl(apiUrl, {
+        headers: { ...BROWSER_HEADERS, accept: 'application/json' },
+      }),
+    );
     if (!response.ok) return null;
 
-    const bodyBytes = await Effect.runPromise(
-      readLimitedBody(response, MAX_API_BYTES, 'Wikimedia API'),
-    );
-    const data = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
-      query?: {
-        pages?: Record<
-          string,
-          {
-            imageinfo?: Array<{ extmetadata?: Record<string, { value?: string }> }>;
-          }
-        >;
-      };
-    };
+    const bodyBytes = yield* readLimitedBody(response, MAX_COMMONS_API_BYTES, 'Wikimedia API');
+    const raw: unknown = JSON.parse(new TextDecoder().decode(bodyBytes));
+    if (!isWikimediaApiResponse(raw)) return null;
 
-    const extmeta = Object.values(data?.query?.pages ?? {})[0]?.imageinfo?.[0]?.extmetadata;
+    const extmeta = Object.values(raw.query?.pages ?? {})[0]?.imageinfo?.[0]?.extmetadata;
     if (!extmeta) return null;
 
     const license = extmeta.LicenseShortName?.value?.trim() || undefined;
     const artistRaw = extmeta.Artist?.value;
-    const attribution = artistRaw ? stripHtmlTags(artistRaw) || undefined : undefined;
+    const attribution = artistRaw ? stripAnsi(htmlToText(artistRaw)) || undefined : undefined;
 
     return {
       ...(license ? { license } : {}),
       ...(attribution ? { attribution } : {}),
     };
+  }).pipe(Effect.catch(() => Effect.succeed(null)));
+};
+
+/**
+ * Downloads an image from `url` and returns its raw bytes and media type.
+ * Enforces the same-host redirect policy and a maximum byte limit.
+ */
+// ── Wikimedia Commons search API ───────────────────────────────────────
+
+const MAX_SEARCH_API_BYTES = 2 * 1024 * 1024;
+const COMMONS_SEARCH_BATCH_SIZE = 50;
+
+interface CommonsSearchResult {
+  readonly title: string;
+  readonly pageUrl: string;
+}
+
+interface CommonsSearchBatch {
+  readonly results: readonly CommonsSearchResult[];
+  readonly sroffset: number | null;
+}
+
+/** Returns true if the URL is a Wikimedia Commons MediaSearch page. */
+export const isCommonsSearchUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    return (
+      normalizeHost(parsed.hostname) === 'commons.wikimedia.org' &&
+      parsed.searchParams.get('title') === 'Special:MediaSearch'
+    );
+  } catch {
+    return false;
+  }
+};
+
+/** Extracts the search query from a Commons MediaSearch URL. */
+const extractCommonsSearchQuery = (url: string): string | null => {
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get('search');
   } catch {
     return null;
   }
 };
 
+/**
+ * Fetches one batch of file page URLs from the Wikimedia Commons search API.
+ * Returns results and the offset for the next batch (null if no more).
+ */
+export const fetchCommonsSearchBatch = (
+  query: string,
+  fetchImpl: FetchLike,
+  offset = 0,
+): Effect.Effect<CommonsSearchBatch, Error> => {
+  return Effect.gen(function* () {
+    const apiUrl =
+      `https://commons.wikimedia.org/w/api.php?action=query&list=search` +
+      `&srsearch=${encodeURIComponent(query)}` +
+      `&srnamespace=6` +
+      `&srlimit=${COMMONS_SEARCH_BATCH_SIZE}` +
+      `&sroffset=${offset}` +
+      `&format=json&origin=*`;
+
+    const response = yield* tryPromise(() =>
+      fetchImpl(apiUrl, {
+        headers: { ...BROWSER_HEADERS, accept: 'application/json' },
+      }),
+    );
+
+    if (!response.ok) {
+      return yield* Effect.fail(new Error(`Commons search API returned ${response.status}`));
+    }
+
+    const bodyBytes = yield* readLimitedBody(response, MAX_SEARCH_API_BYTES, 'Commons search API');
+    const data = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
+      continue?: { sroffset?: number };
+      query?: { search?: Array<{ title?: string }> };
+    };
+
+    const entries = data.query?.search ?? [];
+    const results: CommonsSearchResult[] = entries
+      .filter((entry): entry is { title: string } => typeof entry.title === 'string')
+      .map((entry) => ({
+        title: entry.title,
+        pageUrl: `https://commons.wikimedia.org/wiki/${encodeURIComponent(entry.title.replace(/ /g, '_'))}`,
+      }));
+
+    return {
+      results,
+      sroffset: data.continue?.sroffset ?? null,
+    };
+  });
+};
+
+/**
+ * Resolves file page URLs from a Commons search seed URL by querying the API.
+ * Calls `onPage` for each detail page. The caller controls termination via
+ * the error channel (e.g. a tagged `LimitReached` fail) — this function
+ * pages through results until the API is exhausted or `onPage` signals stop.
+ */
+export const resolveCommonsSearchPages = <E>(
+  seedUrl: string,
+  fetchImpl: FetchLike,
+  fetchDelayMs: number,
+  log: (line: string) => void,
+  visitedSourcePageUrls: ReadonlySet<string>,
+  onPage: (page: SourcePage) => Effect.Effect<void, E>,
+): Effect.Effect<number, E | Error> => {
+  return Effect.gen(function* () {
+    const query = extractCommonsSearchQuery(seedUrl);
+    if (!query) {
+      return yield* Effect.fail(new Error(`Cannot extract search query from ${seedUrl}`));
+    }
+
+    log(`Using Commons search API for query: ${query}`);
+    let offset = 0;
+    let resolved = 0;
+
+    for (;;) {
+      const batch = yield* fetchCommonsSearchBatch(query, fetchImpl, offset);
+      if (batch.results.length === 0) break;
+
+      for (const result of batch.results) {
+        if (visitedSourcePageUrls.has(normalizeUrlForDedup(result.pageUrl))) {
+          log(`Skipped ${result.pageUrl}: visited in a previous scrape`);
+          continue;
+        }
+
+        log(`Fetching page ${result.pageUrl}`);
+        yield* Effect.sleep(fetchDelayMs);
+
+        const page = yield* fetchText(result.pageUrl, fetchImpl, true).pipe(
+          Effect.catch((error: unknown) => {
+            log(
+              `Skipped page ${result.pageUrl}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return Effect.succeed(null);
+          }),
+        );
+
+        if (page === null) continue;
+
+        yield* onPage(page);
+        resolved += 1;
+      }
+
+      if (batch.sroffset === null) break;
+      offset = batch.sroffset;
+      yield* Effect.sleep(fetchDelayMs);
+    }
+
+    return resolved;
+  });
+};
+
+/** Fetches a remote image, returning its bytes and media type. */
 export const fetchImage = (url: string, fetchImpl: FetchLike) => {
   return Effect.gen(function* () {
     const { response, finalUrl } = yield* fetchFollowingSameHost(

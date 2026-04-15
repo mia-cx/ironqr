@@ -1,13 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { Effect } from 'effect';
 import { appendCorpusRejection, readCorpusManifest, writeCorpusManifest } from '../../manifest.js';
-import type {
-  AutoScan,
-  CorpusAsset,
-  GroundTruth,
-  LicenseReview,
-  RemoteSource,
-} from '../../schema.js';
+import type { CorpusAsset, LicenseReview, RemoteSource } from '../../schema.js';
+import { MAJOR_VERSION } from '../../version.js';
 import { importAssetBytesEffect } from '../store.js';
 import type {
   ImportRemoteAssetResult,
@@ -114,7 +109,6 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
         repoRoot: options.repoRoot,
         assets,
         bytes: new Uint8Array(bytes),
-        mediaType: approvedAsset.mediaType,
         sourcePathForExtension: approvedAsset.imageUrl,
         label:
           options.overrideLabel ??
@@ -129,10 +123,8 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
         ...(reviewer ? { reviewer } : {}),
         ...(reviewNotes ? { reviewNotes } : {}),
         ...(approvedAsset.review.reviewedAt ? { reviewedAt: approvedAsset.review.reviewedAt } : {}),
-        ...(approvedAsset.groundTruth
-          ? { groundTruth: approvedAsset.groundTruth as GroundTruth }
-          : {}),
-        ...(approvedAsset.autoScan ? { autoScan: approvedAsset.autoScan as AutoScan } : {}),
+        ...(approvedAsset.groundTruth ? { groundTruth: approvedAsset.groundTruth } : {}),
+        ...(approvedAsset.autoScan ? { autoScan: approvedAsset.autoScan } : {}),
         ...(licenseReview ? { licenseReview } : {}),
       });
 
@@ -146,7 +138,7 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
       yield* removeStagedAssetDirEffect(options.stageDir, stagedAsset.id);
     }
 
-    const nextManifest = { version: 1 as const, assets };
+    const nextManifest = { version: MAJOR_VERSION, assets };
     yield* tryPromise(() => writeCorpusManifest(options.repoRoot, nextManifest));
     yield* removeRunDirIfEmptyEffect(options.stageDir);
 
@@ -158,6 +150,10 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
   });
 };
 
+/**
+ * Promotes approved staged assets into the corpus manifest and removes their staging directories.
+ * Rejected assets are written to the rejections log and also cleaned up.
+ */
 export const importStagedRemoteAssets = (
   options: ImportStagedRemoteAssetsOptions,
 ): Promise<ImportRemoteAssetResult> => {

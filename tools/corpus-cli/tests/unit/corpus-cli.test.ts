@@ -3,20 +3,17 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { parseArgv } from '../../src/args.js';
-import {
-  buildFilteredCliCommand,
-  buildOpenExternalInvocation,
-  buildOpenTargetInvocation,
-  getUsageText,
-  resolveRepoRootFromModuleUrl,
-} from '../../src/cli.js';
+import { buildOpenExternalInvocation, buildOpenTargetInvocation } from '../../src/cli.js';
+import { buildFilteredCliCommand, getUsageText } from '../../src/command-text.js';
 import { runImportCommand } from '../../src/commands/import.js';
 import { promptManualGroundTruth } from '../../src/commands/shared.js';
 import { getCorpusCliConfigPath } from '../../src/config.js';
 import type { AppContext } from '../../src/context.js';
 import { writeStagedRemoteAsset } from '../../src/import/remote.js';
 import { readCorpusManifest } from '../../src/manifest.js';
+import { resolveRepoRootFromModuleUrl } from '../../src/repo-root.js';
 import type { CliUi, SelectValue } from '../../src/ui.js';
+import { MAJOR_VERSION } from '../../src/version.js';
 import { makeTestDir } from '../helpers.js';
 
 describe('corpus cli helpers', () => {
@@ -229,7 +226,7 @@ describe('corpus cli helpers', () => {
     await writeStagedRemoteAsset(
       stageDir,
       {
-        version: 1,
+        version: MAJOR_VERSION,
         id: 'stage-deadbeefcafef00d',
         suggestedLabel: 'qr-positive',
         imageFileName: 'image.webp',

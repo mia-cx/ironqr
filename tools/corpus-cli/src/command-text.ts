@@ -1,3 +1,4 @@
+/** Build a `bun --filter` CLI command string for display in help and next-step hints. */
 export const buildFilteredCliCommand = (command?: string, args: readonly string[] = []): string => {
   const prefix = 'bun --filter ironqr-corpus-cli run cli --';
   if (!command) {
@@ -8,6 +9,7 @@ export const buildFilteredCliCommand = (command?: string, args: readonly string[
   return renderedArgs.length > 0 ? `${prefix} ${command} ${renderedArgs}` : `${prefix} ${command}`;
 };
 
+/** Return the full CLI usage/help text shown when no valid subcommand is found. */
 export const getUsageText = (): string => {
   return `Usage:
   ${buildFilteredCliCommand()}

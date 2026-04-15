@@ -32,23 +32,29 @@ const EXTENSIONS_BY_MEDIA_TYPE: Record<string, string> = {
 };
 
 const NORMALIZED_IMAGE_MEDIA_TYPE = 'image/webp';
+const ASSET_ID_HASH_LENGTH = 16;
+const NORMALIZED_IMAGE_MAX_DIMENSION = 1000;
+const NORMALIZED_IMAGE_QUALITY = 80;
 
+/** Compute the hex-encoded SHA-256 hash of a byte buffer. */
 export const hashSha256 = (buffer: Uint8Array): string => {
   return createHash('sha256').update(buffer).digest('hex');
 };
 
 const buildAssetId = (sha256: string): string => {
-  return `asset-${sha256.slice(0, 16)}`;
+  return `asset-${sha256.slice(0, ASSET_ID_HASH_LENGTH)}`;
 };
 
 const normalizeMediaType = (mediaType: string): string => {
   return mediaType.split(';', 1)[0]?.trim().toLowerCase() ?? mediaType.toLowerCase();
 };
 
+/** Map a lowercase file extension (e.g. `.jpg`) to its MIME type, or `undefined` if unsupported. */
 export const mediaTypeFromExtension = (extension: string): string | undefined => {
   return MEDIA_TYPES_BY_EXTENSION[extension.toLowerCase()];
 };
 
+/** Derive a file extension from a MIME type, falling back to the extension in `fallbackPath`. */
 export const extensionFromMediaType = (mediaType: string, fallbackPath: string): string => {
   const normalizedMediaType = normalizeMediaType(mediaType);
   const fromMediaType = EXTENSIONS_BY_MEDIA_TYPE[normalizedMediaType];
@@ -62,12 +68,14 @@ export const extensionFromMediaType = (mediaType: string, fallbackPath: string):
   throw new Error(`Unsupported image media type: ${mediaType}`);
 };
 
+/** Import raw image bytes into the corpus, normalizing and deduplicating by source SHA-256. */
 export const importAssetBytes = (
   options: ImportAssetBytesOptions,
 ): Promise<ImportAssetBytesResult> => {
   return Effect.runPromise(importAssetBytesEffect(options));
 };
 
+/** Effect-based implementation of `importAssetBytes`, suitable for composition in larger Effect pipelines. */
 export const importAssetBytesEffect = (
   options: ImportAssetBytesOptions,
 ): Effect.Effect<ImportAssetBytesResult, unknown> => {
@@ -84,8 +92,7 @@ export const importAssetBytesEffect = (
     const existingIndex = options.assets.findIndex((asset) => asset.id === id);
 
     if (existingIndex >= 0) {
-      const existing = options.assets[existingIndex];
-      if (!existing) throw new Error(`Missing asset at index ${existingIndex}`);
+      const existing = options.assets[existingIndex]!;
 
       if (existing.label !== options.label) {
         throw new Error(`Asset ${id} already exists with label ${existing.label}`);
@@ -214,12 +221,7 @@ const mergeProvenance = (
   }
 
   const merged = [...existing];
-  const existingRecord = merged[index];
-  if (!existingRecord) {
-    throw new Error(`Missing provenance at index ${index}`);
-  }
-
-  merged[index] = mergeProvenanceRecord(existingRecord, next);
+  merged[index] = mergeProvenanceRecord(merged[index]!, next);
   return merged;
 };
 
@@ -310,7 +312,6 @@ interface ImportAssetBytesOptions {
   readonly repoRoot: string;
   readonly assets: CorpusAsset[];
   readonly bytes: Uint8Array;
-  readonly mediaType: string;
   readonly sourcePathForExtension: string;
   readonly label: CorpusAssetLabel;
   readonly provenance: ProvenanceRecord;
@@ -339,12 +340,12 @@ const normalizeImportedImage = (bytes: Uint8Array) => {
     const normalized = await sharp(bytes)
       .rotate()
       .resize({
-        width: 1000,
-        height: 1000,
+        width: NORMALIZED_IMAGE_MAX_DIMENSION,
+        height: NORMALIZED_IMAGE_MAX_DIMENSION,
         fit: 'inside',
         withoutEnlargement: true,
       })
-      .webp({ quality: 80 })
+      .webp({ quality: NORMALIZED_IMAGE_QUALITY })
       .toBuffer();
 
     return new Uint8Array(normalized);
