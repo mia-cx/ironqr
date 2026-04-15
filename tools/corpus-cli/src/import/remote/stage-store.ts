@@ -28,10 +28,12 @@ const validateStagedAsset = (asset: StagedRemoteAsset): void => {
   assertAllowedStagedAssetUrls(asset);
 };
 
+/** Returns the absolute path to the corpus staging root directory. */
 export const getStagingRoot = (repoRoot: string): string => {
   return path.join(repoRoot, 'corpus', 'staging');
 };
 
+/** Creates and returns a timestamped run directory inside the staging root. */
 export const ensureStageDir = (repoRoot: string) => {
   return tryPromise(async () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -45,12 +47,14 @@ const getAssetDir = (stageDir: string, assetId: string): string => {
   return path.join(stageDir, assetId);
 };
 
+/** Returns the path to an asset's `manifest.json` inside `stageDir`. */
 export const getAssetManifestPath = (stageDir: string, assetId: string): string => {
   return path.join(getAssetDir(stageDir, assetId), 'manifest.json');
 };
 
+/** Returns the absolute path to the staged image file for `asset`. */
 export const getAssetImagePath = (stageDir: string, asset: StagedRemoteAsset): string => {
-  return path.join(getAssetDir(stageDir, asset.id), asset.imageFileName);
+  return resolveStagedAssetPath(stageDir, asset.id, asset.imageFileName);
 };
 
 const writeAssetManifest = async (stageDir: string, asset: StagedRemoteAsset): Promise<void> => {
@@ -61,6 +65,10 @@ const writeAssetManifest = async (stageDir: string, asset: StagedRemoteAsset): P
   );
 };
 
+/**
+ * Resolves `fileName` inside `assetId`'s subdirectory of `stageDir`.
+ * Throws if the result would escape the stage directory (path-traversal guard).
+ */
 export const resolveStagedAssetPath = (
   stageDir: string,
   assetId: string,
@@ -82,6 +90,7 @@ export const resolveStagedAssetPath = (
   return absoluteTarget;
 };
 
+/** Validates and writes `asset`'s manifest JSON and image `bytes` to `stageDir`. Returns an Effect. */
 export const writeStagedRemoteAssetEffect = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -96,6 +105,7 @@ export const writeStagedRemoteAssetEffect = (
   });
 };
 
+/** Validates and writes `asset`'s manifest JSON and image `bytes` to `stageDir`. */
 export const writeStagedRemoteAsset = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -104,6 +114,7 @@ export const writeStagedRemoteAsset = (
   return Effect.runPromise(writeStagedRemoteAssetEffect(stageDir, asset, bytes));
 };
 
+/** Overwrites the manifest JSON for an already-staged asset. Returns an Effect. */
 export const updateStagedRemoteAssetEffect = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -114,6 +125,7 @@ export const updateStagedRemoteAssetEffect = (
   });
 };
 
+/** Overwrites the manifest JSON for an already-staged asset. */
 export const updateStagedRemoteAsset = (
   stageDir: string,
   asset: StagedRemoteAsset,
@@ -121,6 +133,7 @@ export const updateStagedRemoteAsset = (
   return Effect.runPromise(updateStagedRemoteAssetEffect(stageDir, asset));
 };
 
+/** Reads, decodes, and validates a single staged asset by ID. Returns an Effect. */
 export const readStagedRemoteAssetEffect = (
   stageDir: string,
   assetId: string,
@@ -136,6 +149,7 @@ export const readStagedRemoteAssetEffect = (
   });
 };
 
+/** Reads, decodes, and validates a single staged asset by ID. */
 export const readStagedRemoteAsset = (
   stageDir: string,
   assetId: string,
@@ -143,6 +157,7 @@ export const readStagedRemoteAsset = (
   return Effect.runPromise(readStagedRemoteAssetEffect(stageDir, assetId));
 };
 
+/** Reads all staged assets from `stageDir`, sorted by ID. Returns an Effect. */
 export const readStagedRemoteAssetsEffect = (
   stageDir: string,
 ): Effect.Effect<readonly StagedRemoteAsset[], unknown> => {
@@ -159,10 +174,12 @@ export const readStagedRemoteAssetsEffect = (
   });
 };
 
+/** Reads all staged assets from `stageDir`, sorted by ID. */
 export const readStagedRemoteAssets = (stageDir: string): Promise<readonly StagedRemoteAsset[]> => {
   return Effect.runPromise(readStagedRemoteAssetsEffect(stageDir));
 };
 
+/** Deletes the asset subdirectory for `assetId` from `stageDir`. */
 export const removeStagedAssetDirEffect = (stageDir: string, assetId: string) => {
   return tryPromise(async () => {
     assertSafeSlug(assetId, 'asset id');
@@ -184,6 +201,10 @@ export const removeRunDirIfEmptyEffect = (stageDir: string) => {
   });
 };
 
+/**
+ * Collects `sourceSha256` hashes from the corpus manifest, rejections log, and any live staging runs.
+ * Used to skip images that have already been staged, imported, or rejected.
+ */
 export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
   return tryPromise(async () => {
     const seenSourceSha256 = new Set<string>();

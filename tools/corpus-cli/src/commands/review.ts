@@ -16,12 +16,24 @@ import {
   resolveReviewer,
 } from './shared.js';
 
+const REJECTION_REASONS = {
+  LICENSE: 'license',
+  QUALITY: 'quality',
+  IRRELEVANT: 'irrelevant',
+  DUPLICATE: 'duplicate',
+  CUSTOM: 'custom',
+} as const;
+
 interface ReviewCommandResult {
   readonly stageDir: string;
   readonly reviewer: string;
   readonly summary: ReviewSummary;
 }
 
+/**
+ * Run the `review` command: walk staged assets and collect reviewer decisions.
+ * Explicit overrides bypass interactive prompts for stage dir, reviewer, and asset stream.
+ */
 export const runReviewCommand = async (
   context: AppContext,
   args: ParsedArgs,
@@ -65,16 +77,28 @@ export const runReviewCommand = async (
     promptRejectReason: async (_asset) => {
       const choice = await context.ui.select<string>({
         message: 'Rejection reason',
-        initialValue: 'license',
+        initialValue: REJECTION_REASONS.LICENSE,
         options: [
-          { value: 'license', label: 'License', hint: 'incompatible or unclear license' },
-          { value: 'quality', label: 'Quality', hint: 'too low resolution or corrupted' },
-          { value: 'irrelevant', label: 'Irrelevant', hint: 'not a QR image' },
-          { value: 'duplicate', label: 'Duplicate', hint: 'already in corpus or staging' },
-          { value: 'custom', label: 'Custom…' },
+          {
+            value: REJECTION_REASONS.LICENSE,
+            label: 'License',
+            hint: 'incompatible or unclear license',
+          },
+          {
+            value: REJECTION_REASONS.QUALITY,
+            label: 'Quality',
+            hint: 'too low resolution or corrupted',
+          },
+          { value: REJECTION_REASONS.IRRELEVANT, label: 'Irrelevant', hint: 'not a QR image' },
+          {
+            value: REJECTION_REASONS.DUPLICATE,
+            label: 'Duplicate',
+            hint: 'already in corpus or staging',
+          },
+          { value: REJECTION_REASONS.CUSTOM, label: 'Custom…' },
         ],
       });
-      if (choice === 'custom') {
+      if (choice === REJECTION_REASONS.CUSTOM) {
         return context.ui.text({ message: 'Custom rejection reason' });
       }
       return choice;
