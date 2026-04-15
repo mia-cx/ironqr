@@ -3,6 +3,8 @@ import { type FetchLike, fetchText } from './fetch.js';
 import { extractPageLinks } from './html.js';
 import type { SourcePage } from './page.js';
 
+const MAX_RESOLVE_DEPTH = 3;
+
 interface ResolveSourcePagesEnv {
   readonly fetchImpl: FetchLike;
   readonly log: (line: string) => void;
@@ -16,35 +18,36 @@ interface ResolveSourcePagesState {
   readonly visitedSourcePageUrls?: ReadonlySet<string>;
 }
 
-const MAX_RESOLVE_DEPTH = 3;
-
-export const resolveSourcePages = (
+/**
+ * Recursively walks page links from `page`, calling `onPage` for each discovered detail page.
+ * Respects `MAX_RESOLVE_DEPTH`, deduplicates via `state.seenPages`, and skips previously visited URLs.
+ */
+export const resolveSourcePages = <E>(
   page: SourcePage,
   env: ResolveSourcePagesEnv,
   state: ResolveSourcePagesState,
+  onPage: (page: SourcePage) => Effect.Effect<void, E>,
   depth = 0,
-): AsyncGenerator<SourcePage> => {
-  return (async function* () {
-    const yieldLeaf = async function* (leaf: SourcePage): AsyncGenerator<SourcePage> {
-      if (state.yieldedLeaves.has(leaf.url)) {
-        return;
-      }
-
+): Effect.Effect<void, E | Error> => {
+  return Effect.gen(function* () {
+    const emitLeaf = (leaf: SourcePage): Effect.Effect<void, E> => {
+      if (state.yieldedLeaves.has(leaf.url)) return Effect.void;
       state.yieldedLeaves.add(leaf.url);
       env.log(`Source page ready ${leaf.url}`);
-      yield leaf;
+      return onPage(leaf);
     };
 
     if (state.seenPages.has(page.url) || depth >= MAX_RESOLVE_DEPTH) {
-      yield* yieldLeaf(page);
+      yield* emitLeaf(page);
       return;
     }
 
     state.seenPages.add(page.url);
     const isSeedPage = depth === 0;
     const pageLinks = extractPageLinks(page.url, page.html, isSeedPage);
+
     if (pageLinks.length === 0) {
-      yield* yieldLeaf(page);
+      yield* emitLeaf(page);
       return;
     }
 
@@ -56,24 +59,20 @@ export const resolveSourcePages = (
         continue;
       }
       env.log(`Fetching page ${pageLink}`);
-      await new Promise((r) => setTimeout(r, env.fetchDelayMs));
-      let nextPage: SourcePage | null;
-      try {
-        nextPage = await Effect.runPromise(fetchText(pageLink, env.fetchImpl, true));
-      } catch (error) {
-        env.log(
-          `Skipped page ${pageLink}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        nextPage = null;
-      }
+      yield* Effect.sleep(env.fetchDelayMs);
 
-      if (nextPage === null) {
-        continue;
-      }
+      const nextPage = yield* fetchText(pageLink, env.fetchImpl, true).pipe(
+        Effect.catch((error: unknown) => {
+          env.log(
+            `Skipped page ${pageLink}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return Effect.succeed(null);
+        }),
+      );
 
-      for await (const leaf of resolveSourcePages(nextPage, env, state, depth + 1)) {
-        yield leaf;
-      }
+      if (nextPage === null) continue;
+
+      yield* resolveSourcePages(nextPage, env, state, onPage, depth + 1);
     }
-  })();
+  });
 };

@@ -4,6 +4,7 @@ import type { SourcePage } from './page.js';
 import { normalizeHost } from './policy.js';
 import { htmlToText } from './text.js';
 
+/** Minimal subset of the Fetch API required by scrape utilities; compatible with `globalThis.fetch`. */
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
@@ -86,6 +87,10 @@ const assertSameHostRedirect = (from: string, to: string): void => {
   }
 };
 
+/**
+ * Fetches `url` following same-host redirects up to `MAX_SAME_HOST_REDIRECTS`.
+ * Throws on cross-host redirects, protocol downgrades, or non-2xx responses.
+ */
 export const fetchFollowingSameHost = (
   url: string,
   fetchImpl: FetchLike,
@@ -123,6 +128,10 @@ export const fetchFollowingSameHost = (
   });
 };
 
+/**
+ * Fetches an HTML page at `url` and returns a `SourcePage` with its final URL, title, and raw HTML.
+ * `isDetail` flags whether this is a detail page (vs. a listing/seed page).
+ */
 export const fetchText = (url: string, fetchImpl: FetchLike, isDetail: boolean) => {
   return Effect.gen(function* () {
     const { response, finalUrl } = yield* fetchFollowingSameHost(
@@ -147,51 +156,61 @@ export const fetchText = (url: string, fetchImpl: FetchLike, isDetail: boolean) 
 
 // ── Wikimedia Commons structured metadata ─────────────────────────────
 
+/** Structured license and attribution metadata retrieved from the Wikimedia Commons API. */
 export interface CommonsFileMeta {
   readonly license?: string;
   readonly attribution?: string;
 }
 
+const MAX_COMMONS_API_BYTES = 1 * 1024 * 1024;
+
+interface WikimediaApiResponse {
+  readonly query?: {
+    readonly pages?: Record<
+      string,
+      {
+        readonly imageinfo?: ReadonlyArray<{
+          readonly extmetadata?: Record<string, { readonly value?: string }>;
+        }>;
+      }
+    >;
+  };
+}
+
+const isWikimediaApiResponse = (value: unknown): value is WikimediaApiResponse => {
+  return typeof value === 'object' && value !== null;
+};
+
 /**
  * Fetches structured file metadata from the Wikimedia Commons `imageinfo` API.
  * Returns null on any error so callers can gracefully fall back to HTML parsing.
  */
-export const fetchCommonsFileMeta = async (
+export const fetchCommonsFileMeta = (
   pageUrl: string,
   fetchImpl: FetchLike,
-): Promise<CommonsFileMeta | null> => {
-  const match = /\/wiki\/(File:[^?#]+)/i.exec(pageUrl);
-  if (!match?.[1]) return null;
+): Effect.Effect<CommonsFileMeta | null, unknown> => {
+  return Effect.gen(function* () {
+    const match = /\/wiki\/(File:[^?#]+)/i.exec(pageUrl);
+    if (!match?.[1]) return null;
 
-  const title = decodeURIComponent(match[1]);
-  const apiUrl =
-    `https://commons.wikimedia.org/w/api.php?action=query` +
-    `&titles=${encodeURIComponent(title)}` +
-    `&prop=imageinfo&iiprop=extmetadata&format=json&origin=*`;
+    const title = decodeURIComponent(match[1]);
+    const apiUrl =
+      `https://commons.wikimedia.org/w/api.php?action=query` +
+      `&titles=${encodeURIComponent(title)}` +
+      `&prop=imageinfo&iiprop=extmetadata&format=json&origin=*`;
 
-  const MAX_API_BYTES = 1 * 1024 * 1024;
-
-  try {
-    const response = await fetchImpl(apiUrl, {
-      headers: { ...BROWSER_HEADERS, accept: 'application/json' },
-    });
+    const response = yield* tryPromise(() =>
+      fetchImpl(apiUrl, {
+        headers: { ...BROWSER_HEADERS, accept: 'application/json' },
+      }),
+    );
     if (!response.ok) return null;
 
-    const bodyBytes = await Effect.runPromise(
-      readLimitedBody(response, MAX_API_BYTES, 'Wikimedia API'),
-    );
-    const data = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
-      query?: {
-        pages?: Record<
-          string,
-          {
-            imageinfo?: Array<{ extmetadata?: Record<string, { value?: string }> }>;
-          }
-        >;
-      };
-    };
+    const bodyBytes = yield* readLimitedBody(response, MAX_COMMONS_API_BYTES, 'Wikimedia API');
+    const raw: unknown = JSON.parse(new TextDecoder().decode(bodyBytes));
+    if (!isWikimediaApiResponse(raw)) return null;
 
-    const extmeta = Object.values(data?.query?.pages ?? {})[0]?.imageinfo?.[0]?.extmetadata;
+    const extmeta = Object.values(raw.query?.pages ?? {})[0]?.imageinfo?.[0]?.extmetadata;
     if (!extmeta) return null;
 
     const license = extmeta.LicenseShortName?.value?.trim() || undefined;
@@ -202,11 +221,13 @@ export const fetchCommonsFileMeta = async (
       ...(license ? { license } : {}),
       ...(attribution ? { attribution } : {}),
     };
-  } catch {
-    return null;
-  }
+  }).pipe(Effect.catch(() => Effect.succeed(null)));
 };
 
+/**
+ * Downloads an image from `url` and returns its raw bytes and media type.
+ * Enforces the same-host redirect policy and a maximum byte limit.
+ */
 export const fetchImage = (url: string, fetchImpl: FetchLike) => {
   return Effect.gen(function* () {
     const { response, finalUrl } = yield* fetchFollowingSameHost(
