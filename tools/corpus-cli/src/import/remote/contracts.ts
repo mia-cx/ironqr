@@ -2,10 +2,8 @@ import * as S from 'effect/Schema';
 import {
   AutoScanSchema,
   type CorpusAssetLabel,
-  type CorpusRejectionReason,
   CorpusRejectionReasonSchema,
   GroundTruthSchema,
-  type ImportRemoteAssetResult,
   type ReviewStatus,
 } from '../../schema.js';
 
@@ -74,5 +72,3 @@ export interface ImportStagedRemoteAssetsOptions {
   readonly license?: string;
   readonly provenanceNotes?: string;
 }
-
-export type { CorpusRejectionReason, ImportRemoteAssetResult };

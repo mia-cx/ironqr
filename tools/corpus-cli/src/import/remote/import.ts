@@ -2,19 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { Effect } from 'effect';
 import { appendCorpusRejection, readCorpusManifest, writeCorpusManifest } from '../../manifest.js';
 import type {
-  AutoScan,
   CorpusAsset,
-  GroundTruth,
+  ImportRemoteAssetResult,
   LicenseReview,
   RemoteSource,
 } from '../../schema.js';
 import { MAJOR_VERSION } from '../../version.js';
 import { importAssetBytesEffect } from '../store.js';
-import type {
-  ImportRemoteAssetResult,
-  ImportStagedRemoteAssetsOptions,
-  StagedRemoteAsset,
-} from './contracts.js';
+import type { ImportStagedRemoteAssetsOptions, StagedRemoteAsset } from './contracts.js';
 import { tryPromise } from './effect.js';
 import {
   getAssetImagePath,
@@ -129,10 +124,8 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
         ...(reviewer ? { reviewer } : {}),
         ...(reviewNotes ? { reviewNotes } : {}),
         ...(approvedAsset.review.reviewedAt ? { reviewedAt: approvedAsset.review.reviewedAt } : {}),
-        ...(approvedAsset.groundTruth
-          ? { groundTruth: approvedAsset.groundTruth as GroundTruth }
-          : {}),
-        ...(approvedAsset.autoScan ? { autoScan: approvedAsset.autoScan as AutoScan } : {}),
+        ...(approvedAsset.groundTruth ? { groundTruth: approvedAsset.groundTruth } : {}),
+        ...(approvedAsset.autoScan ? { autoScan: approvedAsset.autoScan } : {}),
         ...(licenseReview ? { licenseReview } : {}),
       });
 

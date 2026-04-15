@@ -50,9 +50,15 @@ export const getAssetManifestPath = (stageDir: string, assetId: string): string 
 };
 
 export const getAssetImagePath = (stageDir: string, asset: StagedRemoteAsset): string => {
-  assertSafeSlug(asset.id, 'asset id');
-  assertSafeSlug(asset.imageFileName, 'image filename');
   return path.join(getAssetDir(stageDir, asset.id), asset.imageFileName);
+};
+
+const writeAssetManifest = async (stageDir: string, asset: StagedRemoteAsset): Promise<void> => {
+  await writeFile(
+    getAssetManifestPath(stageDir, asset.id),
+    `${JSON.stringify(asset, null, 2)}\n`,
+    'utf8',
+  );
 };
 
 export const resolveStagedAssetPath = (
@@ -86,11 +92,7 @@ export const writeStagedRemoteAssetEffect = (
     const assetDir = getAssetDir(stageDir, asset.id);
     await mkdir(assetDir, { recursive: true });
     await writeFile(path.join(assetDir, asset.imageFileName), bytes);
-    await writeFile(
-      getAssetManifestPath(stageDir, asset.id),
-      `${JSON.stringify(asset, null, 2)}\n`,
-      'utf8',
-    );
+    await writeAssetManifest(stageDir, asset);
   });
 };
 
@@ -108,11 +110,7 @@ export const updateStagedRemoteAssetEffect = (
 ): Effect.Effect<void, unknown> => {
   return tryPromise(async () => {
     validateStagedAsset(asset);
-    await writeFile(
-      getAssetManifestPath(stageDir, asset.id),
-      `${JSON.stringify(asset, null, 2)}\n`,
-      'utf8',
-    );
+    await writeAssetManifest(stageDir, asset);
   });
 };
 

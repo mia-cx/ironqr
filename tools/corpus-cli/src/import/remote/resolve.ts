@@ -16,7 +16,9 @@ interface ResolveSourcePagesState {
   readonly visitedSourcePageUrls?: ReadonlySet<string>;
 }
 
-export const resolveSourcePagesEffect = (
+const MAX_RESOLVE_DEPTH = 3;
+
+export const resolveSourcePages = (
   page: SourcePage,
   env: ResolveSourcePagesEnv,
   state: ResolveSourcePagesState,
@@ -33,13 +35,14 @@ export const resolveSourcePagesEffect = (
       yield leaf;
     };
 
-    if (state.seenPages.has(page.url) || depth >= 3) {
+    if (state.seenPages.has(page.url) || depth >= MAX_RESOLVE_DEPTH) {
       yield* yieldLeaf(page);
       return;
     }
 
     state.seenPages.add(page.url);
-    const pageLinks = extractPageLinks(page.url, page.html, depth === 0);
+    const isSeedPage = depth === 0;
+    const pageLinks = extractPageLinks(page.url, page.html, isSeedPage);
     if (pageLinks.length === 0) {
       yield* yieldLeaf(page);
       return;
@@ -68,7 +71,7 @@ export const resolveSourcePagesEffect = (
         continue;
       }
 
-      for await (const leaf of resolveSourcePagesEffect(nextPage, env, state, depth + 1)) {
+      for await (const leaf of resolveSourcePages(nextPage, env, state, depth + 1)) {
         yield leaf;
       }
     }

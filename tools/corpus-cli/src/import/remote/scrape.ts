@@ -19,7 +19,7 @@ import {
 } from './html.js';
 import type { SourcePage } from './page.js';
 import { assertAllowedSeed, isAllowedImageHost, normalizeHost } from './policy.js';
-import { resolveSourcePagesEffect } from './resolve.js';
+import { resolveSourcePages } from './resolve.js';
 import {
   collectExistingStagedSourceHashesEffect,
   ensureStageDir,
@@ -29,18 +29,23 @@ import {
 
 const NORMALIZED_STAGED_MEDIA_TYPE = 'image/webp';
 const NORMALIZED_STAGED_FILENAME = 'image.webp';
+const STAGED_IMAGE_MAX_DIMENSION = 1000;
+const STAGED_IMAGE_QUALITY = 80;
+const STAGED_ID_SHA256_LENGTH = 16;
+const STAGED_ID_URL_HASH_LENGTH = 8;
+const DEFAULT_STAGE_LIMIT = 100;
 
 const normalizeScrapedImage = (bytes: Uint8Array) => {
   return tryPromise(async () => {
     const pipeline = sharp(bytes)
       .rotate()
       .resize({
-        width: 1000,
-        height: 1000,
+        width: STAGED_IMAGE_MAX_DIMENSION,
+        height: STAGED_IMAGE_MAX_DIMENSION,
         fit: 'inside',
         withoutEnlargement: true,
       })
-      .webp({ quality: 80 });
+      .webp({ quality: STAGED_IMAGE_QUALITY });
 
     const { data, info } = await pipeline.toBuffer({ resolveWithObject: true });
     return {
@@ -69,7 +74,7 @@ const createStagedRemoteAsset = (
 
   return {
     version: MAJOR_VERSION,
-    id: `stage-${sourceSha256.slice(0, 16)}-${imageUrlHash.slice(0, 8)}`,
+    id: `stage-${sourceSha256.slice(0, STAGED_ID_SHA256_LENGTH)}-${imageUrlHash.slice(0, STAGED_ID_URL_HASH_LENGTH)}`,
     suggestedLabel,
     imageFileName: NORMALIZED_STAGED_FILENAME,
     sourcePageUrl: page.url,
@@ -103,7 +108,7 @@ const scrapeRemoteAssetsLoopEffect = (
   return tryPromise(async () => {
     const assets: StagedRemoteAsset[] = [];
     const seenImageUrls = new Set<string>();
-    const limit = options.limit ?? 100;
+    const limit = options.limit ?? DEFAULT_STAGE_LIMIT;
     const log = options.log ?? (() => {});
     const fetchDelayMs = options.fetchDelayMs ?? 0;
     const seenSourceSha256 = await Effect.runPromise(
@@ -136,7 +141,7 @@ const scrapeRemoteAssetsLoopEffect = (
         visitedSourcePageUrls: seenSourcePageUrls,
       };
 
-      for await (const page of resolveSourcePagesEffect(
+      for await (const page of resolveSourcePages(
         seedPage,
         { fetchImpl, log, fetchDelayMs },
         state,
