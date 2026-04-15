@@ -1,6 +1,8 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { getOption, type ParsedArgs, parseLimit } from '../args.js';
 import type { AppContext } from '../context.js';
+import { isEnoentError } from '../fs-error.js';
 import { detectQrKind } from '../qr-kind.js';
 import type { AutoScan, CorpusAssetLabel, GroundTruth, ReviewStatus } from '../schema.js';
 import { assertInteractiveSession } from '../tty.js';
@@ -102,7 +104,7 @@ export const listStageDirectories = async (repoRoot: string): Promise<readonly s
       .map((entry) => path.join(getStageRoot(repoRoot), entry.name))
       .sort((left, right) => right.localeCompare(left));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (isEnoentError(error)) {
       return [];
     }
 
@@ -133,9 +135,10 @@ export const promptStageDir = async (
     return path.resolve(explicitStageDir);
   }
 
+  assertInteractiveSession('Stage dir required in non-interactive mode');
+
   const stageDirs = await listStageDirectories(context.repoRoot);
   if (stageDirs.length === 0) {
-    assertInteractiveSession('Stage dir required in non-interactive mode');
     return path.resolve(
       await context.ui.text({
         message: 'Stage directory',
@@ -145,7 +148,6 @@ export const promptStageDir = async (
     );
   }
 
-  assertInteractiveSession('Stage dir required in non-interactive mode');
   return context.ui.select({
     message: 'Choose staged scrape run',
     options: stageDirs.map((stageDir) => ({
@@ -244,4 +246,50 @@ export const buildAutoScanGroundTruth = (
       ...(result.kind ? { kind: result.kind } : {}),
     })),
   };
+};
+
+export const resolveSeedUrls = async (
+  context: Pick<AppContext, 'ui'>,
+  args: ParsedArgs,
+): Promise<readonly string[]> => {
+  if (args.positionals.length > 0) {
+    return args.positionals;
+  }
+
+  assertInteractiveSession('Seed URL required in non-interactive mode');
+  return splitUrlInput(
+    await context.ui.text({
+      message: 'Seed URL(s), separated by spaces or commas',
+      placeholder:
+        'https://commons.wikimedia.org/w/index.php?search=QR+Code&title=Special%3AMediaSearch&type=image',
+      validate: (value) =>
+        splitUrlInput(value).length > 0 ? undefined : 'At least one URL is required',
+    }),
+  );
+};
+
+export const resolveStageLimit = async (
+  context: Pick<AppContext, 'ui'>,
+  args: ParsedArgs,
+): Promise<number> => {
+  const explicitLimit = getOption(args, 'limit');
+  if (explicitLimit) {
+    return parseLimit(explicitLimit);
+  }
+
+  assertInteractiveSession('Stage limit required in non-interactive mode');
+  return parseLimit(
+    await context.ui.text({
+      message: 'How many images should be staged this round?',
+      initialValue: '25',
+      validate: (value) => {
+        try {
+          parseLimit(value);
+          return undefined;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+    }),
+  );
 };

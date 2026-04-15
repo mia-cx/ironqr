@@ -33,5 +33,9 @@ export const runApp = async (context: AppContext, argv: readonly string[]): Prom
     case 'build-bench':
       await runBuildBenchCommand(context, args);
       return;
+    default: {
+      const _exhaustive: never = args.command;
+      throw new Error(`Unknown command: ${args.command}`);
+    }
   }
 };

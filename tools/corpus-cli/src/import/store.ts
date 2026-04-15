@@ -32,13 +32,16 @@ const EXTENSIONS_BY_MEDIA_TYPE: Record<string, string> = {
 };
 
 const NORMALIZED_IMAGE_MEDIA_TYPE = 'image/webp';
+const ASSET_ID_HASH_LENGTH = 16;
+const NORMALIZED_IMAGE_MAX_DIMENSION = 1000;
+const NORMALIZED_IMAGE_QUALITY = 80;
 
 export const hashSha256 = (buffer: Uint8Array): string => {
   return createHash('sha256').update(buffer).digest('hex');
 };
 
 const buildAssetId = (sha256: string): string => {
-  return `asset-${sha256.slice(0, 16)}`;
+  return `asset-${sha256.slice(0, ASSET_ID_HASH_LENGTH)}`;
 };
 
 const normalizeMediaType = (mediaType: string): string => {
@@ -84,8 +87,7 @@ export const importAssetBytesEffect = (
     const existingIndex = options.assets.findIndex((asset) => asset.id === id);
 
     if (existingIndex >= 0) {
-      const existing = options.assets[existingIndex];
-      if (!existing) throw new Error(`Missing asset at index ${existingIndex}`);
+      const existing = options.assets[existingIndex]!;
 
       if (existing.label !== options.label) {
         throw new Error(`Asset ${id} already exists with label ${existing.label}`);
@@ -214,12 +216,7 @@ const mergeProvenance = (
   }
 
   const merged = [...existing];
-  const existingRecord = merged[index];
-  if (!existingRecord) {
-    throw new Error(`Missing provenance at index ${index}`);
-  }
-
-  merged[index] = mergeProvenanceRecord(existingRecord, next);
+  merged[index] = mergeProvenanceRecord(merged[index]!, next);
   return merged;
 };
 
@@ -310,7 +307,6 @@ interface ImportAssetBytesOptions {
   readonly repoRoot: string;
   readonly assets: CorpusAsset[];
   readonly bytes: Uint8Array;
-  readonly mediaType: string;
   readonly sourcePathForExtension: string;
   readonly label: CorpusAssetLabel;
   readonly provenance: ProvenanceRecord;
@@ -339,12 +335,12 @@ const normalizeImportedImage = (bytes: Uint8Array) => {
     const normalized = await sharp(bytes)
       .rotate()
       .resize({
-        width: 1000,
-        height: 1000,
+        width: NORMALIZED_IMAGE_MAX_DIMENSION,
+        height: NORMALIZED_IMAGE_MAX_DIMENSION,
         fit: 'inside',
         withoutEnlargement: true,
       })
-      .webp({ quality: 80 })
+      .webp({ quality: NORMALIZED_IMAGE_QUALITY })
       .toBuffer();
 
     return new Uint8Array(normalized);

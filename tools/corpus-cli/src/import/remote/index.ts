@@ -13,6 +13,7 @@ export {
   StageReviewStatusSchema,
 } from './contracts.js';
 export { importStagedRemoteAssets } from './import.js';
+export { assertAllowedStagedAssetUrls } from './policy.js';
 export { scrapeRemoteAssets, startScrapeRemoteAssets, streamStagedRemoteAssets } from './scrape.js';
 export {
   readStagedRemoteAsset,

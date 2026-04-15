@@ -1,12 +1,18 @@
 import path from 'node:path';
-import { getOption, type ParsedArgs, parseLimit } from '../args.js';
+import type { ParsedArgs } from '../args.js';
 import type { AppContext } from '../context.js';
 import { readStagedRemoteAssets, startScrapeRemoteAssets } from '../import/remote.js';
-import { assertInteractiveSession } from '../tty.js';
 import { runBuildBenchCommand } from './build-bench.js';
 import { runImportCommand } from './import.js';
 import { runReviewCommand } from './review.js';
-import { listStageDirectories, resolveReviewer, splitUrlInput } from './shared.js';
+import {
+  listStageDirectories,
+  resolveReviewer,
+  resolveSeedUrls,
+  resolveStageLimit,
+} from './shared.js';
+
+const DEFAULT_FETCH_DELAY_MS = 1000;
 
 const listUnreviewedStageDirs = async (repoRoot: string): Promise<readonly string[]> => {
   const stageDirs = await listStageDirectories(repoRoot);
@@ -55,49 +61,6 @@ const runReviewImportRoundForExistingStageDir = async (
   }
 };
 
-const resolveSeedUrls = async (
-  context: AppContext,
-  args: ParsedArgs,
-): Promise<readonly string[]> => {
-  if (args.positionals.length > 0) {
-    return args.positionals;
-  }
-
-  assertInteractiveSession('Seed URL required in non-interactive mode');
-  return splitUrlInput(
-    await context.ui.text({
-      message: 'Seed URL(s), separated by spaces or commas',
-      placeholder:
-        'https://commons.wikimedia.org/w/index.php?search=QR+Code&title=Special%3AMediaSearch&type=image',
-      validate: (value) =>
-        splitUrlInput(value).length > 0 ? undefined : 'At least one URL is required',
-    }),
-  );
-};
-
-const resolveStageLimit = async (context: AppContext, args: ParsedArgs): Promise<number> => {
-  const explicitLimit = getOption(args, 'limit');
-  if (explicitLimit) {
-    return parseLimit(explicitLimit);
-  }
-
-  assertInteractiveSession('Stage limit required in non-interactive mode');
-  return parseLimit(
-    await context.ui.text({
-      message: 'How many images should be staged this round?',
-      initialValue: '25',
-      validate: (value) => {
-        try {
-          parseLimit(value);
-          return undefined;
-        } catch (error) {
-          return error instanceof Error ? error.message : String(error);
-        }
-      },
-    }),
-  );
-};
-
 const runStreamingRound = async (
   context: AppContext,
   args: ParsedArgs,
@@ -110,7 +73,7 @@ const runStreamingRound = async (
     seedUrls,
     label: 'qr-positive',
     limit,
-    fetchDelayMs: 1000,
+    fetchDelayMs: DEFAULT_FETCH_DELAY_MS,
     log: (line) => {
       if (context.ui.verbose) {
         context.ui.debug(line);
