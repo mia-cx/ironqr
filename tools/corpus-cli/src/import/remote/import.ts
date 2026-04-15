@@ -8,6 +8,7 @@ import type {
   LicenseReview,
   RemoteSource,
 } from '../../schema.js';
+import { MAJOR_VERSION } from '../../version.js';
 import { importAssetBytesEffect } from '../store.js';
 import type {
   ImportRemoteAssetResult,
@@ -114,7 +115,6 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
         repoRoot: options.repoRoot,
         assets,
         bytes: new Uint8Array(bytes),
-        mediaType: approvedAsset.mediaType,
         sourcePathForExtension: approvedAsset.imageUrl,
         label:
           options.overrideLabel ??
@@ -146,7 +146,7 @@ const importStagedRemoteAssetsEffect = (options: ImportStagedRemoteAssetsOptions
       yield* removeStagedAssetDirEffect(options.stageDir, stagedAsset.id);
     }
 
-    const nextManifest = { version: 1 as const, assets };
+    const nextManifest = { version: MAJOR_VERSION, assets };
     yield* tryPromise(() => writeCorpusManifest(options.repoRoot, nextManifest));
     yield* removeRunDirIfEmptyEffect(options.stageDir);
 

@@ -8,6 +8,7 @@ import type {
   ImportLocalAssetResult,
   LocalSource,
 } from '../schema.js';
+import { MAJOR_VERSION } from '../version.js';
 import { importAssetBytesEffect, mediaTypeFromExtension } from './store.js';
 
 export const importLocalAssets = (
@@ -31,7 +32,7 @@ const importLocalAssetsEffect = (
       const mediaType = mediaTypeFromExtension(extension);
 
       if (!mediaType) {
-        throw new Error(`Unsupported image extension: ${extension || '<none>'}`);
+        throw new Error(`Unsupported file extension: ${extension || '<none>'}`);
       }
 
       const bytes = yield* Effect.tryPromise(() => readFile(absolutePath));
@@ -40,7 +41,6 @@ const importLocalAssetsEffect = (
         repoRoot: options.repoRoot,
         assets,
         bytes,
-        mediaType,
         sourcePathForExtension: absolutePath,
         label: options.label,
         provenance: source,
@@ -58,7 +58,7 @@ const importLocalAssetsEffect = (
       }
     }
 
-    const nextManifest = { version: 1 as const, assets };
+    const nextManifest = { version: MAJOR_VERSION, assets };
     yield* Effect.tryPromise(() => writeCorpusManifest(options.repoRoot, nextManifest));
 
     return {

@@ -12,6 +12,7 @@ import {
   writeStagedRemoteAsset,
 } from '../../src/import/remote.js';
 import { readCorpusManifest } from '../../src/manifest.js';
+import { MAJOR_VERSION } from '../../src/version.js';
 import { makeTestDir } from '../helpers.js';
 
 const LISTING_HTML = `
@@ -957,7 +958,7 @@ describe('remote corpus import', () => {
     await writeFile(
       path.join(safeDir, 'manifest.json'),
       JSON.stringify({
-        version: 1,
+        version: MAJOR_VERSION,
         id: 'stage-deadbeefcafef00d',
         suggestedLabel: 'qr-positive',
         imageFileName: '../../etc/passwd',
@@ -1005,7 +1006,7 @@ describe('remote corpus import', () => {
     await writeFile(
       path.join(safeDir, 'manifest.json'),
       JSON.stringify({
-        version: 1,
+        version: MAJOR_VERSION,
         id: 'stage-deadbeefcafef00d',
         suggestedLabel: 'qr-positive',
         imageFileName: 'image.png',
@@ -1039,7 +1040,7 @@ describe('remote corpus import', () => {
     await writeFile(
       path.join(safeDir, 'manifest.json'),
       JSON.stringify({
-        version: 1,
+        version: MAJOR_VERSION,
         id: 'stage-deadbeefcafef00d',
         suggestedLabel: 'qr-positive',
         imageFileName: 'image.png',

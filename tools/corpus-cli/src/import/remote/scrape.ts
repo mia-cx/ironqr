@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import sharp from 'sharp';
 import { appendVisitedSourcePage, readScrapeProgress } from '../../manifest.js';
 import type { ImportRemoteAssetOptions } from '../../schema.js';
+import { MAJOR_VERSION } from '../../version.js';
 import { AsyncQueue } from '../queue.js';
 import { hashSha256 } from '../store.js';
 import type {
@@ -67,7 +68,7 @@ const createStagedRemoteAsset = (
   const imageUrlHash = hashSha256(new TextEncoder().encode(imageUrl));
 
   return {
-    version: 1,
+    version: MAJOR_VERSION,
     id: `stage-${sourceSha256.slice(0, 16)}-${imageUrlHash.slice(0, 8)}`,
     suggestedLabel,
     imageFileName: NORMALIZED_STAGED_FILENAME,

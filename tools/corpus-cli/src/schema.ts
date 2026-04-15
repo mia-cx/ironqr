@@ -96,7 +96,7 @@ export const CorpusAssetSchema = S.Struct({
 export type CorpusAsset = S.Schema.Type<typeof CorpusAssetSchema>;
 
 export const CorpusManifestSchema = S.Struct({
-  version: S.Literal(1),
+  version: S.Number,
   assets: S.Array(CorpusAssetSchema),
 });
 export type CorpusManifest = S.Schema.Type<typeof CorpusManifestSchema>;
@@ -145,7 +145,7 @@ export interface ImportRemoteAssetResult {
 }
 
 export const ScrapeProgressSchema = S.Struct({
-  version: S.Literal(1),
+  version: S.Number,
   visitedSourcePageUrls: S.Array(S.String),
 });
 export type ScrapeProgress = S.Schema.Type<typeof ScrapeProgressSchema>;
@@ -167,7 +167,7 @@ export const CorpusRejectionEntrySchema = S.Struct({
 export type CorpusRejectionEntry = S.Schema.Type<typeof CorpusRejectionEntrySchema>;
 
 export const CorpusRejectionsLogSchema = S.Struct({
-  version: S.Literal(1),
+  version: S.Number,
   rejections: S.Array(CorpusRejectionEntrySchema),
 });
 export type CorpusRejectionsLog = S.Schema.Type<typeof CorpusRejectionsLogSchema>;

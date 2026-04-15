@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as S from 'effect/Schema';
+import { isEnoentError } from './fs-error.js';
 import {
   type CorpusManifest,
   CorpusManifestSchema,
@@ -10,10 +11,7 @@ import {
   type ScrapeProgress,
   ScrapeProgressSchema,
 } from './schema.js';
-
-const decodeManifest = (value: unknown): CorpusManifest => {
-  return S.decodeUnknownSync(CorpusManifestSchema)(value);
-};
+import { assertCompatibleVersion, MAJOR_VERSION } from './version.js';
 
 const provenanceSortKey = (
   record: CorpusManifest['assets'][number]['provenance'][number],
@@ -60,10 +58,12 @@ export const readCorpusManifest = async (repoRoot: string): Promise<CorpusManife
 
   try {
     const raw = await readFile(manifestPath, 'utf8');
-    return decodeManifest(JSON.parse(raw));
+    const manifest = S.decodeUnknownSync(CorpusManifestSchema)(JSON.parse(raw));
+    assertCompatibleVersion(manifest.version, manifestPath);
+    return manifest;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { version: 1, assets: [] };
+    if (isEnoentError(error)) {
+      return { version: MAJOR_VERSION, assets: [] };
     }
 
     throw error;
@@ -77,7 +77,7 @@ export const writeCorpusManifest = async (
   await ensureCorpusLayout(repoRoot);
 
   const sorted: CorpusManifest = {
-    version: 1,
+    version: MAJOR_VERSION,
     assets: [...manifest.assets]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((asset) => ({
@@ -96,12 +96,15 @@ export const getCorpusRejectionsPath = (repoRoot: string): string => {
 };
 
 export const readCorpusRejections = async (repoRoot: string): Promise<CorpusRejectionsLog> => {
+  const rejectionsPath = getCorpusRejectionsPath(repoRoot);
   try {
-    const raw = await readFile(getCorpusRejectionsPath(repoRoot), 'utf8');
-    return S.decodeUnknownSync(CorpusRejectionsLogSchema)(JSON.parse(raw));
+    const raw = await readFile(rejectionsPath, 'utf8');
+    const log = S.decodeUnknownSync(CorpusRejectionsLogSchema)(JSON.parse(raw));
+    assertCompatibleVersion(log.version, rejectionsPath);
+    return log;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { version: 1, rejections: [] };
+    if (isEnoentError(error)) {
+      return { version: MAJOR_VERSION, rejections: [] };
     }
     throw error;
   }
@@ -116,7 +119,10 @@ export const appendCorpusRejection = async (
   if (log.rejections.some((r) => r.sourceSha256 === entry.sourceSha256)) {
     return;
   }
-  const updated: CorpusRejectionsLog = { version: 1, rejections: [...log.rejections, entry] };
+  const updated: CorpusRejectionsLog = {
+    version: MAJOR_VERSION,
+    rejections: [...log.rejections, entry],
+  };
   await writeFile(
     getCorpusRejectionsPath(repoRoot),
     `${JSON.stringify(updated, null, 2)}\n`,
@@ -128,12 +134,15 @@ export const getCorpusScrapeProgressPath = (repoRoot: string): string =>
   path.join(getCorpusDataRoot(repoRoot), 'scrape-progress.json');
 
 export const readScrapeProgress = async (repoRoot: string): Promise<ScrapeProgress> => {
+  const progressPath = getCorpusScrapeProgressPath(repoRoot);
   try {
-    const raw = await readFile(getCorpusScrapeProgressPath(repoRoot), 'utf8');
-    return S.decodeUnknownSync(ScrapeProgressSchema)(JSON.parse(raw));
+    const raw = await readFile(progressPath, 'utf8');
+    const progress = S.decodeUnknownSync(ScrapeProgressSchema)(JSON.parse(raw));
+    assertCompatibleVersion(progress.version, progressPath);
+    return progress;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { version: 1, visitedSourcePageUrls: [] };
+    if (isEnoentError(error)) {
+      return { version: MAJOR_VERSION, visitedSourcePageUrls: [] };
     }
     throw error;
   }
@@ -144,7 +153,7 @@ export const appendVisitedSourcePage = async (repoRoot: string, url: string): Pr
   const progress = await readScrapeProgress(repoRoot);
   if (progress.visitedSourcePageUrls.includes(url)) return;
   const updated: ScrapeProgress = {
-    version: 1,
+    version: MAJOR_VERSION,
     visitedSourcePageUrls: [...progress.visitedSourcePageUrls, url],
   };
   await writeFile(

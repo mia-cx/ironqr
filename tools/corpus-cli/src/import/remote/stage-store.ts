@@ -2,8 +2,10 @@ import { mkdir, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises
 import path from 'node:path';
 import { Effect } from 'effect';
 import * as S from 'effect/Schema';
+import { isEnoentError } from '../../fs-error.js';
 import { readCorpusManifest, readCorpusRejections } from '../../manifest.js';
 import { assertHttpUrl } from '../../url.js';
+import { assertCompatibleVersion } from '../../version.js';
 import { type StagedRemoteAsset, StagedRemoteAssetSchema } from './contracts.js';
 import { tryPromise } from './effect.js';
 import { assertAllowedStagedAssetUrls } from './policy.js';
@@ -128,7 +130,9 @@ export const readStagedRemoteAssetEffect = (
   return Effect.gen(function* () {
     assertSafeSlug(assetId, 'asset id');
     const raw = yield* tryPromise(() => readFile(getAssetManifestPath(stageDir, assetId), 'utf8'));
+    const manifestPath = getAssetManifestPath(stageDir, assetId);
     const asset = decodeStagedAsset(JSON.parse(raw));
+    assertCompatibleVersion(asset.version, manifestPath);
     validateStagedAsset(asset);
     return asset;
   });
@@ -212,7 +216,7 @@ export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
         .filter((entry) => entry.isDirectory())
         .map((entry) => path.join(stagingRoot, entry.name));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (isEnoentError(error)) {
         return seenSourceSha256;
       }
       throw error;
@@ -230,7 +234,7 @@ export const collectExistingStagedSourceHashesEffect = (repoRoot: string) => {
             seenSourceSha256.add(parsed.sourceSha256);
           }
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          if (!isEnoentError(error)) {
             throw error;
           }
         }

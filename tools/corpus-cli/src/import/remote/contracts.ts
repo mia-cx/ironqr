@@ -1,11 +1,13 @@
 import * as S from 'effect/Schema';
-import type {
-  CorpusAssetLabel,
-  CorpusRejectionReason,
-  ImportRemoteAssetResult,
-  ReviewStatus,
+import {
+  AutoScanSchema,
+  type CorpusAssetLabel,
+  type CorpusRejectionReason,
+  CorpusRejectionReasonSchema,
+  GroundTruthSchema,
+  type ImportRemoteAssetResult,
+  type ReviewStatus,
 } from '../../schema.js';
-import { CorpusRejectionReasonSchema } from '../../schema.js';
 
 export const StageReviewStatusSchema = S.Literals(['pending', 'approved', 'rejected', 'skipped']);
 export type StageReviewStatus = S.Schema.Type<typeof StageReviewStatusSchema>;
@@ -19,7 +21,7 @@ export const StageReviewSchema = S.Struct({
 export type StageReview = S.Schema.Type<typeof StageReviewSchema>;
 
 export const StagedRemoteAssetSchema = S.Struct({
-  version: S.Literal(1),
+  version: S.Number,
   id: S.String,
   suggestedLabel: S.Literals(['qr-positive', 'non-qr-negative']),
   imageFileName: S.String,
@@ -43,32 +45,8 @@ export const StagedRemoteAssetSchema = S.Struct({
   licenseEvidenceText: S.optional(S.String),
   review: StageReviewSchema,
   confirmedLicense: S.optional(S.String),
-  groundTruth: S.optional(
-    S.Struct({
-      qrCount: S.Number,
-      codes: S.Array(
-        S.Struct({
-          text: S.String,
-          kind: S.optional(S.String),
-          verifiedWith: S.optional(S.String),
-          notes: S.optional(S.String),
-        }),
-      ),
-    }),
-  ),
-  autoScan: S.optional(
-    S.Struct({
-      attempted: S.Boolean,
-      succeeded: S.Boolean,
-      results: S.Array(
-        S.Struct({
-          text: S.String,
-          kind: S.optional(S.String),
-        }),
-      ),
-      acceptedAsTruth: S.optional(S.Boolean),
-    }),
-  ),
+  groundTruth: S.optional(GroundTruthSchema),
+  autoScan: S.optional(AutoScanSchema),
   importedAssetId: S.optional(S.String),
   rejectionReason: S.optional(CorpusRejectionReasonSchema),
 });
