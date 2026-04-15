@@ -156,6 +156,10 @@ const selectBenchAssets = async (
   });
 };
 
+/**
+ * Run the `build-bench` command: select approved corpus assets and write the perfbench fixture.
+ * @returns Number of selected assets and the output manifest path.
+ */
 export const runBuildBenchCommand = async (
   context: AppContext,
   args: ParsedArgs,

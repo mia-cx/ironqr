@@ -3,8 +3,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
 
+/** The major version of the corpus-cli package, used as the data-format compatibility version. */
 export const MAJOR_VERSION = Number(pkg.version.split('.')[0]);
 
+/** Throw if `fileVersion` does not match `MAJOR_VERSION`, indicating an incompatible data file. */
 export const assertCompatibleVersion = (fileVersion: number, filePath: string): void => {
   if (fileVersion !== MAJOR_VERSION) {
     throw new Error(

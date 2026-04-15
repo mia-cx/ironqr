@@ -253,6 +253,7 @@ interface BufferedLine {
   readonly message: string;
 }
 
+/** Create a `CliUi` backed by clack prompts, buffering log output during active prompts. */
 export const createClackUi = ({ verbose = false }: { verbose?: boolean } = {}): CliUi => {
   let activePromptCount = 0;
   const bufferedLines: BufferedLine[] = [];

@@ -90,6 +90,10 @@ const buildReviewedAsset = (
   };
 };
 
+/**
+ * Iterate over staged assets and run the interactive review flow for each pending one.
+ * @returns Counts of approved, rejected, and skipped assets.
+ */
 export const reviewStagedAssets = async (
   options: ReviewStagedAssetsOptions,
 ): Promise<ReviewSummary> => {

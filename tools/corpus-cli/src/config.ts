@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isEnoentError } from './fs-error.js';
 
+/** Persisted user preference for which app opens preview images. */
 export type ViewerPreference =
   | { readonly mode: 'default' }
   | { readonly mode: 'quicklook' }
@@ -21,10 +22,12 @@ const isViewerPreference = (value: unknown): value is ViewerPreference => {
   return mode === 'custom-app' && typeof Reflect.get(value, 'value') === 'string';
 };
 
+/** Return the absolute path to the corpus-cli JSON config file. */
 export const getCorpusCliConfigPath = (repoRoot: string): string => {
   return path.join(repoRoot, '.sc', 'corpus-cli.json');
 };
 
+/** Read the saved `ViewerPreference` from config, or `undefined` if not yet set. */
 export const readViewerPreference = async (
   repoRoot: string,
 ): Promise<ViewerPreference | undefined> => {
@@ -41,6 +44,7 @@ export const readViewerPreference = async (
   }
 };
 
+/** Persist the user's `ViewerPreference` to the corpus-cli config file. */
 export const writeViewerPreference = async (
   repoRoot: string,
   viewer: ViewerPreference,

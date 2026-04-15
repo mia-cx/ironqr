@@ -110,6 +110,10 @@ const runStreamingRound = async (
   return { staged: staged.length };
 };
 
+/**
+ * Run the guided default flow: optionally resume unreviewed staged runs, then scrape → review → import in a loop.
+ * Ends by offering to curate the perfbench fixture.
+ */
 export const runDefaultFlow = async (context: AppContext, args: ParsedArgs): Promise<void> => {
   const reviewer = await resolveReviewer(context);
 

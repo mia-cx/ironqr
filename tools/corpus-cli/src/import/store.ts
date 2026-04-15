@@ -36,6 +36,7 @@ const ASSET_ID_HASH_LENGTH = 16;
 const NORMALIZED_IMAGE_MAX_DIMENSION = 1000;
 const NORMALIZED_IMAGE_QUALITY = 80;
 
+/** Compute the hex-encoded SHA-256 hash of a byte buffer. */
 export const hashSha256 = (buffer: Uint8Array): string => {
   return createHash('sha256').update(buffer).digest('hex');
 };
@@ -48,10 +49,12 @@ const normalizeMediaType = (mediaType: string): string => {
   return mediaType.split(';', 1)[0]?.trim().toLowerCase() ?? mediaType.toLowerCase();
 };
 
+/** Map a lowercase file extension (e.g. `.jpg`) to its MIME type, or `undefined` if unsupported. */
 export const mediaTypeFromExtension = (extension: string): string | undefined => {
   return MEDIA_TYPES_BY_EXTENSION[extension.toLowerCase()];
 };
 
+/** Derive a file extension from a MIME type, falling back to the extension in `fallbackPath`. */
 export const extensionFromMediaType = (mediaType: string, fallbackPath: string): string => {
   const normalizedMediaType = normalizeMediaType(mediaType);
   const fromMediaType = EXTENSIONS_BY_MEDIA_TYPE[normalizedMediaType];
@@ -65,12 +68,14 @@ export const extensionFromMediaType = (mediaType: string, fallbackPath: string):
   throw new Error(`Unsupported image media type: ${mediaType}`);
 };
 
+/** Import raw image bytes into the corpus, normalizing and deduplicating by source SHA-256. */
 export const importAssetBytes = (
   options: ImportAssetBytesOptions,
 ): Promise<ImportAssetBytesResult> => {
   return Effect.runPromise(importAssetBytesEffect(options));
 };
 
+/** Effect-based implementation of `importAssetBytes`, suitable for composition in larger Effect pipelines. */
 export const importAssetBytesEffect = (
   options: ImportAssetBytesOptions,
 ): Effect.Effect<ImportAssetBytesResult, unknown> => {

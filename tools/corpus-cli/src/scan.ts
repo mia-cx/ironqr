@@ -11,6 +11,7 @@ type ScanOutcome =
   | { readonly ok: true; readonly results: readonly ScanFrameResult[] }
   | { readonly ok: false; readonly error: unknown };
 
+/** Scan a local image file for QR codes and return a normalized `AutoScan` result. */
 export const scanLocalImageFile = (imagePath: string): Promise<AutoScan> => {
   return Effect.runPromise(scanLocalImageFileEffect(imagePath));
 };

@@ -120,6 +120,10 @@ const detectCommonsLicense = (
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/**
+ * Heuristically detects a license string from page HTML for the given host.
+ * Returns `bestEffortLicense` and optional `licenseEvidenceText`; both may be absent.
+ */
 export const detectBestEffortLicense = (
   host: string,
   html: string,
@@ -174,6 +178,7 @@ export const detectBestEffortLicense = (
   return {};
 };
 
+/** Extracts absolute image URLs from `og:image`, `twitter:image`, and `image_src` link tags. */
 export const extractMetaImageCandidates = (pageUrl: string, html: string): readonly string[] => {
   return dedupe(
     [
@@ -191,6 +196,7 @@ export const extractMetaImageCandidates = (pageUrl: string, html: string): reado
   );
 };
 
+/** Extracts absolute image URLs from `<img>` and `<source>` `src`/`srcset` attributes. */
 export const extractInlineImageCandidates = (pageUrl: string, html: string): readonly string[] => {
   return dedupe(
     [
@@ -246,6 +252,10 @@ const extractWrappedPageLinks = (
     .filter((match) => patterns.some((pattern) => pattern.test(new URL(match.href).pathname)));
 };
 
+/**
+ * Extracts detail-page URLs from `html` that match the host's configured link patterns.
+ * `allowFanOut` enables fallback to bare `<a href>` scanning when no wrapped links are found.
+ */
 export const extractPageLinks = (
   pageUrl: string,
   html: string,
@@ -285,6 +295,10 @@ export const extractPageLinks = (
   return normalizePageLinks(pageUrl, dedupe(wrappedLinks.map((link) => link.href)));
 };
 
+/**
+ * Returns the most relevant image candidates for a page.
+ * On detail pages prefers meta candidates; on listing pages returns a deduplicated union.
+ */
 export const extractImageCandidates = (
   pageUrl: string,
   html: string,

@@ -8,6 +8,7 @@ import type { AutoScan, CorpusAssetLabel, GroundTruth, ReviewStatus } from '../s
 import { assertInteractiveSession } from '../tty.js';
 import type { CliUi } from '../ui.js';
 
+/** Split a whitespace/comma-separated URL string into individual URL strings. */
 export const splitUrlInput = (value: string): string[] => {
   return value
     .split(/[\s,]+/)
@@ -15,6 +16,7 @@ export const splitUrlInput = (value: string): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
+/** Split a newline/comma-separated path string into individual path strings. */
 export const splitPathInput = (value: string): string[] => {
   return value
     .split(/[\n,]+/)
@@ -22,6 +24,7 @@ export const splitPathInput = (value: string): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
+/** Interactively prompt the user to choose a corpus asset label. */
 export const promptLabel = async (
   ui: CliUi,
   initialValue: CorpusAssetLabel = 'qr-positive',
@@ -41,6 +44,7 @@ export const promptLabel = async (
   });
 };
 
+/** Interactively prompt the user to choose a review status. */
 export const promptReviewStatus = async (
   ui: CliUi,
   initialValue: ReviewStatus = 'approved',
@@ -57,6 +61,7 @@ export const promptReviewStatus = async (
   });
 };
 
+/** Prompt for optional freeform text; returns `undefined` when the input is blank. */
 export const promptOptionalText = async (
   ui: CliUi,
   message: string,
@@ -70,6 +75,7 @@ export const promptOptionalText = async (
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+/** Resolve the reviewer username from an explicit value, GitHub CLI detection, or interactive prompt. */
 export const resolveReviewer = async (
   context: Pick<AppContext, 'detectGithubLogin' | 'ui'>,
   explicitReviewer?: string,
@@ -96,6 +102,7 @@ const getStageRoot = (repoRoot: string): string => {
   return path.join(repoRoot, 'corpus', 'staging');
 };
 
+/** List all staging run directories under `corpus/staging`, newest first. */
 export const listStageDirectories = async (repoRoot: string): Promise<readonly string[]> => {
   try {
     const entries = await readdir(getStageRoot(repoRoot), { withFileTypes: true });
@@ -112,6 +119,7 @@ export const listStageDirectories = async (repoRoot: string): Promise<readonly s
   }
 };
 
+/** Return `true` if the path appears to be a staging directory (exists, is a directory with sub-entries). */
 export const isLikelyStageDir = async (targetPath: string): Promise<boolean> => {
   try {
     const absolutePath = path.resolve(targetPath);
@@ -127,6 +135,7 @@ export const isLikelyStageDir = async (targetPath: string): Promise<boolean> => 
   }
 };
 
+/** Resolve a staging directory from an explicit path or by prompting the user to choose one. */
 export const promptStageDir = async (
   context: Pick<AppContext, 'repoRoot' | 'ui'>,
   explicitStageDir?: string,
@@ -157,6 +166,7 @@ export const promptStageDir = async (
   });
 };
 
+/** Interactively prompt for one or more local image file paths. */
 export const promptLocalPaths = async (
   ui: CliUi,
   initialPaths: readonly string[] = [],
@@ -173,6 +183,7 @@ export const promptLocalPaths = async (
   return splitPathInput(value).map((entry) => path.resolve(entry));
 };
 
+/** Interactively prompt the reviewer for the number of QR codes visible in an image. */
 export const promptQrCount = async (
   ui: CliUi,
   message = 'How many QR codes are present?',
@@ -195,6 +206,10 @@ export const promptQrCount = async (
   return Number(value);
 };
 
+/**
+ * Interactively prompt the reviewer to enter ground-truth QR data for each code in an image.
+ * @param prefills Pre-populated text/kind values from an automated scan.
+ */
 export const promptManualGroundTruth = async (
   ui: CliUi,
   qrCount: number,
@@ -231,6 +246,10 @@ export const promptManualGroundTruth = async (
   return { qrCount, codes };
 };
 
+/**
+ * Derive a `GroundTruth` directly from a successful `AutoScan` result when the QR count matches.
+ * Returns `undefined` when the scan did not succeed or the count differs.
+ */
 export const buildAutoScanGroundTruth = (
   autoScan: AutoScan,
   qrCount: number,
@@ -248,6 +267,7 @@ export const buildAutoScanGroundTruth = (
   };
 };
 
+/** Resolve scrape seed URLs from positional args or an interactive prompt. */
 export const resolveSeedUrls = async (
   context: Pick<AppContext, 'ui'>,
   args: ParsedArgs,
@@ -268,6 +288,7 @@ export const resolveSeedUrls = async (
   );
 };
 
+/** Resolve the staging limit from `--limit` option or an interactive prompt. */
 export const resolveStageLimit = async (
   context: Pick<AppContext, 'ui'>,
   args: ParsedArgs,

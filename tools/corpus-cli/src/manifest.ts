@@ -21,38 +21,47 @@ const provenanceSortKey = (
     : `remote:${record.sourcePageUrl}:${record.imageUrl}`;
 };
 
+/** Return the absolute path to the `corpus/data` directory. */
 export const getCorpusDataRoot = (repoRoot: string): string => {
   return path.join(repoRoot, 'corpus', 'data');
 };
 
+/** Return the absolute path to the `corpus/data/assets` directory. */
 export const getCorpusAssetsRoot = (repoRoot: string): string => {
   return path.join(getCorpusDataRoot(repoRoot), 'assets');
 };
 
+/** Return the absolute path to `corpus/data/manifest.json`. */
 export const getCorpusManifestPath = (repoRoot: string): string => {
   return path.join(getCorpusDataRoot(repoRoot), 'manifest.json');
 };
 
+/** Return the absolute path to `corpus/data/benchmark-real-world.json`. */
 export const getBenchmarkExportPath = (repoRoot: string): string => {
   return path.join(getCorpusDataRoot(repoRoot), 'benchmark-real-world.json');
 };
 
+/** Return the absolute path to the perfbench real-world fixture directory. */
 export const getPerfbenchFixtureRoot = (repoRoot: string): string => {
   return path.join(repoRoot, 'tools', 'perfbench', 'fixtures', 'real-world');
 };
 
+/** Return the absolute path to the assets sub-directory inside the perfbench fixture. */
 export const getPerfbenchFixtureAssetsRoot = (repoRoot: string): string => {
   return path.join(getPerfbenchFixtureRoot(repoRoot), 'assets');
 };
 
+/** Return the absolute path to the perfbench fixture `manifest.json`. */
 export const getPerfbenchFixtureManifestPath = (repoRoot: string): string => {
   return path.join(getPerfbenchFixtureRoot(repoRoot), 'manifest.json');
 };
 
+/** Create the corpus assets directory if it does not already exist. */
 export const ensureCorpusLayout = async (repoRoot: string): Promise<void> => {
   await mkdir(getCorpusAssetsRoot(repoRoot), { recursive: true });
 };
 
+/** Read and validate the corpus manifest; returns an empty manifest when the file is absent. */
 export const readCorpusManifest = async (repoRoot: string): Promise<CorpusManifest> => {
   const manifestPath = getCorpusManifestPath(repoRoot);
 
@@ -70,6 +79,7 @@ export const readCorpusManifest = async (repoRoot: string): Promise<CorpusManife
   }
 };
 
+/** Write the corpus manifest to disk, sorting assets and provenance entries. */
 export const writeCorpusManifest = async (
   repoRoot: string,
   manifest: CorpusManifest,
@@ -91,10 +101,12 @@ export const writeCorpusManifest = async (
   await writeFile(getCorpusManifestPath(repoRoot), `${JSON.stringify(sorted, null, 2)}\n`, 'utf8');
 };
 
+/** Return the absolute path to `corpus/data/rejections.json`. */
 export const getCorpusRejectionsPath = (repoRoot: string): string => {
   return path.join(getCorpusDataRoot(repoRoot), 'rejections.json');
 };
 
+/** Read the rejections log; returns an empty log when the file is absent. */
 export const readCorpusRejections = async (repoRoot: string): Promise<CorpusRejectionsLog> => {
   const rejectionsPath = getCorpusRejectionsPath(repoRoot);
   try {
@@ -110,6 +122,7 @@ export const readCorpusRejections = async (repoRoot: string): Promise<CorpusReje
   }
 };
 
+/** Append a rejection entry to the log, skipping duplicates by `sourceSha256`. */
 export const appendCorpusRejection = async (
   repoRoot: string,
   entry: CorpusRejectionEntry,
@@ -130,9 +143,11 @@ export const appendCorpusRejection = async (
   );
 };
 
+/** Return the absolute path to `corpus/data/scrape-progress.json`. */
 export const getCorpusScrapeProgressPath = (repoRoot: string): string =>
   path.join(getCorpusDataRoot(repoRoot), 'scrape-progress.json');
 
+/** Read the scrape-progress file; returns an empty record when the file is absent. */
 export const readScrapeProgress = async (repoRoot: string): Promise<ScrapeProgress> => {
   const progressPath = getCorpusScrapeProgressPath(repoRoot);
   try {
@@ -148,6 +163,7 @@ export const readScrapeProgress = async (repoRoot: string): Promise<ScrapeProgre
   }
 };
 
+/** Record a visited source-page URL in the progress file, skipping if already present. */
 export const appendVisitedSourcePage = async (repoRoot: string, url: string): Promise<void> => {
   await ensureCorpusLayout(repoRoot);
   const progress = await readScrapeProgress(repoRoot);
@@ -163,6 +179,7 @@ export const appendVisitedSourcePage = async (repoRoot: string, url: string): Pr
   );
 };
 
+/** Convert an absolute `targetPath` to a forward-slash repo-relative path. */
 export const toRepoRelativePath = (repoRoot: string, targetPath: string): string => {
   return path.relative(repoRoot, targetPath).split(path.sep).join('/');
 };

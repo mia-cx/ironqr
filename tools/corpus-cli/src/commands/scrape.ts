@@ -13,6 +13,7 @@ interface ScrapeInputs {
   readonly limit?: number;
 }
 
+/** Resolve seed URLs and optional limit from args or interactive prompts. */
 export const resolveScrapeInputs = async (
   context: AppContext,
   args: ParsedArgs,
@@ -28,6 +29,7 @@ export const resolveScrapeInputs = async (
   return { seedUrls, ...(limit ? { limit } : {}) };
 };
 
+/** Run the `scrape` command: fetch remote images into a new staging directory. */
 export const runScrapeCommand = async (
   context: AppContext,
   args: ParsedArgs,

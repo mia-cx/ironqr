@@ -1,3 +1,7 @@
+/**
+ * A backpressure-free async queue that bridges push-based producers with async-iteration consumers.
+ * Call `push` to enqueue items and `close` when the producer is done.
+ */
 export class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
   private readonly waiters: Array<(value: IteratorResult<T>) => void> = [];
