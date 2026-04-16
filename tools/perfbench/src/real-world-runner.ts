@@ -96,7 +96,12 @@ export const scoreRealWorldPositive = (
 ): RealWorldPositiveResult => {
   const expected = expectedTextFor(entry);
   const decodedText = scan.results[0]?.text ?? null;
-  const passed = expected === null ? scan.succeeded : scan.succeeded && decodedText === expected;
+  // When there's no text-level ground truth, a successful scan must still decode
+  // something — scan.succeeded is true even when results is empty (engine ran OK).
+  const passed =
+    expected === null
+      ? scan.succeeded && scan.results.length > 0
+      : scan.succeeded && decodedText === expected;
 
   return {
     entry,

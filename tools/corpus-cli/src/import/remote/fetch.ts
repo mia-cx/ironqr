@@ -115,6 +115,7 @@ export const fetchFollowingSameHost = (
 
         const nextUrl = new URL(location, currentUrl).toString();
         assertSameHostRedirect(currentUrl, nextUrl);
+        response.body?.cancel().catch(() => {});
         currentUrl = nextUrl;
         continue;
       }
@@ -247,6 +248,14 @@ interface CommonsSearchBatch {
   readonly sroffset: number | null;
 }
 
+interface CommonsSearchApiResponse {
+  readonly continue?: { readonly sroffset?: number };
+  readonly query?: { readonly search?: ReadonlyArray<{ readonly title?: string }> };
+}
+
+const isCommonsSearchApiResponse = (v: unknown): v is CommonsSearchApiResponse =>
+  typeof v === 'object' && v !== null;
+
 /** Returns true if the URL is a Wikimedia Commons MediaSearch page. */
 export const isCommonsSearchUrl = (url: string): boolean => {
   try {
@@ -299,12 +308,12 @@ export const fetchCommonsSearchBatch = (
     }
 
     const bodyBytes = yield* readLimitedBody(response, MAX_SEARCH_API_BYTES, 'Commons search API');
-    const data = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
-      continue?: { sroffset?: number };
-      query?: { search?: Array<{ title?: string }> };
-    };
+    const raw: unknown = JSON.parse(new TextDecoder().decode(bodyBytes));
+    if (!isCommonsSearchApiResponse(raw)) {
+      return { results: [], sroffset: null };
+    }
 
-    const entries = data.query?.search ?? [];
+    const entries = raw.query?.search ?? [];
     const results: CommonsSearchResult[] = entries
       .filter((entry): entry is { title: string } => typeof entry.title === 'string')
       .map((entry) => ({
@@ -314,7 +323,7 @@ export const fetchCommonsSearchBatch = (
 
     return {
       results,
-      sroffset: data.continue?.sroffset ?? null,
+      sroffset: raw.continue?.sroffset ?? null,
     };
   });
 };

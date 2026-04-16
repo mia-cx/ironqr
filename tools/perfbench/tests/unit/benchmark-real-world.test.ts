@@ -40,6 +40,24 @@ describe('real-world benchmark runner', () => {
     expect(result.error).toBe(null);
   });
 
+  it('fails when scan succeeds but decodes nothing and there is no ground truth text', () => {
+    const result = scoreRealWorldPositive(
+      {
+        id: 'asset-1',
+        label: 'qr-positive',
+        assetPath: 'tools/perfbench/fixtures/real-world/assets/asset-1.webp',
+        sha256: 'abc',
+        byteLength: 1,
+        mediaType: 'image/webp',
+      },
+      { succeeded: true, results: [] },
+    );
+
+    // Engine ran OK but decoded nothing — must not count as a pass.
+    expect(result.passed).toBe(false);
+    expect(result.decodedText).toBe(null);
+  });
+
   it('reports zero counts when committed fixture is missing and passes exit gate', async () => {
     const repoRoot = await makeTestDir('bench-empty');
     const result = await runRealWorldBenchmark(repoRoot);
