@@ -1,7 +1,10 @@
 /**
  * Converts an RGBA `ImageData` to an 8-bit grayscale array using luminance weighting.
  *
- * Luminance formula: 0.299R + 0.587G + 0.114B (BT.601).
+ * Luminance formula: 0.299R + 0.587G + 0.114B (BT.601). Pixels with alpha < 255
+ * are composited onto a white background first — matching browser and image-viewer
+ * behaviour for transparent PNGs (a fully transparent pixel reads as white, the
+ * colour the user actually sees).
  *
  * @param data - Source `ImageData`.
  * @returns Grayscale luma values, one byte per pixel.
@@ -15,7 +18,14 @@ export const toGrayscale = (data: ImageData): Uint8Array => {
     const r = pixels[base] ?? 0;
     const g = pixels[base + 1] ?? 0;
     const b = pixels[base + 2] ?? 0;
-    luma[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    const a = pixels[base + 3] ?? 255;
+    // Source-over composite onto white (255). a/255 is the foreground weight.
+    const fg = a / 255;
+    const bg = 1 - fg;
+    const cr = r * fg + 255 * bg;
+    const cg = g * fg + 255 * bg;
+    const cb = b * fg + 255 * bg;
+    luma[i] = Math.round(0.299 * cr + 0.587 * cg + 0.114 * cb);
   }
 
   return luma;

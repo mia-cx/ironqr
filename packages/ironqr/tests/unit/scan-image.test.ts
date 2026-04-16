@@ -201,6 +201,35 @@ describe('single-image baseline pipeline (internal modules)', () => {
     expect(luma.every((v) => v === 0)).toBe(true);
   });
 
+  it('toGrayscale composites fully transparent pixels onto white (matches browser behaviour)', () => {
+    // Real-world failure: PNG QR codes with an alpha channel and RGB=0 came
+    // through as all-zero luma, dropping the entire image to dark and breaking
+    // Otsu. Browsers and image viewers composite alpha=0 against white, so the
+    // user-visible image is white — we should match that.
+    const width = 4;
+    const height = 4;
+    const pixels = new Uint8ClampedArray(width * height * 4); // all zeros
+    const imageData = makeImageData(width, height, pixels);
+    const luma = toGrayscale(imageData);
+    expect(luma.every((v) => v === 255)).toBe(true);
+  });
+
+  it('toGrayscale composites partial alpha onto white (50% opaque black → ~128)', () => {
+    const width = 2;
+    const height = 2;
+    const pixels = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < pixels.length; i += 4) {
+      pixels[i + 3] = 128; // 50% alpha, RGB=0 → 50% black on white background
+    }
+    const imageData = makeImageData(width, height, pixels);
+    const luma = toGrayscale(imageData);
+    // BT.601 of (0,0,0) composited 50% on (255,255,255) ≈ 127.
+    for (const v of luma) {
+      expect(v).toBeGreaterThanOrEqual(126);
+      expect(v).toBeLessThanOrEqual(129);
+    }
+  });
+
   it('otsuBinarize on a blank (all-white) image returns all-255 (light)', () => {
     const width = 100;
     const height = 100;
