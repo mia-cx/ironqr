@@ -66,11 +66,14 @@ export const resolveGrid = (
   const trGridCol = size - 1 - finderOffset;
   const blGridRow = size - 1 - finderOffset;
 
+  const expectedRight = unitPoint(topRight.cx - topLeft.cx, topRight.cy - topLeft.cy);
+  const expectedDown = unitPoint(bottomLeft.cx - topLeft.cx, bottomLeft.cy - topLeft.cy);
+
   type Pair = readonly [Point, Point];
   const pairs: Pair[] = [
-    ...finderEdgePairs(topLeft, finderOffset, finderOffset),
-    ...finderEdgePairs(topRight, finderOffset, trGridCol),
-    ...finderEdgePairs(bottomLeft, blGridRow, finderOffset),
+    ...finderEdgePairs(topLeft, finderOffset, finderOffset, expectedRight, expectedDown),
+    ...finderEdgePairs(topRight, finderOffset, trGridCol, expectedRight, expectedDown),
+    ...finderEdgePairs(bottomLeft, blGridRow, finderOffset, expectedRight, expectedDown),
   ];
 
   // Try projective fit first; fall back to affine if the linear system is
@@ -144,11 +147,14 @@ export const resolveGridFromCorrespondences = (
   const trGridCol = size - 1 - finderOffset;
   const blGridRow = size - 1 - finderOffset;
 
+  const expectedRight = unitPoint(topRight.cx - topLeft.cx, topRight.cy - topLeft.cy);
+  const expectedDown = unitPoint(bottomLeft.cx - topLeft.cx, bottomLeft.cy - topLeft.cy);
+
   type Pair = readonly [Point, Point];
   const pairs: Pair[] = [
-    ...finderEdgePairs(topLeft, finderOffset, finderOffset),
-    ...finderEdgePairs(topRight, finderOffset, trGridCol),
-    ...finderEdgePairs(bottomLeft, blGridRow, finderOffset),
+    ...finderEdgePairs(topLeft, finderOffset, finderOffset, expectedRight, expectedDown),
+    ...finderEdgePairs(topRight, finderOffset, trGridCol, expectedRight, expectedDown),
+    ...finderEdgePairs(bottomLeft, blGridRow, finderOffset, expectedRight, expectedDown),
     ...extraPoints.map(
       (p): Pair => [
         { x: p.moduleCol, y: p.moduleRow },
@@ -179,6 +185,45 @@ export const resolveGridFromCorrespondences = (
 
   const xs = [cornerTL.x, cornerTR.x, cornerBR.x, cornerBL.x];
   const ys = [cornerTL.y, cornerTR.y, cornerBR.y, cornerBL.y];
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const bounds: Bounds = {
+    x: minX,
+    y: minY,
+    width: Math.max(...xs) - minX,
+    height: Math.max(...ys) - minY,
+  };
+
+  return { version, size, corners, bounds, homography, samplePoint };
+};
+
+/**
+ * Rebuilds a grid resolution from fixed QR boundary corners.
+ *
+ * Useful for small post-fit corrections where the caller wants to perturb one
+ * or more corners, then resample and let the decoder decide whether the new
+ * geometry is better.
+ */
+export const resolveGridFromCorners = (
+  original: GridResolution,
+  corners: CornerSet,
+): GridResolution | null => {
+  const { version, size } = original;
+  type Pair = readonly [Point, Point];
+  const pairs: Pair[] = [
+    [{ x: -0.5, y: -0.5 }, corners.topLeft],
+    [{ x: size - 0.5, y: -0.5 }, corners.topRight],
+    [{ x: size - 0.5, y: size - 0.5 }, corners.bottomRight],
+    [{ x: -0.5, y: size - 0.5 }, corners.bottomLeft],
+  ];
+  const homography = solveHomography(pairs);
+  if (homography === null) return null;
+
+  const samplePoint = (gridRow: number, gridCol: number): Point =>
+    applyHomography(homography, gridCol, gridRow);
+
+  const xs = [corners.topLeft.x, corners.topRight.x, corners.bottomRight.x, corners.bottomLeft.x];
+  const ys = [corners.topLeft.y, corners.topRight.y, corners.bottomRight.y, corners.bottomLeft.y];
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   const bounds: Bounds = {
@@ -290,10 +335,19 @@ const finderEdgePairs = (
   finder: FinderCandidate,
   centerRow: number,
   centerCol: number,
+  expectedRight: Point,
+  expectedDown: Point,
 ): readonly (readonly [Point, Point])[] => {
-  const half = 3.5; // 7/2 modules from center to outer edge
-  const dx = half * finder.hModuleSize;
-  const dy = half * finder.vModuleSize;
+  const half = finder.source === 'matcher' ? 3 : 3.5;
+  const { rightAxis, downAxis } = alignFinderAxes(finder, expectedRight, expectedDown);
+  const dx = {
+    x: rightAxis.x * half * finder.hModuleSize,
+    y: rightAxis.y * half * finder.hModuleSize,
+  };
+  const dy = {
+    x: downAxis.x * half * finder.vModuleSize,
+    y: downAxis.y * half * finder.vModuleSize,
+  };
 
   return [
     // center
@@ -304,22 +358,22 @@ const finderEdgePairs = (
     // right edge midpoint
     [
       { x: centerCol + half, y: centerRow },
-      { x: finder.cx + dx, y: finder.cy },
+      { x: finder.cx + dx.x, y: finder.cy + dx.y },
     ],
     // left edge midpoint
     [
       { x: centerCol - half, y: centerRow },
-      { x: finder.cx - dx, y: finder.cy },
+      { x: finder.cx - dx.x, y: finder.cy - dx.y },
     ],
     // bottom edge midpoint
     [
       { x: centerCol, y: centerRow + half },
-      { x: finder.cx, y: finder.cy + dy },
+      { x: finder.cx + dy.x, y: finder.cy + dy.y },
     ],
     // top edge midpoint
     [
       { x: centerCol, y: centerRow - half },
-      { x: finder.cx, y: finder.cy - dy },
+      { x: finder.cx - dy.x, y: finder.cy - dy.y },
     ],
   ];
 };
@@ -505,6 +559,38 @@ const swapRows = (aug: Float64Array, a: number, b: number, stride: number): void
 
 const distFinders = (a: FinderCandidate, b: FinderCandidate): number =>
   Math.sqrt((b.cx - a.cx) ** 2 + (b.cy - a.cy) ** 2);
+
+const alignFinderAxes = (
+  finder: FinderCandidate,
+  expectedRight: Point,
+  expectedDown: Point,
+): { rightAxis: Point; downAxis: Point } => {
+  if (!finder.axisU || !finder.axisV) {
+    return { rightAxis: expectedRight, downAxis: expectedDown };
+  }
+
+  const candidates = [unitPoint(finder.axisU.x, finder.axisU.y), unitPoint(finder.axisV.x, finder.axisV.y)];
+  const [first, second] = candidates;
+  if (!first || !second) return { rightAxis: expectedRight, downAxis: expectedDown };
+
+  const firstRight = Math.abs(dot2(first, expectedRight)) + Math.abs(dot2(second, expectedDown));
+  const swappedRight = Math.abs(dot2(second, expectedRight)) + Math.abs(dot2(first, expectedDown));
+  const rawRight = firstRight >= swappedRight ? first : second;
+  const rawDown = firstRight >= swappedRight ? second : first;
+
+  return {
+    rightAxis: dot2(rawRight, expectedRight) >= 0 ? rawRight : { x: -rawRight.x, y: -rawRight.y },
+    downAxis: dot2(rawDown, expectedDown) >= 0 ? rawDown : { x: -rawDown.x, y: -rawDown.y },
+  };
+};
+
+const unitPoint = (x: number, y: number): Point => {
+  const length = Math.hypot(x, y);
+  if (length === 0) return { x: 1, y: 0 };
+  return { x: x / length, y: y / length };
+};
+
+const dot2 = (a: Point, b: Point): number => a.x * b.x + a.y * b.y;
 
 const cross2 = (a: FinderCandidate, b: FinderCandidate, c: FinderCandidate): number =>
   (b.cx - a.cx) * (c.cy - a.cy) - (b.cy - a.cy) * (c.cx - a.cx);

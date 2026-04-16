@@ -5,6 +5,8 @@
  * can recover the per-finder pixel extents in each direction — the affine /
  * homography fit needs that to model perspective distortion.
  */
+import type { Point } from '../contracts/geometry.js';
+
 export interface FinderCandidate {
   readonly cx: number;
   readonly cy: number;
@@ -12,6 +14,11 @@ export interface FinderCandidate {
   readonly moduleSize: number;
   readonly hModuleSize: number;
   readonly vModuleSize: number;
+  /** Optional local module-axis estimates from transform-aware matcher paths. */
+  readonly axisU?: Point;
+  readonly axisV?: Point;
+  readonly score?: number;
+  readonly source?: 'row-scan' | 'flood' | 'matcher';
 }
 
 /**
@@ -239,14 +246,15 @@ const scoreTriple = (
   fb: FinderCandidate,
   fc: FinderCandidate,
 ): number | null => {
-  // Reject triples whose module sizes disagree by more than 30%; they are
-  // almost certainly drawn from different QR symbols or include a false
-  // positive that masquerades as square.
+  // Reject triples whose module sizes disagree too much; they are usually
+  // drawn from different QR symbols or include a false positive. Keep this
+  // loose enough for perspective compression at the far finder: the nearest
+  // and farthest finder in a photographed QR can differ by well over 30%.
   const sizes = [fa.moduleSize, fb.moduleSize, fc.moduleSize];
   const minSize = Math.min(...sizes);
   const maxSize = Math.max(...sizes);
   const sizeRatio = maxSize / minSize;
-  if (sizeRatio > 1.3) return null;
+  if (sizeRatio > 1.45) return null;
 
   // The vertex finder is the one opposite the longest side (the hypotenuse).
   const dAB = pointDist(fa.cx, fa.cy, fb.cx, fb.cy);
