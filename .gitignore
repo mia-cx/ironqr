@@ -10,3 +10,8 @@ test-results
 .rts2_cache
 *.tsbuildinfo
 benchmark-results.json
+.turbo/
+.sc/corpus-cli.json
+corpus/staging/
+tools/corpus-cli/tests/.tmp/
+tools/perfbench/tests/.tmp/

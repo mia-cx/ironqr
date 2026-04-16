@@ -1,0 +1,127 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { Effect } from 'effect';
+import {
+  type CorpusIntegrityError,
+  FilesystemError,
+  type ImageProcessingError,
+  UnsupportedMediaError,
+} from '../errors.js';
+import { readCorpusManifest, writeCorpusManifest } from '../manifest.js';
+import type {
+  CorpusAsset,
+  CorpusAssetLabel,
+  CorpusManifest,
+  GroundTruth,
+  LicenseReview,
+  LocalSource,
+  ReviewStatus,
+} from '../schema.js';
+import { MAJOR_VERSION } from '../version.js';
+import { importAssetBytesEffect, mediaTypeFromExtension } from './store.js';
+
+/** Options for importing one or more local image files into the corpus. */
+export interface ImportLocalAssetOptions {
+  readonly repoRoot: string;
+  readonly paths: readonly string[];
+  readonly label: CorpusAssetLabel;
+  readonly reviewStatus?: ReviewStatus;
+  readonly reviewer?: string;
+  readonly reviewNotes?: string;
+  readonly attribution?: string;
+  readonly license?: string;
+  readonly provenanceNotes?: string;
+  readonly groundTruth?: GroundTruth;
+  readonly licenseReview?: LicenseReview;
+}
+
+/** Result of a local-asset import batch, listing newly added and deduplicated assets. */
+export interface ImportLocalAssetResult {
+  readonly imported: readonly CorpusAsset[];
+  readonly deduped: readonly CorpusAsset[];
+  readonly manifest: CorpusManifest;
+}
+
+/** Import local image files into the corpus manifest, deduplicating by source SHA-256. */
+export const importLocalAssets = (
+  options: ImportLocalAssetOptions,
+): Promise<ImportLocalAssetResult> => {
+  return Effect.runPromise(importLocalAssetsEffect(options));
+};
+
+const importLocalAssetsEffect = (
+  options: ImportLocalAssetOptions,
+): Effect.Effect<
+  ImportLocalAssetResult,
+  FilesystemError | UnsupportedMediaError | ImageProcessingError | CorpusIntegrityError
+> => {
+  return Effect.gen(function* () {
+    const manifest = yield* Effect.tryPromise({
+      try: () => readCorpusManifest(options.repoRoot),
+      catch: (e) => new FilesystemError('Failed to read corpus manifest', e),
+    });
+    const assets = [...manifest.assets];
+    const imported: CorpusAsset[] = [];
+    const deduped: CorpusAsset[] = [];
+
+    for (const inputPath of options.paths) {
+      const absolutePath = path.resolve(inputPath);
+      const extension = path.extname(absolutePath).toLowerCase();
+      const mediaType = mediaTypeFromExtension(extension);
+
+      if (!mediaType) {
+        return yield* Effect.fail(
+          new UnsupportedMediaError(`Unsupported file extension: ${extension || '<none>'}`),
+        );
+      }
+
+      const bytes = yield* Effect.tryPromise({
+        try: () => readFile(absolutePath),
+        catch: (e) => new FilesystemError(`Failed to read file: ${absolutePath}`, e),
+      });
+      const source = buildSourceRecord(absolutePath, options);
+      const result = yield* importAssetBytesEffect({
+        repoRoot: options.repoRoot,
+        assets,
+        bytes,
+        sourcePathForExtension: absolutePath,
+        label: options.label,
+        provenance: source,
+        ...(options.reviewStatus ? { reviewStatus: options.reviewStatus } : {}),
+        ...(options.reviewer ? { reviewer: options.reviewer } : {}),
+        ...(options.reviewNotes ? { reviewNotes: options.reviewNotes } : {}),
+        ...(options.groundTruth ? { groundTruth: options.groundTruth } : {}),
+        ...(options.licenseReview ? { licenseReview: options.licenseReview } : {}),
+      });
+
+      if (result.deduped) {
+        deduped.push(result.asset);
+      } else {
+        imported.push(result.asset);
+      }
+    }
+
+    const nextManifest = { version: MAJOR_VERSION, assets };
+    yield* Effect.tryPromise({
+      try: () => writeCorpusManifest(options.repoRoot, nextManifest),
+      catch: (e) => new FilesystemError('Failed to write corpus manifest', e),
+    });
+
+    return {
+      imported,
+      deduped,
+      manifest: nextManifest,
+    };
+  });
+};
+
+const buildSourceRecord = (sourcePath: string, options: ImportLocalAssetOptions): LocalSource => {
+  return {
+    kind: 'local',
+    originalPath: sourcePath,
+    importedAt: new Date().toISOString(),
+    ...(options.attribution ? { attribution: options.attribution } : {}),
+    ...(options.license ? { license: options.license } : {}),
+    ...(options.provenanceNotes ? { notes: options.provenanceNotes } : {}),
+  };
+};
