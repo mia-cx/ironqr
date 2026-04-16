@@ -15,9 +15,11 @@ import { scanFrame } from '../../src/image/index.js';
 import {
   buildHiGrid,
   gridToImageDataColor,
+  gridToImageDataDots,
   gridToImageDataInverted,
   gridToImageDataLowContrast,
   gridToImageDataPerspective,
+  imageDataPerspective,
 } from '../helpers.js';
 
 describe('stylized QR scan — polarity and contrast variants', () => {
@@ -82,18 +84,26 @@ describe('stylized QR scan — polarity and contrast variants', () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.payload.text).toBe('HI');
   });
+
+  it('dotted modules: circle-rendered QR decodes correctly', async () => {
+    const grid = buildHiGrid();
+    const imageData = gridToImageDataDots(grid);
+    const results = await Effect.runPromise(scanFrame(imageData));
+    expect(results).toHaveLength(1);
+    expect(results[0]?.payload.text).toBe('HI');
+  });
 });
 
 describe('stylized QR scan — geometry variants', () => {
   // ── 5. Perspective (keystone) distortion ──────────────────────────────
   //
   // Real corpus failure mode: ~10 portrait photos of QR codes on physical
-  // objects (kiosks, signs, billboards) photographed at an angle.  The old
+  // objects (kiosks, signs, billboards) photographed at an angle. The old
   // 3-finder affine drifted by several pixels at the far corner; the new
-  // homography fit (5 correspondences per finder) handles realistic camera
-  // angles. Stronger warps still expose finder *selection* problems (data
-  // modules can outscore real finders by module size) — fix target for the
-  // next slice.
+  // homography fit plus local-basis sampling handles realistic camera angles.
+  // For v1 symbols, a small bottom-right corner fallback search now recovers
+  // cases where the three-finder fit is almost right but still long/short at
+  // the far corner. Stronger warps still need better corner localization.
 
   it('mild keystone (5%): warped QR decodes correctly', async () => {
     const grid = buildHiGrid();
@@ -111,7 +121,23 @@ describe('stylized QR scan — geometry variants', () => {
     expect(results[0]?.payload.text).toBe('HI');
   });
 
-  it.todo('strong keystone (15%+) on v1 — needs flood-fill finder detection (current row-scan misses warped finders)', () => {});
+  it('strong keystone (15%) on v1 decodes correctly via corner fallback', async () => {
+    const grid = buildHiGrid();
+    const imageData = gridToImageDataPerspective(grid, 0.15);
+    const results = await Effect.runPromise(scanFrame(imageData));
+    expect(results).toHaveLength(1);
+    expect(results[0]?.payload.text).toBe('HI');
+  });
+
+  it('dotted modules under moderate keystone (10%) decode correctly', async () => {
+    const grid = buildHiGrid();
+    const imageData = imageDataPerspective(gridToImageDataDots(grid), 0.1);
+    const results = await Effect.runPromise(scanFrame(imageData));
+    expect(results).toHaveLength(1);
+    expect(results[0]?.payload.text).toBe('HI');
+  });
+
+  it.todo('strong keystone (18%+) on v1 — needs better far-corner localization than the current fallback search', () => {});
 });
 
 describe('fitness-driven homography refinement', () => {

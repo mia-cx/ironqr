@@ -81,6 +81,52 @@ export const gridToImageDataColor = (
   return renderGridColor(grid, darkRgb, lightRgb);
 };
 
+/**
+ * Dot rendering: each dark module becomes a centered filled circle with light
+ * gaps around it. Useful for stylized QR regressions where modules are not
+ * edge-connected and flood-fill on the finder ring would fail by design.
+ */
+export const gridToImageDataDots = (
+  grid: boolean[][],
+  darkRgb: readonly [number, number, number] = [0, 0, 0],
+  lightRgb: readonly [number, number, number] = [255, 255, 255],
+  radiusRatio = 0.3,
+): ImageData => {
+  const modules = grid.length;
+  const imageSize = modules * PIXELS_PER_MODULE;
+  const pixels = new Uint8ClampedArray(imageSize * imageSize * 4);
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    pixels[i] = lightRgb[0] ?? 255;
+    pixels[i + 1] = lightRgb[1] ?? 255;
+    pixels[i + 2] = lightRgb[2] ?? 255;
+    pixels[i + 3] = 255;
+  }
+
+  const radius = PIXELS_PER_MODULE * radiusRatio;
+  for (let row = 0; row < modules; row += 1) {
+    for (let col = 0; col < modules; col += 1) {
+      if (!(grid[row]?.[col] ?? false)) continue;
+      const cx = col * PIXELS_PER_MODULE + PIXELS_PER_MODULE / 2;
+      const cy = row * PIXELS_PER_MODULE + PIXELS_PER_MODULE / 2;
+      for (let py = Math.max(0, Math.floor(cy - radius - 1)); py < Math.min(imageSize, Math.ceil(cy + radius + 1)); py += 1) {
+        for (let px = Math.max(0, Math.floor(cx - radius - 1)); px < Math.min(imageSize, Math.ceil(cx + radius + 1)); px += 1) {
+          const dx = px + 0.5 - cx;
+          const dy = py + 0.5 - cy;
+          if (dx * dx + dy * dy > radius * radius) continue;
+          const offset = (py * imageSize + px) * 4;
+          pixels[offset] = darkRgb[0] ?? 0;
+          pixels[offset + 1] = darkRgb[1] ?? 0;
+          pixels[offset + 2] = darkRgb[2] ?? 0;
+          pixels[offset + 3] = 255;
+        }
+      }
+    }
+  }
+
+  return makeImageData(imageSize, imageSize, pixels);
+};
+
 // ─── Private renderers ───────────────────────────────────────────────────
 
 const renderGrid = (grid: boolean[][], darkValue: number, lightValue: number): ImageData => {
@@ -268,7 +314,11 @@ export const buildVersion1Grid = (
  * @param keystoneRatio - Fractional inset at the bottom corners (0–0.4).
  */
 export const gridToImageDataPerspective = (grid: boolean[][], keystoneRatio = 0.2): ImageData => {
-  const source = gridToImageData(grid);
+  return imageDataPerspective(gridToImageData(grid), keystoneRatio);
+};
+
+/** Applies the same keystone warp helper to an already-rendered ImageData. */
+export const imageDataPerspective = (source: ImageData, keystoneRatio = 0.2): ImageData => {
   const W = source.width;
   const H = source.height;
 
