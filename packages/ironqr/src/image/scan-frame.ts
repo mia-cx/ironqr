@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { BrowserImageSource, ScanResult } from '../contracts/scan.js';
 import { decodeGridLogical } from '../qr/index.js';
-import { otsuBinarize, sauvolaBinarize, toGrayscale } from './binarize.js';
+import { otsuBinarize, sauvolaBinarize, toChannelGray, toGrayscale } from './binarize.js';
 import { detectFinderCandidatePool, findBestFinderTriples } from './detect.js';
 import { candidateVersions, resolveGrid } from './geometry.js';
 import { toImageData } from './image.js';
@@ -37,14 +37,16 @@ export const scanFrame = (input: BrowserImageSource) => {
     // catches clean printed QRs in one pass; Sauvola is the fallback for
     // photos with non-uniform lighting or busy backgrounds. Inverted
     // variants handle light-on-dark codes.
+    // Layered binarization: cheap Otsu first, then Sauvola at two scales,
+    // then per-channel grayscale (R/G/B) for color QRs whose luma value is
+    // pushed toward white by BT.601's heavy green weighting. Each binary is
+    // tried in both polarities. Lazy: most images decode on the first try.
     const otsu = otsuBinarize(luma, width, height);
-    const candidates: Uint8Array[] = [otsu, invertBinary(otsu)];
-
-    // Two Sauvola windows: the default (~1/8 of the shorter side) catches
-    // QRs that fill a meaningful fraction of the frame; the small one
-    // (fixed 24px) catches small QRs in busy scenes (book pages, signs).
     let sauvolaLarge: Uint8Array | null = null;
     let sauvolaSmall: Uint8Array | null = null;
+    let blueGray: Uint8Array | null = null;
+    let redGray: Uint8Array | null = null;
+
     const lazySauvolaLarge = (): Uint8Array => {
       if (sauvolaLarge === null) sauvolaLarge = sauvolaBinarize(luma, width, height);
       return sauvolaLarge;
@@ -53,20 +55,37 @@ export const scanFrame = (input: BrowserImageSource) => {
       if (sauvolaSmall === null) sauvolaSmall = sauvolaBinarize(luma, width, height, 24);
       return sauvolaSmall;
     };
+    const lazyBlueOtsu = (): Uint8Array => {
+      if (blueGray === null) blueGray = toChannelGray(imageData, 2);
+      return otsuBinarize(blueGray, width, height);
+    };
+    const lazyRedOtsu = (): Uint8Array => {
+      if (redGray === null) redGray = toChannelGray(imageData, 0);
+      return otsuBinarize(redGray, width, height);
+    };
+
+    // Each entry: () => Uint8Array. Order matters — cheapest and most
+    // common-success first, exotic fallbacks last.
+    const variants: (() => Uint8Array)[] = [
+      () => otsu,
+      () => invertBinary(otsu),
+      lazySauvolaLarge,
+      () => invertBinary(lazySauvolaLarge()),
+      lazySauvolaSmall,
+      () => invertBinary(lazySauvolaSmall()),
+      lazyBlueOtsu,
+      () => invertBinary(lazyBlueOtsu()),
+      lazyRedOtsu,
+      () => invertBinary(lazyRedOtsu()),
+    ];
 
     // For each binary candidate, fetch the full finder pool (not just one
     // triple) and try the top-K best-scoring triples. A noisy scene can
     // produce several QR-shaped Ls; only the decoder knows which is real.
-    const TRIPLES_PER_BINARY = 5;
+    const TRIPLES_PER_BINARY = 8;
 
-    for (let i = 0; i < 6; i += 1) {
-      let candidate: Uint8Array;
-      if (i === 0) candidate = candidates[0]!;
-      else if (i === 1) candidate = candidates[1]!;
-      else if (i === 2) candidate = lazySauvolaLarge();
-      else if (i === 3) candidate = invertBinary(lazySauvolaLarge());
-      else if (i === 4) candidate = lazySauvolaSmall();
-      else candidate = invertBinary(lazySauvolaSmall());
+    for (const makeCandidate of variants) {
+      const candidate = makeCandidate();
 
       const pool = detectFinderCandidatePool(candidate, width, height);
       if (pool.length < 3) continue;
@@ -84,6 +103,12 @@ export const scanFrame = (input: BrowserImageSource) => {
           if (resolution === null) continue;
 
           const grid = sampleGrid(width, height, resolution, candidate);
+
+          // Cheap pre-flight: a real QR's row 6 timing pattern alternates
+          // dark/light cleanly between the two top finder separators. If too
+          // many cells disagree, the grid geometry is wrong and decode would
+          // just fail expensively.
+          if (!timingRowLooksValid(grid)) continue;
 
           const decoded = yield* decodeGridLogical({ grid }).pipe(
             Effect.catch(() => Effect.succeed(null)),
@@ -119,4 +144,30 @@ const invertBinary = (binary: Uint8Array): Uint8Array => {
     out[i] = binary[i] === 0 ? 255 : 0;
   }
   return out;
+};
+
+/**
+ * Validates that a sampled grid's row-6 timing pattern alternates dark/light
+ * for the expected fraction of cells. The QR spec requires perfect
+ * alternation between the two top finders (columns 8..size-9), starting and
+ * ending with dark. We tolerate up to 25% error to allow for one or two bad
+ * cells from sampling noise; below that, the grid geometry is almost
+ * certainly wrong and we should skip the expensive decode attempt.
+ */
+const timingRowLooksValid = (grid: boolean[][]): boolean => {
+  const size = grid.length;
+  if (size < 21) return false;
+  const row = grid[6];
+  if (!row) return false;
+  let total = 0;
+  let correct = 0;
+  for (let col = 8; col <= size - 9; col += 1) {
+    const cell = row[col];
+    if (cell === undefined) continue;
+    const expected = col % 2 === 0; // even columns dark, odd light
+    total += 1;
+    if (cell === expected) correct += 1;
+  }
+  if (total === 0) return false;
+  return correct / total >= 0.75;
 };

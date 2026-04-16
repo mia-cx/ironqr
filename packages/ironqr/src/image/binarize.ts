@@ -32,6 +32,30 @@ export const toGrayscale = (data: ImageData): Uint8Array => {
 };
 
 /**
+ * Extracts a single channel (r=0, g=1, b=2) of the image into a grayscale
+ * buffer, alpha-composited onto white.
+ *
+ * Useful as a binarization fallback for color QRs: a blue-on-white code has
+ * very high BT.601 luma (~232) because B is weighted at 11%, so Otsu can't
+ * split it cleanly from white. The blue channel itself carries the full
+ * dynamic range of the QR pattern and binarizes correctly. We try the
+ * channel that's most underweighted in luma when standard binarization
+ * doesn't yield a decode.
+ */
+export const toChannelGray = (data: ImageData, channel: 0 | 1 | 2): Uint8Array => {
+  const { width, height, data: pixels } = data;
+  const out = new Uint8Array(width * height);
+  for (let i = 0; i < out.length; i += 1) {
+    const base = i * 4;
+    const c = pixels[base + channel] ?? 0;
+    const a = pixels[base + 3] ?? 255;
+    const fg = a / 255;
+    out[i] = Math.round(c * fg + 255 * (1 - fg));
+  }
+  return out;
+};
+
+/**
  * Binarizes a grayscale image using Otsu's global thresholding method.
  *
  * @param luma - Grayscale pixel values (0-255).
