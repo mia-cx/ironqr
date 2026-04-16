@@ -1,20 +1,24 @@
 import { Effect } from 'effect';
 import type { BrowserImageSource, ScanResult } from '../contracts/scan.js';
 import { decodeGridLogical } from '../qr/index.js';
-import { otsuBinarize, toGrayscale } from './binarize.js';
-import { detectFinderPatterns } from './detect.js';
-import { resolveGrid } from './geometry.js';
+import { otsuBinarize, sauvolaBinarize, toGrayscale } from './binarize.js';
+import { detectFinderCandidatePool, findBestFinderTriples } from './detect.js';
+import { candidateVersions, resolveGrid } from './geometry.js';
 import { toImageData } from './image.js';
 import { sampleGrid } from './sample.js';
 
 /**
  * Builds the single-frame QR scanning pipeline as an Effect program.
  *
- * Pipeline: toImageData → toGrayscale → otsuBinarize → detectFinderPatterns
+ * Pipeline: toImageData → toGrayscale → binarize → detectFinderPatterns
  *   → resolveGrid → sampleGrid → decodeGridLogical → ScanResult[].
  *
- * Both normal and inverted binary orientations are attempted so that
- * light-on-dark (inverted polarity) QR codes are handled transparently.
+ * Tries multiple binarization strategies and both polarities. Otsu (global
+ * threshold) is fast and works for clean inputs; Sauvola (adaptive local
+ * threshold) handles non-uniform illumination, small QRs in textured
+ * scenes, and high-key photos where the QR's local foreground/background
+ * relationship differs from the global one. Both polarities cover
+ * light-on-dark QR codes.
  *
  * Succeeds with an empty array when no QR symbol is detected or decoding
  * fails. Fails through the Effect error channel when `toImageData` throws.
@@ -28,42 +32,80 @@ export const scanFrame = (input: BrowserImageSource) => {
     const { width, height } = imageData;
 
     const luma = toGrayscale(imageData);
-    const binary = otsuBinarize(luma, width, height);
 
-    // Try normal polarity first, then inverted.  Light-on-dark QR codes
-    // (e.g. white modules on a black background) are indistinguishable from
-    // normal codes after polarity inversion, so we attempt both orientations
-    // and return the first successful decode.
-    const inverted = invertBinary(binary);
+    // Order matters: cheap and most-likely-to-succeed first. Otsu normal
+    // catches clean printed QRs in one pass; Sauvola is the fallback for
+    // photos with non-uniform lighting or busy backgrounds. Inverted
+    // variants handle light-on-dark codes.
+    const otsu = otsuBinarize(luma, width, height);
+    const candidates: Uint8Array[] = [otsu, invertBinary(otsu)];
 
-    for (const candidate of [binary, inverted]) {
-      const finders = detectFinderPatterns(candidate, width, height);
-      if (finders.length < 3) continue;
+    // Two Sauvola windows: the default (~1/8 of the shorter side) catches
+    // QRs that fill a meaningful fraction of the frame; the small one
+    // (fixed 24px) catches small QRs in busy scenes (book pages, signs).
+    let sauvolaLarge: Uint8Array | null = null;
+    let sauvolaSmall: Uint8Array | null = null;
+    const lazySauvolaLarge = (): Uint8Array => {
+      if (sauvolaLarge === null) sauvolaLarge = sauvolaBinarize(luma, width, height);
+      return sauvolaLarge;
+    };
+    const lazySauvolaSmall = (): Uint8Array => {
+      if (sauvolaSmall === null) sauvolaSmall = sauvolaBinarize(luma, width, height, 24);
+      return sauvolaSmall;
+    };
 
-      const resolution = resolveGrid(finders);
-      if (resolution === null) continue;
+    // For each binary candidate, fetch the full finder pool (not just one
+    // triple) and try the top-K best-scoring triples. A noisy scene can
+    // produce several QR-shaped Ls; only the decoder knows which is real.
+    const TRIPLES_PER_BINARY = 5;
 
-      const grid = sampleGrid(width, height, resolution, candidate);
+    for (let i = 0; i < 6; i += 1) {
+      let candidate: Uint8Array;
+      if (i === 0) candidate = candidates[0]!;
+      else if (i === 1) candidate = candidates[1]!;
+      else if (i === 2) candidate = lazySauvolaLarge();
+      else if (i === 3) candidate = invertBinary(lazySauvolaLarge());
+      else if (i === 4) candidate = lazySauvolaSmall();
+      else candidate = invertBinary(lazySauvolaSmall());
 
-      const decoded = yield* decodeGridLogical({ grid }).pipe(
-        Effect.catch(() => Effect.succeed(null)),
-      );
+      const pool = detectFinderCandidatePool(candidate, width, height);
+      if (pool.length < 3) continue;
 
-      if (decoded === null) continue;
+      const triples = findBestFinderTriples(pool, TRIPLES_PER_BINARY);
+      if (triples.length === 0) continue;
 
-      const result: ScanResult = {
-        payload: decoded.payload,
-        // TODO: replace with a real confidence signal (e.g. 1 - bestFormatHammingDistance / 15).
-        confidence: 0.9,
-        version: decoded.version,
-        errorCorrectionLevel: decoded.errorCorrectionLevel,
-        bounds: resolution.bounds,
-        corners: resolution.corners,
-        headers: decoded.headers,
-        segments: decoded.segments,
-      };
+      for (const triple of triples) {
+        // Try the finder-distance version estimate first, then ±1/±2. The
+        // estimate is only ~85% reliable for v≥7 where one module of
+        // misjudgement gives the wrong grid size; the encoded version info
+        // bits in the QR will then refuse to decode against the wrong size.
+        for (const version of candidateVersions(triple, 2)) {
+          const resolution = resolveGrid(triple, version);
+          if (resolution === null) continue;
 
-      return [result];
+          const grid = sampleGrid(width, height, resolution, candidate);
+
+          const decoded = yield* decodeGridLogical({ grid }).pipe(
+            Effect.catch(() => Effect.succeed(null)),
+          );
+
+          if (decoded === null) continue;
+
+          const result: ScanResult = {
+            payload: decoded.payload,
+            // TODO: replace with a real confidence signal (e.g. 1 - bestFormatHammingDistance / 15).
+            confidence: 0.9,
+            version: decoded.version,
+            errorCorrectionLevel: decoded.errorCorrectionLevel,
+            bounds: resolution.bounds,
+            corners: resolution.corners,
+            headers: decoded.headers,
+            segments: decoded.segments,
+          };
+
+          return [result];
+        }
+      }
     }
 
     return [] as ScanResult[];

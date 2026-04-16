@@ -34,16 +34,26 @@ export interface GridResolution {
  * distortion (where a 3-point affine drifts by several modules).
  *
  * @param finders - Exactly 3 finder pattern candidates.
+ * @param overrideVersion - Optional 1–40 version override. When omitted we
+ *   estimate the version from finder distances, but at v≥7 the version is
+ *   redundantly encoded in two corner blocks; if the finder-distance estimate
+ *   lands one module off, the size mismatch breaks decoding entirely. Callers
+ *   that want to retry with v±1/±2 around the estimate should pass each
+ *   candidate version explicitly.
  * @returns Grid resolution for sampling, or null if geometry cannot be resolved.
  */
-export const resolveGrid = (finders: readonly FinderCandidate[]): GridResolution | null => {
+export const resolveGrid = (
+  finders: readonly FinderCandidate[],
+  overrideVersion?: number,
+): GridResolution | null => {
   if (finders.length < 3) return null;
 
   const oriented = orientFinders(finders);
   if (oriented === null) return null;
   const { topLeft, topRight, bottomLeft } = oriented;
 
-  const version = estimateVersion(topLeft, topRight, bottomLeft);
+  const version = overrideVersion ?? estimateVersion(topLeft, topRight, bottomLeft);
+  if (version < 1 || version > 40) return null;
   const size = version * 4 + 17;
 
   // Each finder spans 7 modules; its center sits at module (3, 3) within itself.
@@ -96,6 +106,34 @@ export const resolveGrid = (finders: readonly FinderCandidate[]): GridResolution
   };
 
   return { version, size, corners, bounds, samplePoint };
+};
+
+/**
+ * Returns plausible QR versions for a finder triple, ordered most-likely first:
+ * the finder-distance estimate, then ±1, then ±2. Useful when the estimate
+ * lands close-but-wrong and the encoded version info disagrees with grid size.
+ */
+export const candidateVersions = (
+  finders: readonly FinderCandidate[],
+  span = 2,
+): readonly number[] => {
+  if (finders.length < 3) return [];
+  const oriented = orientFinders(finders);
+  if (oriented === null) return [];
+  const estimate = estimateVersion(oriented.topLeft, oriented.topRight, oriented.bottomLeft);
+  const seen = new Set<number>();
+  const ordered: number[] = [];
+  const add = (v: number): void => {
+    if (v < 1 || v > 40 || seen.has(v)) return;
+    seen.add(v);
+    ordered.push(v);
+  };
+  add(estimate);
+  for (let d = 1; d <= span; d += 1) {
+    add(estimate + d);
+    add(estimate - d);
+  }
+  return ordered;
 };
 
 // ─── Finder orientation & version ─────────────────────────────────────────

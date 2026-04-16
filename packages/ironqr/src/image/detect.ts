@@ -23,9 +23,36 @@ export interface FinderCandidate {
  * @param binary - Binarized pixel array (0 = dark, 255 = light).
  * @param width - Image width in pixels.
  * @param height - Image height in pixels.
- * @returns Up to 3 finder pattern candidates sorted by confidence.
+ * @returns Up to 3 finder pattern candidates: the best L-shape triple if one
+ * exists, otherwise the deduped/filtered candidate pool (which may be 0–2).
  */
 export const detectFinderPatterns = (
+  binary: Uint8Array,
+  width: number,
+  height: number,
+): FinderCandidate[] => {
+  return pickThreeOrPool(detectFinderCandidatePool(binary, width, height) as FinderCandidate[]);
+};
+
+/**
+ * Returns the deduped, squareness-filtered candidate pool from raw scan hits.
+ * Exported for scan pipelines that want to enumerate alternative finder triples
+ * (e.g. to fall back through several triples when the best one doesn't decode).
+ */
+export const detectFinderCandidatePool = (
+  binary: Uint8Array,
+  width: number,
+  height: number,
+): readonly FinderCandidate[] => {
+  return reduceCandidatePool(collectRawCandidates(binary, width, height));
+};
+
+/**
+ * Walks the binary image row by row collecting every 1:1:3:1:1 run that
+ * survives a vertical cross-check. The result is unsorted and unfiltered
+ * apart from per-row dedup against already-collected candidates.
+ */
+const collectRawCandidates = (
   binary: Uint8Array,
   width: number,
   height: number,
@@ -98,6 +125,14 @@ export const detectFinderPatterns = (
     }
   }
 
+  return candidates;
+};
+
+/**
+ * Squareness pre-filter + dedupe + module-size sort + size cap. Shared by the
+ * default 3-finder API and the candidate-pool API.
+ */
+const reduceCandidatePool = (candidates: readonly FinderCandidate[]): FinderCandidate[] => {
   // Real finders are square: their horizontal and vertical module sizes match
   // closely. False positives in stylized data regions can have wildly different
   // h/v sizes and yet outscore real finders by averaged moduleSize. Drop those
@@ -108,13 +143,9 @@ export const detectFinderPatterns = (
     return hv <= SQUARENESS_TOLERANCE;
   });
 
-  // Keep more candidates than the 3 we will return so triple scoring has
-  // material to choose between. False positives that survive squareness can
-  // still outscore real finders by raw moduleSize, so we widen the pool.
+  // Sort largest-first so the most prominent candidates win when the pool
+  // overflows. Pool size dominates triple-scoring cost (C(n,3) is 220 at n=12).
   squareCandidates.sort((a, b) => b.moduleSize - a.moduleSize);
-  // Pool size dominates the C(n,3) cost; n=12 = 220 triples, n=16 = 560.
-  // We need the pool wide enough that real finders survive even when
-  // stylized data regions produce many higher-moduleSize false positives.
   const MAX_POOL = 12;
   const pool: FinderCandidate[] = [];
   for (const candidate of squareCandidates) {
@@ -127,15 +158,48 @@ export const detectFinderPatterns = (
     if (pool.length === MAX_POOL) break;
   }
 
-  if (pool.length < 3) return pool;
+  return pool;
+};
 
-  // Pick the triple whose three finders are most geometrically consistent
-  // with a real QR symbol: matching module sizes, two short sides of equal
-  // length meeting at ~90° (the third side is the hypotenuse). This rejects
-  // mixed-QR triples (multi-QR scenes) and stray false positives that
-  // survive squareness.
+/**
+ * Default 3-finder API: returns the single best triple as the first 3 entries
+ * of the result, or the pool itself if too few candidates exist to triple-pick.
+ */
+const pickThreeOrPool = (pool: FinderCandidate[]): FinderCandidate[] => {
+  if (pool.length < 3) return pool;
   const best = pickBestTriple(pool);
   return best ?? pool.slice(0, 3);
+};
+
+/**
+ * Returns the top-K geometrically-plausible triples from `pool`, sorted
+ * best-first. Used by the scan pipeline to fall back through alternative
+ * triples when the best-scoring one doesn't decode — a noisy scene can
+ * produce several QR-shaped Ls and only the decoder knows which is real.
+ *
+ * Returns the empty array when no triple is plausible.
+ */
+export const findBestFinderTriples = (
+  finders: readonly FinderCandidate[],
+  k: number,
+): readonly (readonly FinderCandidate[])[] => {
+  if (finders.length < 3) return [];
+  const scored: { triple: FinderCandidate[]; score: number }[] = [];
+  for (let i = 0; i < finders.length - 2; i += 1) {
+    for (let j = i + 1; j < finders.length - 1; j += 1) {
+      for (let l = j + 1; l < finders.length; l += 1) {
+        const fa = finders[i];
+        const fb = finders[j];
+        const fc = finders[l];
+        if (!fa || !fb || !fc) continue;
+        const score = scoreTriple(fa, fb, fc);
+        if (score === null) continue;
+        scored.push({ triple: [fa, fb, fc], score });
+      }
+    }
+  }
+  scored.sort((a, b) => a.score - b.score);
+  return scored.slice(0, k).map((s) => s.triple);
 };
 
 /**
@@ -236,13 +300,20 @@ const scoreTriple = (
   const sizeError = sizeRatio - 1;
 
   // Per-leg version plausibility: leg length / module size = (size - 7) where
-  // size = version*4 + 17, so leg/module = version*4 + 10. Must round to a
-  // valid version 1-40.
+  // size = version*4 + 17, so leg/module = version*4 + 10. Must round close
+  // to a valid version 1-40, and the rounding error itself must be small —
+  // a triple drawn from random foliage will land at any leg length and
+  // would otherwise score 0 on this term after rounding.
   const modulesAcross = avgLeg / avgModuleSize;
   const rawVersion = (modulesAcross - 10) / 4;
-  if (rawVersion < 0.5 || rawVersion > 40.5) return null;
-  const versionError =
-    Math.abs(rawVersion - Math.round(rawVersion)) / Math.max(1, Math.round(rawVersion));
+  if (rawVersion < 0.7 || rawVersion > 40.3) return null;
+  const nearestVersion = Math.max(1, Math.min(40, Math.round(rawVersion)));
+  const expectedModulesAcross = nearestVersion * 4 + 10;
+  // Reject if the leg length is more than ~half a module off from the
+  // nearest legal version's expected leg length — the triple is plausibly
+  // an L-shape but not a QR-shaped L.
+  if (Math.abs(modulesAcross - expectedModulesAcross) > 1.0) return null;
+  const versionError = Math.abs(modulesAcross - expectedModulesAcross) / expectedModulesAcross;
 
   // Avoid unused-var lint on `vertex` / `armA` / `armB` — they exist for
   // future per-triple logic; mark them used.
@@ -250,7 +321,7 @@ const scoreTriple = (
   void armA;
   void armB;
 
-  return legAsymmetry * 2 + hypotenuseError * 2 + sizeError + versionError;
+  return legAsymmetry * 2 + hypotenuseError * 2 + sizeError + versionError * 4;
 };
 
 const pointDist = (ax: number, ay: number, bx: number, by: number): number => {
