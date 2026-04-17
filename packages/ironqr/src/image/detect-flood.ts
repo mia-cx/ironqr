@@ -27,20 +27,30 @@ import {
   labelConnectedComponents,
 } from './components.js';
 import type { FinderCandidate } from './detect.js';
+import { assertImagePlaneLength } from './validation.js';
+
+const MIN_RING_PIXELS = 12;
+const MAX_RING_FRACTION = 0.25;
+const MIN_RING_RATIO = 0.15;
+const MAX_RING_RATIO = 0.7;
+const MAX_RING_ASPECT = 2.5;
+const RING_MODULE_AREA = 24;
 
 /**
  * Detects finder pattern candidates by labelling connected components.
  *
  * Returns a list of candidates whose `moduleSize`, `hModuleSize`, and
- * `vModuleSize` are estimated from the ring's bounding-box extents (it spans
- * 7 modules per side). The list is unsorted and unfiltered — callers should
- * dedupe and pick triples themselves.
+ * `vModuleSize` are estimated from the ring area (24 dark modules in the
+ * canonical finder ring). The list is unsorted and unfiltered — callers
+ * should dedupe and pick triples themselves.
  */
 export const detectFinderCandidatesFlood = (
   binary: Uint8Array,
   width: number,
   height: number,
 ): FinderCandidate[] => {
+  assertImagePlaneLength(binary.length, width, height, 'detectFinderCandidatesFlood');
+
   const labels = labelConnectedComponents(binary, width, height);
   const components = collectComponentStats(labels, binary, width, height);
   const parents = computeContainingComponents(labels, components, width, height);
@@ -56,8 +66,8 @@ export const detectFinderCandidatesFlood = (
     else map.set(parentId, [c]);
   }
 
-  const minPixels = 12;
-  const maxPixels = (width * height) >> 2;
+  const minPixels = MIN_RING_PIXELS;
+  const maxPixels = Math.floor(width * height * MAX_RING_FRACTION);
 
   const candidates: FinderCandidate[] = [];
   for (const ring of components) {
@@ -72,24 +82,25 @@ export const detectFinderCandidatesFlood = (
       if (!stones) continue;
 
       for (const stone of stones) {
-        // Validate the area ratio. Dark stone : dark ring = 9 : 24 = 0.375.
-        // Allow ±50% slack because pixel rounding distorts small finders heavily.
+        // Dark stone : dark ring = 9 : 24 = 0.375. The accepted range is
+        // intentionally wider than ±50% to tolerate aggressive stylisation and
+        // pixel rounding in tiny finders.
         const ratio = stone.pixelCount / ring.pixelCount;
-        if (ratio < 0.15 || ratio > 0.7) continue;
+        if (ratio < MIN_RING_RATIO || ratio > MAX_RING_RATIO) continue;
 
-        // Reject highly elongated rings: a real finder's bounding-box
-        // aspect ratio is at most ~2 even under heavy perspective.
+        // Reject highly elongated rings. The accepted aspect ratio is still
+        // loose enough to tolerate perspective-compressed finders.
         const ringW = ring.maxX - ring.minX + 1;
         const ringH = ring.maxY - ring.minY + 1;
         const aspect = Math.max(ringW, ringH) / Math.min(ringW, ringH);
-        if (aspect > 2.5) continue;
+        if (aspect > MAX_RING_ASPECT) continue;
 
         // Module size from area is rotation-invariant: the ring (dark border
         // of a 7×7 finder, hollow inside the inner 5×5) covers 24 modules,
-        // so moduleSize = sqrt(ringPixelCount / 24). The bounding-box-based
-        // h/v sizes are reported equal to keep downstream code (which assumes
-        // axis-aligned row-scan finders) from rejecting tilted finders.
-        const moduleSize = Math.sqrt(ring.pixelCount / 24);
+        // so moduleSize = sqrt(ringPixelCount / RING_MODULE_AREA). The
+        // downstream h/v sizes stay equal because the flood path is orientation
+        // agnostic rather than axis-aligned.
+        const moduleSize = Math.sqrt(ring.pixelCount / RING_MODULE_AREA);
 
         candidates.push({
           cx: ring.centroidX,

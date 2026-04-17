@@ -1,5 +1,5 @@
 import { ALIGNMENT_PATTERN_CENTERS } from '../qr/qr-tables.js';
-import type { ExtraCorrespondence, GridResolution } from './geometry.js';
+import { type ExtraCorrespondence, type GridResolution, localGridBasis } from './geometry.js';
 import { assertImagePlaneLength } from './validation.js';
 
 interface Basis {
@@ -172,35 +172,13 @@ const scoreAlignmentAt = (
 };
 
 const localBasis = (resolution: GridResolution, moduleRow: number, moduleCol: number): Basis => {
-  const center = resolution.samplePoint(moduleRow, moduleCol);
-  const left = resolution.samplePoint(moduleRow, Math.max(0, moduleCol - 1));
-  const right = resolution.samplePoint(moduleRow, Math.min(resolution.size - 1, moduleCol + 1));
-  const up = resolution.samplePoint(Math.max(0, moduleRow - 1), moduleCol);
-  const down = resolution.samplePoint(Math.min(resolution.size - 1, moduleRow + 1), moduleCol);
-
-  let u: { x: number; y: number };
-  if (moduleCol === 0) {
-    u = { x: right.x - center.x, y: right.y - center.y };
-  } else if (moduleCol === resolution.size - 1) {
-    u = { x: center.x - left.x, y: center.y - left.y };
-  } else {
-    u = { x: (right.x - left.x) / 2, y: (right.y - left.y) / 2 };
-  }
-
-  let v: { x: number; y: number };
-  if (moduleRow === 0) {
-    v = { x: down.x - center.x, y: down.y - center.y };
-  } else if (moduleRow === resolution.size - 1) {
-    v = { x: center.x - up.x, y: center.y - up.y };
-  } else {
-    v = { x: (down.x - up.x) / 2, y: (down.y - up.y) / 2 };
-  }
-
+  const basis = localGridBasis(resolution, moduleRow, moduleCol);
   return {
-    center,
-    u,
-    v,
-    moduleSize: (Math.hypot(u.x, u.y) + Math.hypot(v.x, v.y)) / 2,
+    center: basis.center,
+    u: basis.right,
+    v: basis.down,
+    moduleSize:
+      (Math.hypot(basis.right.x, basis.right.y) + Math.hypot(basis.down.x, basis.down.y)) / 2,
   };
 };
 

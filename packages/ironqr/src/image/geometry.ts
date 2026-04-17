@@ -1,4 +1,5 @@
 import type { Bounds, CornerSet, Point } from '../contracts/geometry.js';
+import { numberAt } from './array.js';
 import type { FinderCandidate, FinderTriple } from './detect.js';
 
 /**
@@ -66,6 +67,7 @@ export const resolveGrid = (
 
   const expectedRight = unitPoint(topRight.cx - topLeft.cx, topRight.cy - topLeft.cy);
   const expectedDown = unitPoint(bottomLeft.cx - topLeft.cx, bottomLeft.cy - topLeft.cy);
+  if (expectedRight === null || expectedDown === null) return null;
 
   type Pair = readonly [Point, Point];
   const pairs: Pair[] = [
@@ -91,6 +93,40 @@ export interface ExtraCorrespondence {
   readonly pixelX: number;
   readonly pixelY: number;
 }
+
+export interface LocalGridBasis {
+  readonly center: Point;
+  readonly right: Point;
+  readonly down: Point;
+}
+
+export const localGridBasis = (
+  resolution: GridResolution,
+  moduleRow: number,
+  moduleCol: number,
+): LocalGridBasis => {
+  const center = resolution.samplePoint(moduleRow, moduleCol);
+  const left = resolution.samplePoint(moduleRow, Math.max(0, moduleCol - 1));
+  const right = resolution.samplePoint(moduleRow, Math.min(resolution.size - 1, moduleCol + 1));
+  const up = resolution.samplePoint(Math.max(0, moduleRow - 1), moduleCol);
+  const down = resolution.samplePoint(Math.min(resolution.size - 1, moduleRow + 1), moduleCol);
+
+  return {
+    center,
+    right:
+      moduleCol === 0
+        ? { x: right.x - center.x, y: right.y - center.y }
+        : moduleCol === resolution.size - 1
+          ? { x: center.x - left.x, y: center.y - left.y }
+          : { x: (right.x - left.x) / 2, y: (right.y - left.y) / 2 },
+    down:
+      moduleRow === 0
+        ? { x: down.x - center.x, y: down.y - center.y }
+        : moduleRow === resolution.size - 1
+          ? { x: center.x - up.x, y: center.y - up.y }
+          : { x: (down.x - up.x) / 2, y: (down.y - up.y) / 2 },
+  };
+};
 
 /**
  * Refits the QR grid homography using the standard 3-finder correspondences
@@ -120,6 +156,7 @@ export const resolveGridFromCorrespondences = (
 
   const expectedRight = unitPoint(topRight.cx - topLeft.cx, topRight.cy - topLeft.cy);
   const expectedDown = unitPoint(bottomLeft.cx - topLeft.cx, bottomLeft.cy - topLeft.cy);
+  if (expectedRight === null || expectedDown === null) return null;
 
   type Pair = readonly [Point, Point];
   const pairs: Pair[] = [
@@ -333,7 +370,7 @@ export const buildGridResolutionFromHomography = (
   version: number,
   size: number,
   homography: Homography,
-): GridResolution => {
+): GridResolution | null => {
   const samplePoint = (gridRow: number, gridCol: number): Point =>
     applyHomography(homography, gridCol, gridRow);
 
@@ -341,6 +378,18 @@ export const buildGridResolutionFromHomography = (
   const cornerTR = samplePoint(-0.5, size - 0.5);
   const cornerBR = samplePoint(size - 0.5, size - 0.5);
   const cornerBL = samplePoint(size - 0.5, -0.5);
+  if (
+    !Number.isFinite(cornerTL.x) ||
+    !Number.isFinite(cornerTL.y) ||
+    !Number.isFinite(cornerTR.x) ||
+    !Number.isFinite(cornerTR.y) ||
+    !Number.isFinite(cornerBR.x) ||
+    !Number.isFinite(cornerBR.y) ||
+    !Number.isFinite(cornerBL.x) ||
+    !Number.isFinite(cornerBL.y)
+  ) {
+    return null;
+  }
 
   const corners: CornerSet = {
     topLeft: cornerTL,
@@ -397,7 +446,17 @@ export const fitHomography = (pairs: readonly (readonly [Point, Point])[]): Homo
   const h = solve8x8(m, v);
   if (h === null) return null;
 
-  return [f(h, 0), f(h, 1), f(h, 2), f(h, 3), f(h, 4), f(h, 5), f(h, 6), f(h, 7), 1];
+  return [
+    numberAt(h, 0),
+    numberAt(h, 1),
+    numberAt(h, 2),
+    numberAt(h, 3),
+    numberAt(h, 4),
+    numberAt(h, 5),
+    numberAt(h, 6),
+    numberAt(h, 7),
+    1,
+  ];
 };
 
 /** Folds one row of A into the running M = A^T·A and v = A^T·b accumulators. */
@@ -410,12 +469,12 @@ const accumulateNormalEquationRow = (
   for (let i = 0; i < 8; i += 1) {
     const ri = row[i] ?? 0;
     if (ri === 0) continue;
-    v[i] = f(v, i) + ri * rhs;
+    v[i] = numberAt(v, i) + ri * rhs;
     for (let j = 0; j < 8; j += 1) {
       const rj = row[j] ?? 0;
       if (rj === 0) continue;
       const idx = i * 8 + j;
-      m[idx] = f(m, idx) + ri * rj;
+      m[idx] = numberAt(m, idx) + ri * rj;
     }
   }
 };
@@ -423,6 +482,9 @@ const accumulateNormalEquationRow = (
 /** Maps a (col, row) module coordinate through `h` to pixel space. */
 export const applyHomography = (h: Homography, x: number, y: number): Point => {
   const denom = h[6] * x + h[7] * y + h[8];
+  if (!Number.isFinite(denom) || Math.abs(denom) < 1e-12) {
+    return { x: Number.NaN, y: Number.NaN };
+  }
   return {
     x: (h[0] * x + h[1] * y + h[2]) / denom,
     y: (h[3] * x + h[4] * y + h[5]) / denom,
@@ -460,26 +522,22 @@ const affineHomographyFallback = (
  * pivoting. M is laid out row-major in a Float64Array of length 64.
  * Returns null when the matrix is singular.
  */
-// Float64Array reads always return a number, but `noUncheckedIndexedAccess`
-// widens them to `number | undefined`. `f` strips that fiction.
-const f = (a: Float64Array, i: number): number => a[i] as number;
-
 const solve8x8 = (m: Float64Array, v: Float64Array): Float64Array | null => {
   const n = 8;
   const stride = n + 1;
   // Augmented matrix in one Float64Array (n rows × (n+1) columns).
   const aug = new Float64Array(n * stride);
   for (let i = 0; i < n; i += 1) {
-    for (let j = 0; j < n; j += 1) aug[i * stride + j] = f(m, i * n + j);
-    aug[i * stride + n] = f(v, i);
+    for (let j = 0; j < n; j += 1) aug[i * stride + j] = numberAt(m, i * n + j);
+    aug[i * stride + n] = numberAt(v, i);
   }
 
   for (let i = 0; i < n; i += 1) {
     // Partial pivot: largest |entry| in column i at or below row i.
     let pivotRow = i;
-    let pivotMag = Math.abs(f(aug, i * stride + i));
+    let pivotMag = Math.abs(numberAt(aug, i * stride + i));
     for (let r = i + 1; r < n; r += 1) {
-      const mag = Math.abs(f(aug, r * stride + i));
+      const mag = Math.abs(numberAt(aug, r * stride + i));
       if (mag > pivotMag) {
         pivotRow = r;
         pivotMag = mag;
@@ -488,20 +546,21 @@ const solve8x8 = (m: Float64Array, v: Float64Array): Float64Array | null => {
     if (pivotMag < 1e-12) return null;
     if (pivotRow !== i) swapRows(aug, i, pivotRow, stride);
 
-    const pivotVal = f(aug, i * stride + i);
+    const pivotVal = numberAt(aug, i * stride + i);
     for (let r = 0; r < n; r += 1) {
       if (r === i) continue;
-      const factor = f(aug, r * stride + i) / pivotVal;
+      const factor = numberAt(aug, r * stride + i) / pivotVal;
       if (factor === 0) continue;
       for (let c = i; c <= n; c += 1) {
-        aug[r * stride + c] = f(aug, r * stride + c) - factor * f(aug, i * stride + c);
+        aug[r * stride + c] =
+          numberAt(aug, r * stride + c) - factor * numberAt(aug, i * stride + c);
       }
     }
   }
 
   const x = new Float64Array(n);
   for (let i = 0; i < n; i += 1) {
-    x[i] = f(aug, i * stride + n) / f(aug, i * stride + i);
+    x[i] = numberAt(aug, i * stride + n) / numberAt(aug, i * stride + i);
   }
   return x;
 };
@@ -510,8 +569,8 @@ const swapRows = (aug: Float64Array, a: number, b: number, stride: number): void
   for (let c = 0; c < stride; c += 1) {
     const ai = a * stride + c;
     const bi = b * stride + c;
-    const tmp = f(aug, ai);
-    aug[ai] = f(aug, bi);
+    const tmp = numberAt(aug, ai);
+    aug[ai] = numberAt(aug, bi);
     aug[bi] = tmp;
   }
 };
@@ -548,9 +607,9 @@ const alignFinderAxes = (
   };
 };
 
-const unitPoint = (x: number, y: number): Point => {
+const unitPoint = (x: number, y: number): Point | null => {
   const length = Math.hypot(x, y);
-  if (length === 0) return { x: 1, y: 0 };
+  if (length === 0) return null;
   return { x: x / length, y: y / length };
 };
 

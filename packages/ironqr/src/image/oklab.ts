@@ -1,4 +1,5 @@
 import type { ImageDataLike } from '../contracts/scan.js';
+import { numberAt } from './array.js';
 import {
   assertImageBufferLength,
   assertImagePlaneLength,
@@ -154,8 +155,8 @@ const buildIntegralStats = (plane: Float32Array, width: number, height: number):
       rowSum += value;
       rowSumSq += value * value;
       const index = (y + 1) * stride + (x + 1);
-      sum[index] = readFloat64(sum, y * stride + (x + 1)) + rowSum;
-      sumSq[index] = readFloat64(sumSq, y * stride + (x + 1)) + rowSumSq;
+      sum[index] = numberAt(sum, y * stride + (x + 1)) + rowSum;
+      sumSq[index] = numberAt(sumSq, y * stride + (x + 1)) + rowSumSq;
     }
   }
 
@@ -196,22 +197,20 @@ const normaliseAt = (
   const y1 = Math.min(height, y + radius + 1);
   const area = (x1 - x0) * (y1 - y0);
   const mean =
-    (readFloat64(stats.sum, y1 * stride + x1) -
-      readFloat64(stats.sum, y0 * stride + x1) -
-      readFloat64(stats.sum, y1 * stride + x0) +
-      readFloat64(stats.sum, y0 * stride + x0)) /
+    (numberAt(stats.sum, y1 * stride + x1) -
+      numberAt(stats.sum, y0 * stride + x1) -
+      numberAt(stats.sum, y1 * stride + x0) +
+      numberAt(stats.sum, y0 * stride + x0)) /
     area;
   const meanSq =
-    (readFloat64(stats.sumSq, y1 * stride + x1) -
-      readFloat64(stats.sumSq, y0 * stride + x1) -
-      readFloat64(stats.sumSq, y1 * stride + x0) +
-      readFloat64(stats.sumSq, y0 * stride + x0)) /
+    (numberAt(stats.sumSq, y1 * stride + x1) -
+      numberAt(stats.sumSq, y0 * stride + x1) -
+      numberAt(stats.sumSq, y1 * stride + x0) +
+      numberAt(stats.sumSq, y0 * stride + x0)) /
     area;
   const variance = Math.max(0, meanSq - mean * mean);
   return ((plane[index] as number) - mean) / Math.sqrt(variance + VARIANCE_EPSILON);
 };
-
-const readFloat64 = (array: Float64Array, index: number): number => array[index] as number;
 
 const srgbToLinear = (value: number): number => {
   if (value <= 0.04045) return value / 12.92;

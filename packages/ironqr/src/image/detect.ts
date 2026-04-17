@@ -23,6 +23,10 @@ export interface FinderCandidate {
 
 export type FinderTriple = readonly [FinderCandidate, FinderCandidate, FinderCandidate];
 
+const FINDER_SQUARENESS_TOLERANCE = 1.2;
+const FINDER_POOL_SIZE = 12;
+const FINDER_POOL_OVERLAP_MODULES = 7;
+
 /**
  * Scans a binarized image for QR finder pattern candidates.
  *
@@ -146,25 +150,23 @@ const reduceCandidatePool = (candidates: readonly FinderCandidate[]): FinderCand
   // closely. False positives in stylized data regions can have wildly different
   // h/v sizes and yet outscore real finders by averaged moduleSize. Drop those
   // before the top-3 sort.
-  const SQUARENESS_TOLERANCE = 1.2;
   const squareCandidates = candidates.filter((c) => {
     const hv = Math.max(c.hModuleSize, c.vModuleSize) / Math.min(c.hModuleSize, c.vModuleSize);
-    return hv <= SQUARENESS_TOLERANCE;
+    return hv <= FINDER_SQUARENESS_TOLERANCE;
   });
 
   // Sort largest-first so the most prominent candidates win when the pool
   // overflows. Pool size dominates triple-scoring cost (C(n,3) is 220 at n=12).
   squareCandidates.sort((a, b) => b.moduleSize - a.moduleSize);
-  const MAX_POOL = 12;
   const pool: FinderCandidate[] = [];
   for (const candidate of squareCandidates) {
     const overlaps = pool.some(
       (existing) =>
-        Math.abs(existing.cx - candidate.cx) < candidate.moduleSize * 7 &&
-        Math.abs(existing.cy - candidate.cy) < candidate.moduleSize * 7,
+        Math.abs(existing.cx - candidate.cx) < candidate.moduleSize * FINDER_POOL_OVERLAP_MODULES &&
+        Math.abs(existing.cy - candidate.cy) < candidate.moduleSize * FINDER_POOL_OVERLAP_MODULES,
     );
     if (!overlaps) pool.push(candidate);
-    if (pool.length === MAX_POOL) break;
+    if (pool.length === FINDER_POOL_SIZE) break;
   }
 
   return pool;

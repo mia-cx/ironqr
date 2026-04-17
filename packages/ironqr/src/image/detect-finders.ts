@@ -408,82 +408,95 @@ const refineHypothesis = (
   initial: AffineHypothesis,
   contrast: OklabContrastField,
 ): ScoredHypothesis | null => {
-  let current = scoreHypothesis(initial, contrast);
-  if (current === null) return null;
+  const scoredInitial = scoreHypothesis(initial, contrast);
+  if (scoredInitial === null) return null;
+  let current: ScoredHypothesis = scoredInitial;
 
   let step = 1;
   for (let pass = 0; pass < MATCHER_REFINEMENT_PASSES; pass += 1) {
     let improved = false;
-    const candidates: AffineHypothesis[] = [
-      current,
-      { ...current, cx: current.cx + current.ux * step, cy: current.cy + current.uy * step },
-      { ...current, cx: current.cx - current.ux * step, cy: current.cy - current.uy * step },
-      { ...current, cx: current.cx + current.vx * step, cy: current.cy + current.vy * step },
-      { ...current, cx: current.cx - current.vx * step, cy: current.cy - current.vy * step },
-      {
-        ...current,
-        cx: current.cx + (current.ux + current.vx) * step,
-        cy: current.cy + (current.uy + current.vy) * step,
-      },
-      {
-        ...current,
-        cx: current.cx - (current.ux + current.vx) * step,
-        cy: current.cy - (current.uy + current.vy) * step,
-      },
-      {
-        ...current,
-        cx: current.cx + (current.ux - current.vx) * step,
-        cy: current.cy + (current.uy - current.vy) * step,
-      },
-      {
-        ...current,
-        cx: current.cx - (current.ux - current.vx) * step,
-        cy: current.cy - (current.uy - current.vy) * step,
-      },
-      {
-        ...current,
-        ux: current.ux * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
-        uy: current.uy * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
-      },
-      {
-        ...current,
-        ux: current.ux * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
-        uy: current.uy * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
-      },
-      {
-        ...current,
-        vx: current.vx * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
-        vy: current.vy * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
-      },
-      {
-        ...current,
-        vx: current.vx * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
-        vy: current.vy * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
-      },
-      {
-        ...current,
-        vx: current.vx + current.ux * step * MATCHER_REFINEMENT_SCALE_DELTA,
-        vy: current.vy + current.uy * step * MATCHER_REFINEMENT_SCALE_DELTA,
-      },
-      {
-        ...current,
-        vx: current.vx - current.ux * step * MATCHER_REFINEMENT_SCALE_DELTA,
-        vy: current.vy - current.uy * step * MATCHER_REFINEMENT_SCALE_DELTA,
-      },
-    ];
 
-    for (const candidate of candidates) {
-      const scored = scoreHypothesis(candidate, contrast);
-      if (scored !== null && scored.score > current.score) {
-        current = scored;
-        improved = true;
+    while (true) {
+      let next = current;
+      for (const candidate of buildRefinementCandidates(current, step)) {
+        const scored = scoreHypothesis(candidate, contrast);
+        if (scored !== null && scored.score > next.score) {
+          next = scored;
+        }
       }
+      if (next === current) break;
+      current = next;
+      improved = true;
     }
+
     if (!improved) step *= MATCHER_STALLED_STEP_DECAY;
     else step *= MATCHER_IMPROVED_STEP_DECAY;
   }
 
   return current;
+};
+
+const buildRefinementCandidates = (
+  current: AffineHypothesis,
+  step: number,
+): readonly AffineHypothesis[] => {
+  return [
+    current,
+    { ...current, cx: current.cx + current.ux * step, cy: current.cy + current.uy * step },
+    { ...current, cx: current.cx - current.ux * step, cy: current.cy - current.uy * step },
+    { ...current, cx: current.cx + current.vx * step, cy: current.cy + current.vy * step },
+    { ...current, cx: current.cx - current.vx * step, cy: current.cy - current.vy * step },
+    {
+      ...current,
+      cx: current.cx + (current.ux + current.vx) * step,
+      cy: current.cy + (current.uy + current.vy) * step,
+    },
+    {
+      ...current,
+      cx: current.cx - (current.ux + current.vx) * step,
+      cy: current.cy - (current.uy + current.vy) * step,
+    },
+    {
+      ...current,
+      cx: current.cx + (current.ux - current.vx) * step,
+      cy: current.cy + (current.uy - current.vy) * step,
+    },
+    {
+      ...current,
+      cx: current.cx - (current.ux - current.vx) * step,
+      cy: current.cy - (current.uy - current.vy) * step,
+    },
+    {
+      ...current,
+      ux: current.ux * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+      uy: current.uy * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+    },
+    {
+      ...current,
+      ux: current.ux * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+      uy: current.uy * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+    },
+    {
+      ...current,
+      vx: current.vx * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+      vy: current.vy * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+    },
+    {
+      ...current,
+      vx: current.vx * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+      vy: current.vy * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+    },
+    {
+      ...current,
+      vx: current.vx + current.ux * step * MATCHER_REFINEMENT_SCALE_DELTA,
+      vy: current.vy + current.uy * step * MATCHER_REFINEMENT_SCALE_DELTA,
+    },
+    {
+      ...current,
+      vx: current.vx - current.ux * step * MATCHER_REFINEMENT_SCALE_DELTA,
+      vy: current.vy - current.uy * step * MATCHER_REFINEMENT_SCALE_DELTA,
+    },
+  ];
 };
 
 const scoreHypothesis = (
@@ -602,7 +615,6 @@ const normalised = (x: number, y: number): { x: number; y: number } => {
 const dot = (a: OklabVector, b: OklabVector): number => a.l * b.l + a.a * b.a + a.b * b.b;
 
 const median = (values: readonly number[]): number => {
-  if (values.length === 0) return 0;
   const mid = Math.floor(values.length / 2);
   if (values.length % 2 === 1) return values[mid] ?? 0;
   return ((values[mid - 1] ?? 0) + (values[mid] ?? 0)) / 2;

@@ -1,4 +1,5 @@
 import type { ImageDataLike } from '../contracts/scan.js';
+import { numberAt } from './array.js';
 import {
   assertImageBufferLength,
   assertImagePlaneLength,
@@ -14,8 +15,6 @@ const compositeOnWhite = (channelValue: number, alpha: number): number => {
   const foregroundWeight = alpha / WHITE_PIXEL;
   return channelValue * foregroundWeight + WHITE_PIXEL * (1 - foregroundWeight);
 };
-
-const readFloat64 = (array: Float64Array, index: number): number => array[index] as number;
 
 /**
  * Converts an RGBA pixel buffer to an 8-bit grayscale array using luminance weighting.
@@ -185,8 +184,8 @@ export const sauvolaBinarize = (
       rowSum += value;
       rowSumSq += value * value;
       const index = (y + 1) * stride + (x + 1);
-      sum[index] = readFloat64(sum, y * stride + (x + 1)) + rowSum;
-      sumSq[index] = readFloat64(sumSq, y * stride + (x + 1)) + rowSumSq;
+      sum[index] = numberAt(sum, y * stride + (x + 1)) + rowSum;
+      sumSq[index] = numberAt(sumSq, y * stride + (x + 1)) + rowSumSq;
     }
   }
 
@@ -198,15 +197,15 @@ export const sauvolaBinarize = (
       const x0 = Math.max(0, x - normalizedRadius);
       const x1 = Math.min(width, x + normalizedRadius + 1);
       const area = (x1 - x0) * (y1 - y0);
-      const a = readFloat64(sum, y0 * stride + x0);
-      const b = readFloat64(sum, y0 * stride + x1);
-      const c = readFloat64(sum, y1 * stride + x0);
-      const d = readFloat64(sum, y1 * stride + x1);
+      const a = numberAt(sum, y0 * stride + x0);
+      const b = numberAt(sum, y0 * stride + x1);
+      const c = numberAt(sum, y1 * stride + x0);
+      const d = numberAt(sum, y1 * stride + x1);
       const mean = (d - b - c + a) / area;
-      const aSq = readFloat64(sumSq, y0 * stride + x0);
-      const bSq = readFloat64(sumSq, y0 * stride + x1);
-      const cSq = readFloat64(sumSq, y1 * stride + x0);
-      const dSq = readFloat64(sumSq, y1 * stride + x1);
+      const aSq = numberAt(sumSq, y0 * stride + x0);
+      const bSq = numberAt(sumSq, y0 * stride + x1);
+      const cSq = numberAt(sumSq, y1 * stride + x0);
+      const dSq = numberAt(sumSq, y1 * stride + x1);
       const variance = (dSq - bSq - cSq + aSq) / area - mean * mean;
       const stddev = variance > 0 ? Math.sqrt(variance) : 0;
       const threshold = mean * (1 + SAUVOLA_K * (stddev / SAUVOLA_DYNAMIC_RANGE - 1));

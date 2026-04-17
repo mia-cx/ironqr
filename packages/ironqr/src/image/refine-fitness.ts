@@ -35,6 +35,8 @@ import {
  * Refines `resolution` by hill-climbing on the QR's structural fitness.
  * Returns the original resolution unchanged when no improvement is found.
  */
+const MIN_QR_SIZE = 21;
+
 export const refineGridFitness = (
   resolution: GridResolution,
   binary: Uint8Array,
@@ -42,12 +44,14 @@ export const refineGridFitness = (
   height: number,
 ): GridResolution => {
   const { size } = resolution;
-  if (size < 21) return resolution;
+  if (size < MIN_QR_SIZE) return resolution;
 
-  const isDark = (x: number, y: number): boolean => {
-    const px = Math.max(0, Math.min(width - 1, Math.round(x)));
-    const py = Math.max(0, Math.min(height - 1, Math.round(y)));
-    return (binary[py * width + px] ?? 255) === 0;
+  const isDark = (x: number, y: number): boolean | null => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const px = Math.round(x);
+    const py = Math.round(y);
+    if (px < 0 || px >= width || py < 0 || py >= height) return null;
+    return binary[py * width + px] === 0;
   };
 
   const samplePoints = collectSamplePoints(size, resolution.version);
@@ -85,7 +89,9 @@ export const refineGridFitness = (
 
   if (current === resolution.homography) return resolution;
 
-  return buildGridResolutionFromHomography(resolution.version, resolution.size, current);
+  return (
+    buildGridResolutionFromHomography(resolution.version, resolution.size, current) ?? resolution
+  );
 };
 
 // ─── Sample points ────────────────────────────────────────────────────────
@@ -209,20 +215,30 @@ const pushBitSamples = (
 const scoreHomography = (
   h: Homography,
   points: readonly SamplePoint[],
-  isDark: (x: number, y: number) => boolean,
+  isDark: (x: number, y: number) => boolean | null,
 ): number => {
   let score = 0;
   for (const p of points) {
     const pix = applyHomography(h, p.moduleCol, p.moduleRow);
     const observedDark = isDark(pix.x, pix.y);
-    score += observedDark === p.expectDark ? 1 : -1;
+    score += observedDark === null ? -1 : observedDark === p.expectDark ? 1 : -1;
   }
   return score;
 };
 
 /** Returns a copy of `h` with parameter `i` shifted by `delta`. */
 const perturbHomography = (h: Homography, i: number, delta: number): Homography => {
-  const out: number[] = h.slice();
+  const out = [...h] as number[];
   out[i] = (out[i] ?? 0) + delta;
-  return out as unknown as Homography;
+  return [
+    out[0] ?? 0,
+    out[1] ?? 0,
+    out[2] ?? 0,
+    out[3] ?? 0,
+    out[4] ?? 0,
+    out[5] ?? 0,
+    out[6] ?? 0,
+    out[7] ?? 0,
+    out[8] ?? 1,
+  ];
 };

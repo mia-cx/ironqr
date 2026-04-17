@@ -1,6 +1,18 @@
 export interface ComponentStats {
   readonly id: number;
   readonly color: number;
+  readonly pixelCount: number;
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+  readonly centroidX: number;
+  readonly centroidY: number;
+}
+
+interface ComponentAccumulator {
+  readonly id: number;
+  readonly color: number;
   pixelCount: number;
   sumX: number;
   sumY: number;
@@ -8,8 +20,6 @@ export interface ComponentStats {
   maxX: number;
   minY: number;
   maxY: number;
-  centroidX: number;
-  centroidY: number;
 }
 
 /** Labels 4-connected same-colour components in a binary image. */
@@ -21,52 +31,51 @@ export const labelConnectedComponents = (
   const labels = new Uint32Array(width * height);
   const parent: number[] = [0];
 
-  const findRoot = (x: number): number => {
-    let cur = x;
-    while ((parent[cur] ?? 0) !== cur) {
-      const p = parent[cur] ?? 0;
-      parent[cur] = parent[p] ?? 0;
-      cur = parent[cur] ?? 0;
+  const findRoot = (label: number): number => {
+    let current = label;
+    while (parent[current] !== current) {
+      parent[current] = parent[parent[current] ?? 0] ?? 0;
+      current = parent[current] ?? 0;
     }
-    return cur;
+    return current;
   };
 
   const union = (a: number, b: number): number => {
-    const ra = findRoot(a);
-    const rb = findRoot(b);
-    if (ra === rb) return ra;
-    if (ra < rb) {
-      parent[rb] = ra;
-      return ra;
+    const rootA = findRoot(a);
+    const rootB = findRoot(b);
+    if (rootA === rootB) return rootA;
+    if (rootA < rootB) {
+      parent[rootB] = rootA;
+      return rootA;
     }
-    parent[ra] = rb;
-    return rb;
+    parent[rootA] = rootB;
+    return rootB;
   };
 
   let nextId = 1;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const i = y * width + x;
-      const colour = binary[i] ?? 255;
-      const leftLabel = x > 0 && (binary[i - 1] ?? 255) === colour ? labels[i - 1] : 0;
-      const upLabel = y > 0 && (binary[i - width] ?? 255) === colour ? labels[i - width] : 0;
+      const index = y * width + x;
+      const color = binary[index] ?? 255;
+      const leftLabel = x > 0 && (binary[index - 1] ?? 255) === color ? labels[index - 1] : 0;
+      const upLabel = y > 0 && (binary[index - width] ?? 255) === color ? labels[index - width] : 0;
 
       if (leftLabel && upLabel) {
-        labels[i] = union(leftLabel, upLabel);
+        labels[index] = union(leftLabel, upLabel);
       } else if (leftLabel) {
-        labels[i] = leftLabel;
+        labels[index] = leftLabel;
       } else if (upLabel) {
-        labels[i] = upLabel;
+        labels[index] = upLabel;
       } else {
-        labels[i] = nextId;
+        labels[index] = nextId;
         parent[nextId] = nextId;
         nextId += 1;
       }
     }
   }
 
-  for (let i = 0; i < labels.length; i += 1) {
-    labels[i] = findRoot(labels[i] ?? 0);
+  for (let index = 0; index < labels.length; index += 1) {
+    labels[index] = findRoot(labels[index] ?? 0);
   }
 
   return labels;
@@ -79,17 +88,18 @@ export const collectComponentStats = (
   width: number,
   height: number,
 ): ComponentStats[] => {
-  const byId = new Map<number, ComponentStats>();
+  const byId = new Map<number, ComponentAccumulator>();
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const i = y * width + x;
-      const id = labels[i] ?? 0;
+      const index = y * width + x;
+      const id = labels[index] ?? 0;
       if (id === 0) continue;
+
       let stats = byId.get(id);
       if (!stats) {
         stats = {
           id,
-          color: binary[i] ?? 255,
+          color: binary[index] ?? 255,
           pixelCount: 0,
           sumX: 0,
           sumY: 0,
@@ -97,11 +107,10 @@ export const collectComponentStats = (
           maxX: x,
           minY: y,
           maxY: y,
-          centroidX: 0,
-          centroidY: 0,
         };
         byId.set(id, stats);
       }
+
       stats.pixelCount += 1;
       stats.sumX += x;
       stats.sumY += y;
@@ -112,12 +121,17 @@ export const collectComponentStats = (
     }
   }
 
-  for (const stats of byId.values()) {
-    stats.centroidX = stats.sumX / stats.pixelCount;
-    stats.centroidY = stats.sumY / stats.pixelCount;
-  }
-
-  return Array.from(byId.values());
+  return Array.from(byId.values(), (stats) => ({
+    id: stats.id,
+    color: stats.color,
+    pixelCount: stats.pixelCount,
+    minX: stats.minX,
+    maxX: stats.maxX,
+    minY: stats.minY,
+    maxY: stats.maxY,
+    centroidX: stats.sumX / stats.pixelCount,
+    centroidY: stats.sumY / stats.pixelCount,
+  }));
 };
 
 /**
@@ -128,7 +142,7 @@ export const computeContainingComponents = (
   labels: Uint32Array,
   components: readonly ComponentStats[],
   width: number,
-  height: number,
+  _height: number,
 ): Record<number, number> => {
   const parents: Record<number, number> = { 0: 0 };
   for (const component of components) {
@@ -136,14 +150,10 @@ export const computeContainingComponents = (
       parents[component.id] = 0;
       continue;
     }
+
     const probeX = Math.round((component.minX + component.maxX) / 2);
     const probeY = component.minY - 1;
-    if (probeX < 0 || probeX >= width || probeY < 0 || probeY >= height) {
-      parents[component.id] = 0;
-      continue;
-    }
-    const parentId = labels[probeY * width + probeX] ?? 0;
-    parents[component.id] = parentId === component.id ? 0 : parentId;
+    parents[component.id] = labels[probeY * width + probeX] ?? 0;
   }
   return parents;
 };

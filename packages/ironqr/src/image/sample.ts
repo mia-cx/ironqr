@@ -1,4 +1,5 @@
-import type { GridResolution } from './geometry.js';
+import { type GridResolution, localGridBasis } from './geometry.js';
+import { assertImagePlaneLength } from './validation.js';
 
 /**
  * Samples the QR module grid from a binarized image using the resolved geometry.
@@ -22,41 +23,21 @@ export const sampleGrid = (
   resolution: GridResolution,
   binary: Uint8Array,
 ): boolean[][] => {
-  const { size, samplePoint } = resolution;
+  assertImagePlaneLength(binary.length, width, height, 'sampleGrid');
+  const { size } = resolution;
 
   const isDarkAt = (x: number, y: number): boolean => {
     const px = Math.max(0, Math.min(width - 1, Math.round(x)));
     const py = Math.max(0, Math.min(height - 1, Math.round(y)));
-    return (binary[py * width + px] ?? 255) === 0;
-  };
-
-  const localBasis = (row: number, col: number) => {
-    const center = samplePoint(row, col);
-    const left = samplePoint(row, Math.max(0, col - 1));
-    const right = samplePoint(row, Math.min(size - 1, col + 1));
-    const up = samplePoint(Math.max(0, row - 1), col);
-    const down = samplePoint(Math.min(size - 1, row + 1), col);
-
-    const scale = 0.2;
-    const xStep =
-      col === 0
-        ? { x: (right.x - center.x) * scale, y: (right.y - center.y) * scale }
-        : col === size - 1
-          ? { x: (center.x - left.x) * scale, y: (center.y - left.y) * scale }
-          : { x: (right.x - left.x) * 0.5 * scale, y: (right.y - left.y) * 0.5 * scale };
-    const yStep =
-      row === 0
-        ? { x: (down.x - center.x) * scale, y: (down.y - center.y) * scale }
-        : row === size - 1
-          ? { x: (center.x - up.x) * scale, y: (center.y - up.y) * scale }
-          : { x: (down.x - up.x) * 0.5 * scale, y: (down.y - up.y) * 0.5 * scale };
-
-    return { center, xStep, yStep };
+    return binary[py * width + px] === 0;
   };
 
   return Array.from({ length: size }, (_, row) =>
     Array.from({ length: size }, (_, col) => {
-      const { center, xStep, yStep } = localBasis(row, col);
+      const basis = localGridBasis(resolution, row, col);
+      const center = basis.center;
+      const xStep = { x: basis.right.x * 0.2, y: basis.right.y * 0.2 };
+      const yStep = { x: basis.down.x * 0.2, y: basis.down.y * 0.2 };
       let darkVotes = 0;
       // Center carries the strongest weight; rounded/dotted modules often do
       // not reach the cell corners, but they do occupy the centre. The four
