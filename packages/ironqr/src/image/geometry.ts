@@ -1,5 +1,5 @@
 import type { Bounds, CornerSet, Point } from '../contracts/geometry.js';
-import type { FinderCandidate } from './detect.js';
+import type { FinderCandidate, FinderTriple } from './detect.js';
 
 /**
  * The result of resolving a QR grid from finder pattern candidates.
@@ -45,11 +45,9 @@ export interface GridResolution {
  * @returns Grid resolution for sampling, or null if geometry cannot be resolved.
  */
 export const resolveGrid = (
-  finders: readonly FinderCandidate[],
+  finders: FinderTriple,
   overrideVersion?: number,
 ): GridResolution | null => {
-  if (finders.length < 3) return null;
-
   const oriented = orientFinders(finders);
   if (oriented === null) return null;
   const { topLeft, topRight, bottomLeft } = oriented;
@@ -79,38 +77,11 @@ export const resolveGrid = (
   // Try projective fit first; fall back to affine if the linear system is
   // degenerate (e.g. perfectly collinear correspondences).
   const homography =
-    solveHomography(pairs) ??
+    fitHomography(pairs) ??
     affineHomographyFallback(topLeft, topRight, bottomLeft, finderOffset, trGridCol, blGridRow);
   if (homography === null) return null;
 
-  const samplePoint = (gridRow: number, gridCol: number): Point =>
-    applyHomography(homography, gridCol, gridRow);
-
-  // QR outer boundary lies half a module beyond the outermost module centers.
-  const cornerTL = samplePoint(-0.5, -0.5);
-  const cornerTR = samplePoint(-0.5, size - 0.5);
-  const cornerBR = samplePoint(size - 0.5, size - 0.5);
-  const cornerBL = samplePoint(size - 0.5, -0.5);
-
-  const corners: CornerSet = {
-    topLeft: cornerTL,
-    topRight: cornerTR,
-    bottomRight: cornerBR,
-    bottomLeft: cornerBL,
-  };
-
-  const xs = [cornerTL.x, cornerTR.x, cornerBR.x, cornerBL.x];
-  const ys = [cornerTL.y, cornerTR.y, cornerBR.y, cornerBL.y];
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  const bounds: Bounds = {
-    x: minX,
-    y: minY,
-    width: Math.max(...xs) - minX,
-    height: Math.max(...ys) - minY,
-  };
-
-  return { version, size, corners, bounds, homography, samplePoint };
+  return buildGridResolutionFromHomography(version, size, homography);
 };
 
 /** A user-supplied (module-coord, pixel-coord) correspondence used to refine the homography. */
@@ -133,7 +104,7 @@ export interface ExtraCorrespondence {
  * @returns A new GridResolution with refined sampling, or null on degenerate fit.
  */
 export const resolveGridFromCorrespondences = (
-  finders: readonly [FinderCandidate, FinderCandidate, FinderCandidate],
+  finders: FinderTriple,
   version: number,
   extraPoints: readonly ExtraCorrespondence[],
 ): GridResolution | null => {
@@ -164,37 +135,11 @@ export const resolveGridFromCorrespondences = (
   ];
 
   const homography =
-    solveHomography(pairs) ??
+    fitHomography(pairs) ??
     affineHomographyFallback(topLeft, topRight, bottomLeft, finderOffset, trGridCol, blGridRow);
   if (homography === null) return null;
 
-  const samplePoint = (gridRow: number, gridCol: number): Point =>
-    applyHomography(homography, gridCol, gridRow);
-
-  const cornerTL = samplePoint(-0.5, -0.5);
-  const cornerTR = samplePoint(-0.5, size - 0.5);
-  const cornerBR = samplePoint(size - 0.5, size - 0.5);
-  const cornerBL = samplePoint(size - 0.5, -0.5);
-
-  const corners: CornerSet = {
-    topLeft: cornerTL,
-    topRight: cornerTR,
-    bottomRight: cornerBR,
-    bottomLeft: cornerBL,
-  };
-
-  const xs = [cornerTL.x, cornerTR.x, cornerBR.x, cornerBL.x];
-  const ys = [cornerTL.y, cornerTR.y, cornerBR.y, cornerBL.y];
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  const bounds: Bounds = {
-    x: minX,
-    y: minY,
-    width: Math.max(...xs) - minX,
-    height: Math.max(...ys) - minY,
-  };
-
-  return { version, size, corners, bounds, homography, samplePoint };
+  return buildGridResolutionFromHomography(version, size, homography);
 };
 
 /**
@@ -216,24 +161,10 @@ export const resolveGridFromCorners = (
     [{ x: size - 0.5, y: size - 0.5 }, corners.bottomRight],
     [{ x: -0.5, y: size - 0.5 }, corners.bottomLeft],
   ];
-  const homography = solveHomography(pairs);
+  const homography = fitHomography(pairs);
   if (homography === null) return null;
 
-  const samplePoint = (gridRow: number, gridCol: number): Point =>
-    applyHomography(homography, gridCol, gridRow);
-
-  const xs = [corners.topLeft.x, corners.topRight.x, corners.bottomRight.x, corners.bottomLeft.x];
-  const ys = [corners.topLeft.y, corners.topRight.y, corners.bottomRight.y, corners.bottomLeft.y];
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  const bounds: Bounds = {
-    x: minX,
-    y: minY,
-    width: Math.max(...xs) - minX,
-    height: Math.max(...ys) - minY,
-  };
-
-  return { version, size, corners, bounds, homography, samplePoint };
+  return buildGridResolutionFromHomography(version, size, homography);
 };
 
 /**
@@ -241,11 +172,7 @@ export const resolveGridFromCorners = (
  * the finder-distance estimate, then ±1, then ±2. Useful when the estimate
  * lands close-but-wrong and the encoded version info disagrees with grid size.
  */
-export const candidateVersions = (
-  finders: readonly FinderCandidate[],
-  span = 2,
-): readonly number[] => {
-  if (finders.length < 3) return [];
+export const candidateVersions = (finders: FinderTriple, span = 2): readonly number[] => {
   const oriented = orientFinders(finders);
   if (oriented === null) return [];
   const estimate = estimateVersion(oriented.topLeft, oriented.topRight, oriented.bottomLeft);
@@ -272,8 +199,8 @@ interface OrientedFinders {
   readonly bottomLeft: FinderCandidate;
 }
 
-const orientFinders = (finders: readonly FinderCandidate[]): OrientedFinders | null => {
-  const [fa, fb, fc] = finders as [FinderCandidate, FinderCandidate, FinderCandidate];
+const orientFinders = (finders: FinderTriple): OrientedFinders | null => {
+  const [fa, fb, fc] = finders;
   const dAB = distFinders(fa, fb);
   const dAC = distFinders(fa, fc);
   const dBC = distFinders(fb, fc);
@@ -402,6 +329,40 @@ export type Homography = readonly [
   number,
 ];
 
+export const buildGridResolutionFromHomography = (
+  version: number,
+  size: number,
+  homography: Homography,
+): GridResolution => {
+  const samplePoint = (gridRow: number, gridCol: number): Point =>
+    applyHomography(homography, gridCol, gridRow);
+
+  const cornerTL = samplePoint(-0.5, -0.5);
+  const cornerTR = samplePoint(-0.5, size - 0.5);
+  const cornerBR = samplePoint(size - 0.5, size - 0.5);
+  const cornerBL = samplePoint(size - 0.5, -0.5);
+
+  const corners: CornerSet = {
+    topLeft: cornerTL,
+    topRight: cornerTR,
+    bottomRight: cornerBR,
+    bottomLeft: cornerBL,
+  };
+
+  const xs = [cornerTL.x, cornerTR.x, cornerBR.x, cornerBL.x];
+  const ys = [cornerTL.y, cornerTR.y, cornerBR.y, cornerBL.y];
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const bounds: Bounds = {
+    x: minX,
+    y: minY,
+    width: Math.max(...xs) - minX,
+    height: Math.max(...ys) - minY,
+  };
+
+  return { version, size, corners, bounds, homography, samplePoint };
+};
+
 /**
  * Solves H from N≥4 (src → dst) correspondences via the standard DLT.
  *
@@ -412,7 +373,7 @@ export type Homography = readonly [
  *
  * @returns The fitted homography, or null if the system is singular.
  */
-const solveHomography = (pairs: readonly (readonly [Point, Point])[]): Homography | null => {
+export const fitHomography = (pairs: readonly (readonly [Point, Point])[]): Homography | null => {
   if (pairs.length < 4) return null;
 
   // Each correspondence (sx, sy) → (dx, dy) contributes two A rows:
@@ -569,7 +530,10 @@ const alignFinderAxes = (
     return { rightAxis: expectedRight, downAxis: expectedDown };
   }
 
-  const candidates = [unitPoint(finder.axisU.x, finder.axisU.y), unitPoint(finder.axisV.x, finder.axisV.y)];
+  const candidates = [
+    unitPoint(finder.axisU.x, finder.axisU.y),
+    unitPoint(finder.axisV.x, finder.axisV.y),
+  ];
   const [first, second] = candidates;
   if (!first || !second) return { rightAxis: expectedRight, downAxis: expectedDown };
 

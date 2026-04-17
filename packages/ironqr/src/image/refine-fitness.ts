@@ -18,14 +18,18 @@
  * be the only oracle anymore \u2014 the QR's structural redundancy is.
  */
 
-import type { Bounds, CornerSet, Point } from '../contracts/geometry.js';
 import {
   ALIGNMENT_PATTERN_CENTERS,
   buildVersionInfoCodeword,
   getVersionInfoFirstCopyPositions,
   getVersionInfoSecondCopyPositions,
 } from '../qr/index.js';
-import { applyHomography, type GridResolution, type Homography } from './geometry.js';
+import {
+  applyHomography,
+  buildGridResolutionFromHomography,
+  type GridResolution,
+  type Homography,
+} from './geometry.js';
 
 /**
  * Refines `resolution` by hill-climbing on the QR's structural fitness.
@@ -81,7 +85,7 @@ export const refineGridFitness = (
 
   if (current === resolution.homography) return resolution;
 
-  return rebuildGridResolution(resolution, current);
+  return buildGridResolutionFromHomography(resolution.version, resolution.size, current);
 };
 
 // ─── Sample points ────────────────────────────────────────────────────────
@@ -221,40 +225,4 @@ const perturbHomography = (h: Homography, i: number, delta: number): Homography 
   const out: number[] = h.slice();
   out[i] = (out[i] ?? 0) + delta;
   return out as unknown as Homography;
-};
-
-// ─── Rebuild resolution ───────────────────────────────────────────────────
-
-const rebuildGridResolution = (
-  original: GridResolution,
-  homography: Homography,
-): GridResolution => {
-  const { version, size } = original;
-  const samplePoint = (gridRow: number, gridCol: number): Point =>
-    applyHomography(homography, gridCol, gridRow);
-
-  const cornerTL = samplePoint(-0.5, -0.5);
-  const cornerTR = samplePoint(-0.5, size - 0.5);
-  const cornerBR = samplePoint(size - 0.5, size - 0.5);
-  const cornerBL = samplePoint(size - 0.5, -0.5);
-
-  const corners: CornerSet = {
-    topLeft: cornerTL,
-    topRight: cornerTR,
-    bottomRight: cornerBR,
-    bottomLeft: cornerBL,
-  };
-
-  const xs = [cornerTL.x, cornerTR.x, cornerBR.x, cornerBL.x];
-  const ys = [cornerTL.y, cornerTR.y, cornerBR.y, cornerBL.y];
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  const bounds: Bounds = {
-    x: minX,
-    y: minY,
-    width: Math.max(...xs) - minX,
-    height: Math.max(...ys) - minY,
-  };
-
-  return { version, size, corners, bounds, homography, samplePoint };
 };

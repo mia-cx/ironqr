@@ -90,11 +90,26 @@ export type ScanResult = S.Schema.Type<typeof ScanResultSchema>;
 export const DecodeGridResultSchema = ScanResultSchema;
 export type DecodeGridResult = S.Schema.Type<typeof DecodeGridResultSchema>;
 
+/**
+ * Minimal structural pixel buffer accepted by the scan pipeline.
+ *
+ * This keeps the public contract aligned with the runtime path in non-DOM hosts
+ * (tests, workers, Bun/Node tooling) where callers already pass `{ width,
+ * height, data }` buffers without constructing a real `ImageData` instance.
+ */
+export interface ImageDataLike {
+  readonly width: number;
+  readonly height: number;
+  readonly data: Uint8ClampedArray;
+  readonly colorSpace?: string;
+}
+
 export type BrowserImageSource =
   | Blob
   | File
   | ImageBitmap
   | ImageData
+  | ImageDataLike
   | HTMLCanvasElement
   | HTMLImageElement
   | OffscreenCanvas

@@ -21,10 +21,10 @@
  * merged with that pool in the scan pipeline.
  */
 import {
+  type ComponentStats,
   collectComponentStats,
   computeContainingComponents,
   labelConnectedComponents,
-  type ComponentStats,
 } from './components.js';
 import type { FinderCandidate } from './detect.js';
 
@@ -104,4 +104,3 @@ export const detectFinderCandidatesFlood = (
 
   return candidates;
 };
-

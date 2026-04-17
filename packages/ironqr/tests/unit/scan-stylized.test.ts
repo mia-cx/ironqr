@@ -157,7 +157,11 @@ describe('fitness-driven homography refinement', () => {
     const luma = toGrayscale(imageData);
     const binary = otsuBinarize(luma, imageData.width, imageData.height);
     const finders = detectFinderPatterns(binary, imageData.width, imageData.height);
-    const resolved = resolveGrid(finders, 1);
+    const [topLeft, topRight, bottomLeft] = finders;
+    if (!topLeft || !topRight || !bottomLeft) {
+      throw new Error('expected exactly three finders for clean v1');
+    }
+    const resolved = resolveGrid([topLeft, topRight, bottomLeft], 1);
     if (!resolved) throw new Error('expected resolveGrid to succeed for clean v1');
     const refined = refineGridFitness(resolved, binary, imageData.width, imageData.height);
     // For a perfect synthetic v1 the homography is already optimal.

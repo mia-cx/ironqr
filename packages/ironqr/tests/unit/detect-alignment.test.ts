@@ -29,7 +29,12 @@ describe('locateAlignmentPatternCorrespondences', () => {
         bottomRight: { x: origin.x + 24 * modulePitch + 5, y: origin.y + 24 * modulePitch + 5 },
         bottomLeft: { x: origin.x - 5, y: origin.y + 24 * modulePitch + 5 },
       },
-      bounds: { x: origin.x - 5, y: origin.y - 5, width: 25 * modulePitch, height: 25 * modulePitch },
+      bounds: {
+        x: origin.x - 5,
+        y: origin.y - 5,
+        width: 25 * modulePitch,
+        height: 25 * modulePitch,
+      },
       homography: [modulePitch, 0, origin.x, 0, modulePitch, origin.y, 0, 0, 1],
       samplePoint: (gridRow, gridCol) => ({
         x: origin.x + gridCol * modulePitch,
@@ -63,8 +68,16 @@ const drawAlignmentPattern = (
       const cellCenterX = centerX + moduleCol * modulePitch;
       const cellCenterY = centerY + moduleRow * modulePitch;
       const half = Math.floor(modulePitch * 0.35);
-      for (let py = Math.max(0, Math.round(cellCenterY) - half); py <= Math.min(height - 1, Math.round(cellCenterY) + half); py += 1) {
-        for (let px = Math.max(0, Math.round(cellCenterX) - half); px <= Math.min(width - 1, Math.round(cellCenterX) + half); px += 1) {
+      for (
+        let py = Math.max(0, Math.round(cellCenterY) - half);
+        py <= Math.min(height - 1, Math.round(cellCenterY) + half);
+        py += 1
+      ) {
+        for (
+          let px = Math.max(0, Math.round(cellCenterX) - half);
+          px <= Math.min(width - 1, Math.round(cellCenterX) + half);
+          px += 1
+        ) {
           binary[py * width + px] = 0;
         }
       }

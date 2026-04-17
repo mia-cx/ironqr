@@ -1,5 +1,6 @@
-import type { ExtraCorrespondence, GridResolution } from './geometry.js';
 import { ALIGNMENT_PATTERN_CENTERS } from '../qr/qr-tables.js';
+import type { ExtraCorrespondence, GridResolution } from './geometry.js';
+import { assertImagePlaneLength } from './validation.js';
 
 interface Basis {
   readonly center: { x: number; y: number };
@@ -14,9 +15,24 @@ interface ScoredPoint {
   readonly score: number;
 }
 
+interface AlignmentCell {
+  readonly moduleRow: number;
+  readonly moduleCol: number;
+  readonly expectDark: boolean;
+  readonly weight: number;
+}
+
+const MIN_ALIGNMENT_SEARCH_RADIUS = 3;
+const MAX_ALIGNMENT_SEARCH_RADIUS = 24;
+const ALIGNMENT_SEARCH_RADIUS_MODULES = 2.5;
+const MIN_ALIGNMENT_SCORE_RATIO = 0.35;
+const ALIGNMENT_CENTER_WEIGHT = 4;
+const ALIGNMENT_OUTER_CORNER_WEIGHT = 2.5;
+const ALIGNMENT_OUTER_EDGE_WEIGHT = 2;
+const ALIGNMENT_INNER_WEIGHT = 1.5;
+
 const ALIGNMENT_CELL_WEIGHTS = buildAlignmentCellWeights();
 const MAX_ALIGNMENT_SCORE = ALIGNMENT_CELL_WEIGHTS.reduce((sum, cell) => sum + cell.weight, 0);
-const MIN_ALIGNMENT_SCORE_RATIO = 0.35;
 
 /**
  * Locates alignment-pattern centers near the current homography prediction.
@@ -33,14 +49,17 @@ export const locateAlignmentPatternCorrespondences = (
   height: number,
 ): readonly ExtraCorrespondence[] => {
   if (resolution.version < 2) return [];
+  assertImagePlaneLength(binary.length, width, height, 'locateAlignmentPatternCorrespondences');
 
   const centers = ALIGNMENT_PATTERN_CENTERS[resolution.version - 1];
   if (!centers || centers.length === 0) return [];
 
-  const isDark = (x: number, y: number): boolean => {
-    const px = Math.max(0, Math.min(width - 1, Math.round(x)));
-    const py = Math.max(0, Math.min(height - 1, Math.round(y)));
-    return (binary[py * width + px] ?? 255) === 0;
+  const readDark = (x: number, y: number): boolean | null => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const px = Math.round(x);
+    const py = Math.round(y);
+    if (px < 0 || px >= width || py < 0 || py >= height) return null;
+    return binary[py * width + px] === 0;
   };
 
   const correspondences: ExtraCorrespondence[] = [];
@@ -57,7 +76,7 @@ export const locateAlignmentPatternCorrespondences = (
       }
 
       const basis = localBasis(resolution, moduleRow, moduleCol);
-      const best = searchAlignmentCenter(basis, isDark);
+      const best = searchAlignmentCenter(basis, readDark);
       if (best === null) continue;
 
       correspondences.push({
@@ -74,15 +93,23 @@ export const locateAlignmentPatternCorrespondences = (
 
 const searchAlignmentCenter = (
   basis: Basis,
-  isDark: (x: number, y: number) => boolean,
+  readDark: (x: number, y: number) => boolean | null,
 ): ScoredPoint | null => {
-  const radius = Math.max(3, Math.min(24, Math.round(basis.moduleSize * 2.5)));
+  const radius = Math.max(
+    MIN_ALIGNMENT_SEARCH_RADIUS,
+    Math.min(
+      MAX_ALIGNMENT_SEARCH_RADIUS,
+      Math.round(basis.moduleSize * ALIGNMENT_SEARCH_RADIUS_MODULES),
+    ),
+  );
+
   let best: ScoredPoint | null = null;
-  for (let dy = -radius; dy <= radius; dy += 1) {
-    for (let dx = -radius; dx <= radius; dx += 1) {
-      const x = basis.center.x + dx;
-      const y = basis.center.y + dy;
-      const score = scoreAlignmentAt(x, y, basis, isDark);
+  for (let deltaY = -radius; deltaY <= radius; deltaY += 1) {
+    for (let deltaX = -radius; deltaX <= radius; deltaX += 1) {
+      const x = basis.center.x + deltaX;
+      const y = basis.center.y + deltaY;
+      const score = scoreAlignmentAt(x, y, basis, readDark);
+      if (score === null) continue;
       if (best === null || score > best.score) {
         best = { x, y, score };
       }
@@ -90,23 +117,22 @@ const searchAlignmentCenter = (
   }
 
   if (best === null) return null;
-  const minScore = MAX_ALIGNMENT_SCORE * MIN_ALIGNMENT_SCORE_RATIO;
-  if (best.score < minScore) return null;
+  if (best.score < MAX_ALIGNMENT_SCORE * MIN_ALIGNMENT_SCORE_RATIO) return null;
 
-  return refineAlignmentCenter(best, basis, isDark);
+  return refineAlignmentCenter(best, basis, readDark);
 };
 
 const refineAlignmentCenter = (
   coarse: ScoredPoint,
   basis: Basis,
-  isDark: (x: number, y: number) => boolean,
+  readDark: (x: number, y: number) => boolean | null,
 ): ScoredPoint => {
   let current = coarse;
   for (const step of [0.5, 0.25] as const) {
     let improved = true;
     while (improved) {
       improved = false;
-      for (const [dx, dy] of [
+      for (const [deltaX, deltaY] of [
         [step, 0],
         [-step, 0],
         [0, step],
@@ -116,15 +142,12 @@ const refineAlignmentCenter = (
         [-step, step],
         [-step, -step],
       ] as const) {
-        const candidate = {
-          x: current.x + dx,
-          y: current.y + dy,
-          score: scoreAlignmentAt(current.x + dx, current.y + dy, basis, isDark),
-        };
-        if (candidate.score > current.score) {
-          current = candidate;
-          improved = true;
-        }
+        const nextX = current.x + deltaX;
+        const nextY = current.y + deltaY;
+        const nextScore = scoreAlignmentAt(nextX, nextY, basis, readDark);
+        if (nextScore === null || nextScore <= current.score) continue;
+        current = { x: nextX, y: nextY, score: nextScore };
+        improved = true;
       }
     }
   }
@@ -135,13 +158,15 @@ const scoreAlignmentAt = (
   centerX: number,
   centerY: number,
   basis: Basis,
-  isDark: (x: number, y: number) => boolean,
-): number => {
+  readDark: (x: number, y: number) => boolean | null,
+): number | null => {
   let score = 0;
   for (const cell of ALIGNMENT_CELL_WEIGHTS) {
     const x = centerX + cell.moduleCol * basis.u.x + cell.moduleRow * basis.v.x;
     const y = centerY + cell.moduleCol * basis.u.y + cell.moduleRow * basis.v.y;
-    score += isDark(x, y) === cell.expectDark ? cell.weight : -cell.weight;
+    const observed = readDark(x, y);
+    if (observed === null) return null;
+    score += observed === cell.expectDark ? cell.weight : -cell.weight;
   }
   return score;
 };
@@ -153,18 +178,23 @@ const localBasis = (resolution: GridResolution, moduleRow: number, moduleCol: nu
   const up = resolution.samplePoint(Math.max(0, moduleRow - 1), moduleCol);
   const down = resolution.samplePoint(Math.min(resolution.size - 1, moduleRow + 1), moduleCol);
 
-  const u =
-    moduleCol === 0
-      ? { x: right.x - center.x, y: right.y - center.y }
-      : moduleCol === resolution.size - 1
-        ? { x: center.x - left.x, y: center.y - left.y }
-        : { x: (right.x - left.x) / 2, y: (right.y - left.y) / 2 };
-  const v =
-    moduleRow === 0
-      ? { x: down.x - center.x, y: down.y - center.y }
-      : moduleRow === resolution.size - 1
-        ? { x: center.x - up.x, y: center.y - up.y }
-        : { x: (down.x - up.x) / 2, y: (down.y - up.y) / 2 };
+  let u: { x: number; y: number };
+  if (moduleCol === 0) {
+    u = { x: right.x - center.x, y: right.y - center.y };
+  } else if (moduleCol === resolution.size - 1) {
+    u = { x: center.x - left.x, y: center.y - left.y };
+  } else {
+    u = { x: (right.x - left.x) / 2, y: (right.y - left.y) / 2 };
+  }
+
+  let v: { x: number; y: number };
+  if (moduleRow === 0) {
+    v = { x: down.x - center.x, y: down.y - center.y };
+  } else if (moduleRow === resolution.size - 1) {
+    v = { x: center.x - up.x, y: center.y - up.y };
+  } else {
+    v = { x: (down.x - up.x) / 2, y: (down.y - up.y) / 2 };
+  }
 
   return {
     center,
@@ -174,18 +204,8 @@ const localBasis = (resolution: GridResolution, moduleRow: number, moduleCol: nu
   };
 };
 
-function buildAlignmentCellWeights(): readonly {
-  readonly moduleRow: number;
-  readonly moduleCol: number;
-  readonly expectDark: boolean;
-  readonly weight: number;
-}[] {
-  const cells: Array<{
-    readonly moduleRow: number;
-    readonly moduleCol: number;
-    readonly expectDark: boolean;
-    readonly weight: number;
-  }> = [];
+function buildAlignmentCellWeights(): readonly AlignmentCell[] {
+  const cells: AlignmentCell[] = [];
 
   for (let moduleRow = -2; moduleRow <= 2; moduleRow += 1) {
     for (let moduleCol = -2; moduleCol <= 2; moduleCol += 1) {
@@ -193,7 +213,13 @@ function buildAlignmentCellWeights(): readonly {
       const center = moduleRow === 0 && moduleCol === 0;
       const expectDark = outerRing || center;
       const manhattan = Math.abs(moduleRow) + Math.abs(moduleCol);
-      const weight = center ? 4 : outerRing ? (manhattan === 4 ? 2.5 : 2) : 1.5;
+      const weight = center
+        ? ALIGNMENT_CENTER_WEIGHT
+        : outerRing
+          ? manhattan === 4
+            ? ALIGNMENT_OUTER_CORNER_WEIGHT
+            : ALIGNMENT_OUTER_EDGE_WEIGHT
+          : ALIGNMENT_INNER_WEIGHT;
       cells.push({ moduleRow, moduleCol, expectDark, weight });
     }
   }

@@ -47,11 +47,9 @@ export const decodeGrid = async (input: DecodeGridInput): Promise<DecodeGridResu
  */
 export const scanFrame = async (
   input: ScanFrameInput,
-  // Options are accepted for API stability but not yet forwarded to the pipeline.
-  // Behavioral overrides (signal, maxCandidates, debug) will be wired in a future slice.
-  _options?: ScanOptions,
+  options?: ScanOptions,
 ): Promise<readonly ScanResult[]> => {
-  return runEffect(scanFrameEffect(input));
+  return runEffect(scanFrameEffect(input, options));
 };
 
 /**

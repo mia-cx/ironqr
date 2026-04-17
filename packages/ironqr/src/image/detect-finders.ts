@@ -1,9 +1,14 @@
 import { otsuBinarize } from './binarize.js';
-import { collectComponentStats, labelConnectedComponents, type ComponentStats } from './components.js';
+import {
+  type ComponentStats,
+  collectComponentStats,
+  labelConnectedComponents,
+} from './components.js';
 import type { FinderCandidate } from './detect.js';
 import { detectFinderCandidatePool } from './detect.js';
 import { detectFinderCandidatesFlood } from './detect-flood.js';
 import type { OklabContrastField, OklabVector } from './oklab.js';
+import { assertImagePlaneLength } from './validation.js';
 
 interface ModuleBlob extends ComponentStats {
   readonly radius: number;
@@ -35,18 +40,53 @@ interface ScoredHypothesis extends AffineHypothesis {
   readonly score: number;
 }
 
-const FINDER_DARK_CELLS = buildCells((row, col) =>
-  row === 0 || row === 6 || col === 0 || col === 6 || (row >= 2 && row <= 4 && col >= 2 && col <= 4),
+const MATCHER_MAX_RESULTS = 32;
+const MATCHER_DUPLICATE_RADIUS = 1.2;
+const MATCHER_MAX_BLOB_ASPECT = 2.5;
+const MATCHER_MIN_BLOB_FILL = 0.12;
+const MATCHER_MAX_BLOBS = 600;
+const MATCHER_MAX_SEEDS = 160;
+const MATCHER_MAX_HYPOTHESES_PER_SEED = 48;
+const MATCHER_MAX_BLOB_BASES = 8;
+const MATCHER_MAX_NEAREST_BLOBS = 6;
+const MATCHER_MIN_BLOB_DUPLICATE_RADIUS = 0.45;
+const MATCHER_SEED_DUPLICATE_RADIUS = 2;
+const MATCHER_MIN_AXIS_ANGLE = 40;
+const MATCHER_MAX_AXIS_ANGLE = 140;
+const MATCHER_MAX_AXIS_RATIO = 1.7;
+const MATCHER_REFINEMENT_SCALE_DELTA = 0.15;
+const MATCHER_REFINEMENT_PASSES = 3;
+const MATCHER_STALLED_STEP_DECAY = 0.5;
+const MATCHER_IMPROVED_STEP_DECAY = 0.6;
+const MATCHER_MIN_DETERMINANT_RATIO = 0.25;
+const MATCHER_MIN_AXIS_LENGTH = 0.5;
+const MATCHER_MIN_SCORE = 2.5;
+const MATCHER_ASPECT_PENALTY_WEIGHT = 0.7;
+const MATCHER_SKEW_PENALTY_WEIGHT = 0.5;
+
+const FINDER_DARK_CELLS = buildCells(
+  (row, col) =>
+    row === 0 ||
+    row === 6 ||
+    col === 0 ||
+    col === 6 ||
+    (row >= 2 && row <= 4 && col >= 2 && col <= 4),
 );
-const FINDER_LIGHT_CELLS = buildCells((row, col) =>
-  row >= 1 && row <= 5 && col >= 1 && col <= 5 && !(row >= 2 && row <= 4 && col >= 2 && col <= 4),
+const FINDER_LIGHT_CELLS = buildCells(
+  (row, col) =>
+    row >= 1 && row <= 5 && col >= 1 && col <= 5 && !(row >= 2 && row <= 4 && col >= 2 && col <= 4),
 );
 const FINDER_CENTER_CELLS = buildCells((row, col) => row >= 2 && row <= 4 && col >= 2 && col <= 4);
 const FINDER_OUTER_CELLS = buildCells(
   (row, col) => row === 0 || row === 6 || col === 0 || col === 6,
 );
 const FINDER_QUIET_CELLS = buildCells(
-  (row, col) => row >= -1 && row <= 7 && col >= -1 && col <= 7 && !(row >= 0 && row <= 6 && col >= 0 && col <= 6),
+  (row, col) =>
+    row >= -1 &&
+    row <= 7 &&
+    col >= -1 &&
+    col <= 7 &&
+    !(row >= 0 && row <= 6 && col >= 0 && col <= 6),
   -1,
   7,
 );
@@ -64,6 +104,19 @@ export const detectFinderCandidatesMatcher = (
   height: number,
   contrast: OklabContrastField,
 ): FinderCandidate[] => {
+  assertImagePlaneLength(binary.length, width, height, 'detectFinderCandidatesMatcher(binary)');
+  assertImagePlaneLength(
+    contrast.magnitude.length,
+    contrast.width,
+    contrast.height,
+    'detectFinderCandidatesMatcher(contrast)',
+  );
+  if (contrast.width !== width || contrast.height !== height) {
+    throw new RangeError(
+      `detectFinderCandidatesMatcher: binary is ${width}×${height}, contrast is ${contrast.width}×${contrast.height}.`,
+    );
+  }
+
   const rowScanPool = detectFinderCandidatePool(binary, width, height);
   const floodPool = detectFinderCandidatesFlood(binary, width, height);
   const blobs = collectModuleBlobs(contrast, width, height);
@@ -98,10 +151,12 @@ export const detectFinderCandidatesMatcher = (
   for (const candidate of scored) {
     const duplicate = deduped.some((existing) => {
       const distance = Math.hypot(existing.cx - candidate.cx, existing.cy - candidate.cy);
-      return distance < Math.min(existing.moduleSize, candidate.moduleSize) * 1.2;
+      return (
+        distance < Math.min(existing.moduleSize, candidate.moduleSize) * MATCHER_DUPLICATE_RADIUS
+      );
     });
     if (!duplicate) deduped.push(candidate);
-    if (deduped.length >= 32) break;
+    if (deduped.length >= MATCHER_MAX_RESULTS) break;
   }
 
   return deduped;
@@ -137,12 +192,12 @@ const collectModuleBlobs = (
       (blob) =>
         blob.pixelCount >= minPixels &&
         blob.pixelCount <= maxPixels &&
-        blob.aspect <= 2.5 &&
-        blob.fill >= 0.12,
+        blob.aspect <= MATCHER_MAX_BLOB_ASPECT &&
+        blob.fill >= MATCHER_MIN_BLOB_FILL,
     );
 
   blobs.sort((a, b) => b.pixelCount * b.fill - a.pixelCount * a.fill);
-  return blobs.slice(0, 600);
+  return blobs.slice(0, MATCHER_MAX_BLOBS);
 };
 
 const collectSeeds = (
@@ -190,7 +245,7 @@ const collectSeeds = (
   }
 
   seeds.sort((a, b) => b.moduleSize - a.moduleSize);
-  return dedupeSeeds(seeds).slice(0, 160);
+  return dedupeSeeds(seeds).slice(0, MATCHER_MAX_SEEDS);
 };
 
 const estimateBlobModuleSize = (blob: ModuleBlob, blobs: readonly ModuleBlob[]): number | null => {
@@ -203,7 +258,7 @@ const estimateBlobModuleSize = (blob: ModuleBlob, blobs: readonly ModuleBlob[]):
   }
   if (distances.length === 0) return null;
   distances.sort((a, b) => a - b);
-  return median(distances.slice(0, 6));
+  return median(distances.slice(0, MATCHER_MAX_NEAREST_BLOBS));
 };
 
 const dedupeSeeds = (seeds: readonly FinderSeed[]): FinderSeed[] => {
@@ -211,7 +266,10 @@ const dedupeSeeds = (seeds: readonly FinderSeed[]): FinderSeed[] => {
   for (const seed of seeds) {
     const duplicate = deduped.some((existing) => {
       const distance = Math.hypot(existing.cx - seed.cx, existing.cy - seed.cy);
-      const thresholdFactor = seed.source === 'blob' && existing.source === 'blob' ? 0.45 : 2;
+      const thresholdFactor =
+        seed.source === 'blob' && existing.source === 'blob'
+          ? MATCHER_MIN_BLOB_DUPLICATE_RADIUS
+          : MATCHER_SEED_DUPLICATE_RADIUS;
       return distance < Math.min(existing.moduleSize, seed.moduleSize) * thresholdFactor;
     });
     if (!duplicate) deduped.push(seed);
@@ -219,7 +277,10 @@ const dedupeSeeds = (seeds: readonly FinderSeed[]): FinderSeed[] => {
   return deduped;
 };
 
-const buildHypotheses = (seed: FinderSeed, blobs: readonly ModuleBlob[]): readonly AffineHypothesis[] => {
+const buildHypotheses = (
+  seed: FinderSeed,
+  blobs: readonly ModuleBlob[],
+): readonly AffineHypothesis[] => {
   const hypotheses: AffineHypothesis[] = [];
 
   if (seed.axisU && seed.axisV) {
@@ -236,13 +297,13 @@ const buildHypotheses = (seed: FinderSeed, blobs: readonly ModuleBlob[]): readon
   if (seed.source === 'blob') {
     const blobBases = blobBasisHypotheses(seed, blobs);
     if (blobBases.length > 0) {
-      hypotheses.push(...recenterBlobHypotheses(seed, blobBases.slice(0, 8)));
-      return hypotheses.slice(0, 48);
+      hypotheses.push(...recenterBlobHypotheses(seed, blobBases.slice(0, MATCHER_MAX_BLOB_BASES)));
+      return hypotheses.slice(0, MATCHER_MAX_HYPOTHESES_PER_SEED);
     }
   }
 
   hypotheses.push(...orthogonalBank(seed.cx, seed.cy, seed.moduleSize));
-  return hypotheses.slice(0, 48);
+  return hypotheses.slice(0, MATCHER_MAX_HYPOTHESES_PER_SEED);
 };
 
 const orthogonalBank = (cx: number, cy: number, moduleSize: number): AffineHypothesis[] => {
@@ -256,8 +317,8 @@ const orthogonalBank = (cx: number, cy: number, moduleSize: number): AffineHypot
     for (const aspect of aspectRatios) {
       const ux = cos * moduleSize * aspect;
       const uy = sin * moduleSize * aspect;
-      const baseVx = -sin * moduleSize / aspect;
-      const baseVy = cos * moduleSize / aspect;
+      const baseVx = (-sin * moduleSize) / aspect;
+      const baseVy = (cos * moduleSize) / aspect;
       for (const shear of shearFactors) {
         hypotheses.push({
           cx,
@@ -273,7 +334,10 @@ const orthogonalBank = (cx: number, cy: number, moduleSize: number): AffineHypot
   return hypotheses;
 };
 
-const blobBasisHypotheses = (seed: FinderSeed, blobs: readonly ModuleBlob[]): AffineHypothesis[] => {
+const blobBasisHypotheses = (
+  seed: FinderSeed,
+  blobs: readonly ModuleBlob[],
+): AffineHypothesis[] => {
   const vectors = blobs
     .map((blob) => ({
       x: blob.centroidX - seed.cx,
@@ -292,7 +356,13 @@ const blobBasisHypotheses = (seed: FinderSeed, blobs: readonly ModuleBlob[]): Af
       if (!u || !v) continue;
       const angle = angleBetween(u.x, u.y, v.x, v.y);
       const ratio = Math.max(u.d, v.d) / Math.max(1e-6, Math.min(u.d, v.d));
-      if (angle < 40 || angle > 140 || ratio > 1.7) continue;
+      if (
+        angle < MATCHER_MIN_AXIS_ANGLE ||
+        angle > MATCHER_MAX_AXIS_ANGLE ||
+        ratio > MATCHER_MAX_AXIS_RATIO
+      ) {
+        continue;
+      }
       hypotheses.push({ cx: seed.cx, cy: seed.cy, ux: u.x, uy: u.y, vx: v.x, vy: v.y });
     }
   }
@@ -342,7 +412,7 @@ const refineHypothesis = (
   if (current === null) return null;
 
   let step = 1;
-  for (let pass = 0; pass < 3; pass += 1) {
+  for (let pass = 0; pass < MATCHER_REFINEMENT_PASSES; pass += 1) {
     let improved = false;
     const candidates: AffineHypothesis[] = [
       current,
@@ -370,19 +440,35 @@ const refineHypothesis = (
         cx: current.cx - (current.ux - current.vx) * step,
         cy: current.cy - (current.uy - current.vy) * step,
       },
-      { ...current, ux: current.ux * (1 + step * 0.15), uy: current.uy * (1 + step * 0.15) },
-      { ...current, ux: current.ux * (1 - step * 0.15), uy: current.uy * (1 - step * 0.15) },
-      { ...current, vx: current.vx * (1 + step * 0.15), vy: current.vy * (1 + step * 0.15) },
-      { ...current, vx: current.vx * (1 - step * 0.15), vy: current.vy * (1 - step * 0.15) },
       {
         ...current,
-        vx: current.vx + current.ux * step * 0.15,
-        vy: current.vy + current.uy * step * 0.15,
+        ux: current.ux * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+        uy: current.uy * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
       },
       {
         ...current,
-        vx: current.vx - current.ux * step * 0.15,
-        vy: current.vy - current.uy * step * 0.15,
+        ux: current.ux * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+        uy: current.uy * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+      },
+      {
+        ...current,
+        vx: current.vx * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+        vy: current.vy * (1 + step * MATCHER_REFINEMENT_SCALE_DELTA),
+      },
+      {
+        ...current,
+        vx: current.vx * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+        vy: current.vy * (1 - step * MATCHER_REFINEMENT_SCALE_DELTA),
+      },
+      {
+        ...current,
+        vx: current.vx + current.ux * step * MATCHER_REFINEMENT_SCALE_DELTA,
+        vy: current.vy + current.uy * step * MATCHER_REFINEMENT_SCALE_DELTA,
+      },
+      {
+        ...current,
+        vx: current.vx - current.ux * step * MATCHER_REFINEMENT_SCALE_DELTA,
+        vy: current.vy - current.uy * step * MATCHER_REFINEMENT_SCALE_DELTA,
       },
     ];
 
@@ -393,8 +479,8 @@ const refineHypothesis = (
         improved = true;
       }
     }
-    if (!improved) step *= 0.5;
-    else step *= 0.6;
+    if (!improved) step *= MATCHER_STALLED_STEP_DECAY;
+    else step *= MATCHER_IMPROVED_STEP_DECAY;
   }
 
   return current;
@@ -408,13 +494,14 @@ const scoreHypothesis = (
   const vLen = Math.hypot(hypothesis.vx, hypothesis.vy);
   if (uLen < 1 || vLen < 1) return null;
   const det = Math.abs(hypothesis.ux * hypothesis.vy - hypothesis.uy * hypothesis.vx);
-  if (det < uLen * vLen * 0.25) return null;
+  if (det < uLen * vLen * MATCHER_MIN_DETERMINANT_RATIO) return null;
 
   const centerMean = meanVectors(FINDER_CENTER_CELLS, hypothesis, contrast);
   const outerMean = meanVectors(FINDER_OUTER_CELLS, hypothesis, contrast);
   const gapMean = meanVectors(FINDER_LIGHT_CELLS, hypothesis, contrast);
   const quietMean = meanVectors(FINDER_QUIET_CELLS, hypothesis, contrast, true);
-  if (centerMean === null || outerMean === null || gapMean === null || quietMean === null) return null;
+  if (centerMean === null || outerMean === null || gapMean === null || quietMean === null)
+    return null;
 
   const darkMean = {
     l: (centerMean.l * 2 + outerMean.l) / 3,
@@ -433,7 +520,7 @@ const scoreHypothesis = (
     b: darkMean.b - lightMean.b,
   };
   const axisLength = Math.hypot(axis.l, axis.a, axis.b);
-  if (axisLength < 0.5) return null;
+  if (axisLength < MATCHER_MIN_AXIS_LENGTH) return null;
   const unit = { l: axis.l / axisLength, a: axis.a / axisLength, b: axis.b / axisLength };
 
   const centerProjection = dot(centerMean, unit);
@@ -443,15 +530,17 @@ const scoreHypothesis = (
   if (centerProjection <= gapProjection || outerProjection <= gapProjection) return null;
 
   const aspectPenalty = Math.abs(Math.log(uLen / vLen));
-  const skewPenalty = Math.abs((hypothesis.ux * hypothesis.vx + hypothesis.uy * hypothesis.vy) / (uLen * vLen));
+  const skewPenalty = Math.abs(
+    (hypothesis.ux * hypothesis.vx + hypothesis.uy * hypothesis.vy) / (uLen * vLen),
+  );
   const score =
     (centerProjection - gapProjection) * 3 +
     (outerProjection - gapProjection) * 2 +
     (gapProjection - quietProjection) +
     axisLength * 1.5 -
-    aspectPenalty * 0.7 -
-    skewPenalty * 0.5;
-  if (score < 2.5) return null;
+    aspectPenalty * MATCHER_ASPECT_PENALTY_WEIGHT -
+    skewPenalty * MATCHER_SKEW_PENALTY_WEIGHT;
+  if (score < MATCHER_MIN_SCORE) return null;
 
   return { ...hypothesis, score };
 };

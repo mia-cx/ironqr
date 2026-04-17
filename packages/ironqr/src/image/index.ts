@@ -1,6 +1,6 @@
 export * from './binarize.js';
-export * from './detect-alignment.js';
 export * from './detect.js';
+export * from './detect-alignment.js';
 export { detectFinderCandidatesMatcher } from './detect-finders.js';
 export { detectFinderCandidatesFlood } from './detect-flood.js';
 export * from './geometry.js';

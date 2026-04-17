@@ -21,6 +21,8 @@ export interface FinderCandidate {
   readonly source?: 'row-scan' | 'flood' | 'matcher';
 }
 
+export type FinderTriple = readonly [FinderCandidate, FinderCandidate, FinderCandidate];
+
 /**
  * Scans a binarized image for QR finder pattern candidates.
  *
@@ -38,7 +40,7 @@ export const detectFinderPatterns = (
   width: number,
   height: number,
 ): FinderCandidate[] => {
-  return pickThreeOrPool(detectFinderCandidatePool(binary, width, height) as FinderCandidate[]);
+  return pickThreeOrPool(detectFinderCandidatePool(binary, width, height));
 };
 
 /**
@@ -172,10 +174,10 @@ const reduceCandidatePool = (candidates: readonly FinderCandidate[]): FinderCand
  * Default 3-finder API: returns the single best triple as the first 3 entries
  * of the result, or the pool itself if too few candidates exist to triple-pick.
  */
-const pickThreeOrPool = (pool: FinderCandidate[]): FinderCandidate[] => {
-  if (pool.length < 3) return pool;
+const pickThreeOrPool = (pool: readonly FinderCandidate[]): FinderCandidate[] => {
+  if (pool.length < 3) return [...pool];
   const best = pickBestTriple(pool);
-  return best ?? pool.slice(0, 3);
+  return best ? [...best] : pool.slice(0, 3);
 };
 
 /**
@@ -189,24 +191,14 @@ const pickThreeOrPool = (pool: FinderCandidate[]): FinderCandidate[] => {
 export const findBestFinderTriples = (
   finders: readonly FinderCandidate[],
   k: number,
-): readonly (readonly FinderCandidate[])[] => {
+): readonly FinderTriple[] => {
   if (finders.length < 3) return [];
-  const scored: { triple: FinderCandidate[]; score: number }[] = [];
-  for (let i = 0; i < finders.length - 2; i += 1) {
-    for (let j = i + 1; j < finders.length - 1; j += 1) {
-      for (let l = j + 1; l < finders.length; l += 1) {
-        const fa = finders[i];
-        const fb = finders[j];
-        const fc = finders[l];
-        if (!fa || !fb || !fc) continue;
-        const score = scoreTriple(fa, fb, fc);
-        if (score === null) continue;
-        scored.push({ triple: [fa, fb, fc], score });
-      }
-    }
-  }
-  scored.sort((a, b) => a.score - b.score);
-  return scored.slice(0, k).map((s) => s.triple);
+  const limit = Number.isFinite(k) ? Math.max(0, Math.trunc(k)) : 0;
+  if (limit === 0) return [];
+
+  return scoreFinderTriples(finders)
+    .slice(0, limit)
+    .map((entry) => entry.triple);
 };
 
 /**
@@ -220,24 +212,8 @@ export const findBestFinderTriples = (
  *
  * Score = module-size variance + length asymmetry + angle penalty. Lower wins.
  */
-const pickBestTriple = (pool: readonly FinderCandidate[]): FinderCandidate[] | null => {
-  let best: { triple: FinderCandidate[]; score: number } | null = null;
-  for (let i = 0; i < pool.length - 2; i += 1) {
-    for (let j = i + 1; j < pool.length - 1; j += 1) {
-      for (let k = j + 1; k < pool.length; k += 1) {
-        const fa = pool[i];
-        const fb = pool[j];
-        const fc = pool[k];
-        if (!fa || !fb || !fc) continue;
-        const score = scoreTriple(fa, fb, fc);
-        if (score === null) continue;
-        if (best === null || score < best.score) {
-          best = { triple: [fa, fb, fc], score };
-        }
-      }
-    }
-  }
-  return best?.triple ?? null;
+const pickBestTriple = (pool: readonly FinderCandidate[]): FinderTriple | null => {
+  return findBestFinderTriples(pool, 1)[0] ?? null;
 };
 
 /** Returns an L-shape consistency score for the triple, or null when implausible. */
@@ -332,8 +308,29 @@ const scoreTriple = (
   return legAsymmetry * 2 + hypotenuseError * 2 + sizeError + versionError * 4;
 };
 
+const scoreFinderTriples = (
+  pool: readonly FinderCandidate[],
+): readonly { readonly triple: FinderTriple; readonly score: number }[] => {
+  const scored: Array<{ readonly triple: FinderTriple; readonly score: number }> = [];
+  for (let i = 0; i < pool.length - 2; i += 1) {
+    for (let j = i + 1; j < pool.length - 1; j += 1) {
+      for (let k = j + 1; k < pool.length; k += 1) {
+        const fa = pool[i];
+        const fb = pool[j];
+        const fc = pool[k];
+        if (!fa || !fb || !fc) continue;
+        const score = scoreTriple(fa, fb, fc);
+        if (score === null) continue;
+        scored.push({ triple: [fa, fb, fc], score });
+      }
+    }
+  }
+  scored.sort((left, right) => left.score - right.score);
+  return scored;
+};
+
 const pointDist = (ax: number, ay: number, bx: number, by: number): number => {
-  return Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2);
+  return Math.hypot(bx - ax, by - ay);
 };
 
 /**
