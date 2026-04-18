@@ -26,7 +26,6 @@ import { sampleGrid } from './sample.js';
 const DEFAULT_MAX_CANDIDATES = 8;
 const MAX_TRIPLE_MULTIPLIER = 4;
 const MERGED_POOL_DUPLICATE_RADIUS = 3;
-const CONFIDENCE_BASELINE = 0.9;
 
 /**
  * Builds the single-frame QR scanning pipeline as an Effect program.
@@ -182,7 +181,7 @@ const tryDecodeResolution = (
 
     return {
       payload: decoded.payload,
-      confidence: CONFIDENCE_BASELINE,
+      confidence: decoded.confidence,
       version: decoded.version,
       errorCorrectionLevel: decoded.errorCorrectionLevel,
       bounds: resolution.bounds,

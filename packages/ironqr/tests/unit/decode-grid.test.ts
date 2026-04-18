@@ -5,6 +5,8 @@ import {
   buildDataModulePositions,
   buildFunctionModuleMask,
   buildVersionInfoCodeword,
+  FORMAT_INFO_FIRST_COPY_POSITIONS,
+  getFormatInfoSecondCopyPositions,
   getRemainderBits,
   getVersionBlockInfo,
 } from '../../src/qr/index.js';
@@ -56,6 +58,26 @@ const buildFnc1SecondPositionGrid = (): boolean[][] => {
   appendBits(bits, 0x41, 8); // application indicator
   bits.push(...alphanumericBits('AB'));
   return buildVersion1Grid(finalizeVersion1DataCodewords(bits, 'M'), 'M', 0);
+};
+
+const flipFormatBits = (grid: boolean[][], count: number): boolean[][] => {
+  const corrupted = grid.map((row) => row.slice());
+  const secondCopyPositions = getFormatInfoSecondCopyPositions(grid.length);
+
+  for (let index = 0; index < count; index += 1) {
+    const first = FORMAT_INFO_FIRST_COPY_POSITIONS[index];
+    const second = secondCopyPositions[index];
+    if (!first || !second) continue;
+
+    const [firstRow, firstCol] = first;
+    const [secondRow, secondCol] = second;
+    const firstGridRow = corrupted[firstRow];
+    const secondGridRow = corrupted[secondRow];
+    if (firstGridRow) firstGridRow[firstCol] = !firstGridRow[firstCol];
+    if (secondGridRow) secondGridRow[secondCol] = !secondGridRow[secondCol];
+  }
+
+  return corrupted;
 };
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
@@ -127,6 +149,21 @@ describe('decodeGrid', () => {
       expect(result.payload.text, `mask ${maskPattern}`).toBe('HI');
       expect(result.errorCorrectionLevel, `mask ${maskPattern}`).toBe('M');
     }
+  });
+
+  it('scales confidence from the winning format-info hamming distance', async () => {
+    const dataCodewords = finalizeVersion1DataCodewords(alphanumericBits('HI'), 'M');
+    const cleanGrid = buildVersion1Grid(dataCodewords, 'M', 0);
+    const oneBitOff = flipFormatBits(cleanGrid, 1);
+    const threeBitsOff = flipFormatBits(cleanGrid, 3);
+
+    const clean = await decodeGrid({ grid: cleanGrid });
+    const correctedOneBit = await decodeGrid({ grid: oneBitOff });
+    const correctedThreeBits = await decodeGrid({ grid: threeBitsOff });
+
+    expect(clean.confidence).toBe(1);
+    expect(correctedOneBit.confidence).toBeCloseTo(14 / 15, 8);
+    expect(correctedThreeBits.confidence).toBeCloseTo(12 / 15, 8);
   });
 
   // ── AC3: EC level coverage ────────────────────────────────────────────────

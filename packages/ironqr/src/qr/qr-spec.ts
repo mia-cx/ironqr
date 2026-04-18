@@ -410,7 +410,7 @@ export const buildFunctionModuleMask = (size: number, version: number): boolean[
  * Decodes the QR format information from either embedded copy.
  *
  * @param matrix - QR module matrix including function modules.
- * @returns The decoded error correction level and mask pattern.
+ * @returns The decoded error correction level, mask pattern, and winning Hamming distance.
  * @throws {ScannerError} Thrown when neither copy can be decoded within QR tolerance.
  */
 export const decodeFormatInfo = (
@@ -418,6 +418,7 @@ export const decodeFormatInfo = (
 ): {
   readonly errorCorrectionLevel: QrErrorCorrectionLevel;
   readonly maskPattern: number;
+  readonly hammingDistance: number;
 } => {
   const firstCopyPositions = FORMAT_INFO_FIRST_COPY_POSITIONS;
   const secondCopyPositions = getFormatInfoSecondCopyPositions(matrix.length);
@@ -448,7 +449,7 @@ export const decodeFormatInfo = (
     throw new ScannerError('decode_failed', 'Could not decode QR format information.');
   }
 
-  return { errorCorrectionLevel: bestEcl, maskPattern: bestMask };
+  return { errorCorrectionLevel: bestEcl, maskPattern: bestMask, hammingDistance: bestDistance };
 };
 
 /**
