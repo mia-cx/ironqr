@@ -238,10 +238,10 @@ export const getFormatInfoSecondCopyPositions = (
 export const getVersionInfoFirstCopyPositions = (
   size: number,
 ): readonly (readonly [number, number])[] => {
-  return Array.from(
-    { length: 18 },
-    (_, index) => [Math.floor(index / 3), size - 11 + (index % 3)] as const,
-  );
+  return Array.from({ length: 18 }, (_, index) => {
+    const reversed = 17 - index;
+    return [Math.floor(reversed / 3), size - 11 + (reversed % 3)] as const;
+  });
 };
 
 /**
@@ -253,10 +253,10 @@ export const getVersionInfoFirstCopyPositions = (
 export const getVersionInfoSecondCopyPositions = (
   size: number,
 ): readonly (readonly [number, number])[] => {
-  return Array.from(
-    { length: 18 },
-    (_, index) => [size - 11 + (index % 3), Math.floor(index / 3)] as const,
-  );
+  return Array.from({ length: 18 }, (_, index) => {
+    const reversed = 17 - index;
+    return [size - 11 + (reversed % 3), Math.floor(reversed / 3)] as const;
+  });
 };
 
 /**
@@ -410,7 +410,7 @@ export const buildFunctionModuleMask = (size: number, version: number): boolean[
  * Decodes the QR format information from either embedded copy.
  *
  * @param matrix - QR module matrix including function modules.
- * @returns The decoded error correction level and mask pattern.
+ * @returns The decoded error correction level, mask pattern, and winning Hamming distance.
  * @throws {ScannerError} Thrown when neither copy can be decoded within QR tolerance.
  */
 export const decodeFormatInfo = (
@@ -418,6 +418,7 @@ export const decodeFormatInfo = (
 ): {
   readonly errorCorrectionLevel: QrErrorCorrectionLevel;
   readonly maskPattern: number;
+  readonly hammingDistance: number;
 } => {
   const firstCopyPositions = FORMAT_INFO_FIRST_COPY_POSITIONS;
   const secondCopyPositions = getFormatInfoSecondCopyPositions(matrix.length);
@@ -448,7 +449,7 @@ export const decodeFormatInfo = (
     throw new ScannerError('decode_failed', 'Could not decode QR format information.');
   }
 
-  return { errorCorrectionLevel: bestEcl, maskPattern: bestMask };
+  return { errorCorrectionLevel: bestEcl, maskPattern: bestMask, hammingDistance: bestDistance };
 };
 
 /**

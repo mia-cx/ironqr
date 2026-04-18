@@ -23,6 +23,8 @@ const BIG5_DECODER = new TextDecoder('big5', { fatal: false });
 const GBK_DECODER = new TextDecoder('gbk', { fatal: false });
 const EUC_KR_DECODER = new TextDecoder('euc-kr', { fatal: false });
 
+const FORMAT_INFO_BITS = 15;
+
 /**
  * Decodes a logical QR module grid all the way to a public scan result.
  *
@@ -49,7 +51,7 @@ export const decodeGridLogical = (input: {
 
       const versionFromSize = getVersionFromSize(size);
       const matrix = grid.map((row) => row.slice());
-      const { errorCorrectionLevel, maskPattern } = decodeFormatInfo(matrix);
+      const { errorCorrectionLevel, maskPattern, hammingDistance } = decodeFormatInfo(matrix);
       const decodedVersion = decodeVersionInfo(matrix);
 
       if (decodedVersion !== versionFromSize) {
@@ -85,7 +87,7 @@ export const decodeGridLogical = (input: {
           text: payload.text,
           bytes: payload.bytes,
         },
-        confidence: 1,
+        confidence: formatInfoConfidence(hammingDistance),
         version: versionFromSize,
         errorCorrectionLevel,
         bounds: {
@@ -177,6 +179,10 @@ class BitReader {
  * @param text - Decoded text payload.
  * @returns The inferred payload kind.
  */
+const formatInfoConfidence = (hammingDistance: number): number => {
+  return 1 - hammingDistance / FORMAT_INFO_BITS;
+};
+
 const classifyPayload = (
   text: string,
 ): 'text' | 'url' | 'email' | 'sms' | 'wifi' | 'contact' | 'calendar' | 'binary' | 'unknown' => {
