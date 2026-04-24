@@ -15,7 +15,13 @@ import {
   createGeometryCandidates,
   createTraceCollector,
   createTraceCounter,
+  type FinderEvidenceSummary,
+  generateProposalBatchForView,
   generateProposals,
+  type ProposalGenerationSummary,
+  type ProposalViewBatch,
+  type ProposalViewGenerationOptions,
+  type ProposalViewGenerationSummary,
   type RankedProposalCandidate,
   type RankedScanResult,
   rankProposalCandidates,
@@ -26,6 +32,7 @@ import {
   type ScanRuntimeOptions,
   scanFrameEffect,
   scanFrameRankedEffect,
+  summarizeProposalBatches,
   type TraceCollector,
   type TraceCounter,
   type TraceSink,
@@ -37,6 +44,11 @@ export * from './contracts/index.js';
 export { ScannerError } from './qr/index.js';
 export { ScannerNotImplementedError } from './runtime/index.js';
 export type {
+  FinderEvidenceSummary,
+  ProposalGenerationSummary,
+  ProposalViewBatch,
+  ProposalViewGenerationOptions,
+  ProposalViewGenerationSummary,
   RankedProposalCandidate,
   RankedScanResult,
   ScanFrameOutput,
@@ -52,10 +64,12 @@ export {
   createGeometryCandidates,
   createTraceCollector,
   createTraceCounter,
+  generateProposalBatchForView,
   generateProposals,
   rankProposalCandidates,
   rankProposals,
   runDecodeCascade,
+  summarizeProposalBatches,
 };
 
 /**

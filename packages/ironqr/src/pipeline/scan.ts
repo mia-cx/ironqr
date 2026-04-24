@@ -13,9 +13,10 @@ import {
   generateProposals,
   type ProposalGenerationSummary,
   type ProposalScoreBreakdown,
-  type ProposalViewGenerationSummary,
+  type ProposalViewBatch,
   rankProposalCandidates,
   type ScanProposal,
+  summarizeProposalBatches,
 } from './proposals.js';
 import {
   type ClusterFinishedEvent,
@@ -357,12 +358,12 @@ const scanFrameExecutionOnce = (
 
     const proposalGenerationStartedAt = nowMs();
     const maxProposalsPerView = resolveMaxProposalsPerView(options);
-    const proposalViewSummaries: ProposalViewGenerationSummary[] = [];
+    const proposalBatches: ProposalViewBatch[] = [];
     const generatedProposals = generateProposals(viewBank, {
       ...(maxProposalsPerView === undefined ? {} : { maxProposalsPerView }),
       ...(traceSink === undefined ? {} : { traceSink }),
-      onViewGenerated: (summary) => {
-        proposalViewSummaries.push(summary);
+      onBatchGenerated: (batch) => {
+        proposalBatches.push(batch);
       },
     });
     const proposalGenerationMs = nowMs() - proposalGenerationStartedAt;
@@ -572,11 +573,7 @@ const scanFrameExecutionOnce = (
       proposalBinaryViewIds: uniquePreservingOrder(
         generatedProposals.map((proposal) => proposal.binaryViewId),
       ),
-      proposalGeneration: {
-        viewCount: proposalViewSummaries.length,
-        proposalCount: generatedProposals.length,
-        views: proposalViewSummaries,
-      },
+      proposalGeneration: summarizeProposalBatches(proposalBatches),
     } satisfies ScanExecution;
   });
 };

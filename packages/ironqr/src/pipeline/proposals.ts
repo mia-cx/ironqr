@@ -177,28 +177,43 @@ export interface ProposalGenerationSummary {
   readonly views: readonly ProposalViewGenerationSummary[];
 }
 
+/**
+ * Proposal-generation output for one binary view.
+ */
+export interface ProposalViewBatch {
+  /** Source binary view. */
+  readonly binaryViewId: BinaryViewId;
+  /** Proposals emitted for this binary view. */
+  readonly proposals: readonly ScanProposal[];
+  /** Per-view generation summary. */
+  readonly summary: ProposalViewGenerationSummary;
+}
+
 interface FinderEvidenceDetection {
   readonly evidence: readonly FinderEvidence[];
   readonly summary: FinderEvidenceSummary;
 }
 
-interface ProposalViewGeneration {
-  readonly proposals: readonly ScanProposal[];
-  readonly summary: ProposalViewGenerationSummary;
+/**
+ * Per-view proposal-generation options.
+ */
+export interface ProposalViewGenerationOptions {
+  /** Maximum proposals retained for this binary view. */
+  readonly maxProposalsPerView?: number;
+  /** Optional trace sink. */
+  readonly traceSink?: TraceSink;
 }
 
 /**
  * Proposal-stage configuration.
  */
-export interface ProposalGenerationOptions {
-  /** Maximum ranked proposals retained per binary view. */
-  readonly maxProposalsPerView?: number;
+export interface ProposalGenerationOptions extends ProposalViewGenerationOptions {
   /** Explicit binary views to scan for proposals. Defaults to the prioritized subset. */
   readonly viewIds?: readonly BinaryViewId[];
-  /** Optional trace sink. */
-  readonly traceSink?: TraceSink;
   /** Optional callback receiving one summary per generated proposal view. */
   readonly onViewGenerated?: (summary: ProposalViewGenerationSummary) => void;
+  /** Optional callback receiving one full proposal batch per generated view. */
+  readonly onBatchGenerated?: (batch: ProposalViewBatch) => void;
 }
 
 /**
@@ -212,29 +227,13 @@ export const generateProposals = (
   viewBank: ViewBank,
   options: ProposalGenerationOptions = {},
 ): readonly ScanProposal[] => {
-  const maxPerView = options.maxProposalsPerView ?? DEFAULT_MAX_PROPOSALS_PER_VIEW;
   const proposals: ScanProposal[] = [];
 
   for (const binaryViewId of options.viewIds ?? viewBank.listProposalViewIds()) {
-    const binaryView = viewBank.getBinaryView(binaryViewId);
-    const generatedView = generateProposalsForView(binaryView, maxPerView);
-    options.onViewGenerated?.(generatedView.summary);
-    options.traceSink?.emit({
-      type: 'proposal-view-generated',
-      binaryViewId: generatedView.summary.binaryViewId,
-      rowScanFinderCount: generatedView.summary.finderEvidence.rowScanCount,
-      floodFinderCount: generatedView.summary.finderEvidence.floodCount,
-      matcherFinderCount: generatedView.summary.finderEvidence.matcherCount,
-      dedupedFinderCount: generatedView.summary.finderEvidence.dedupedCount,
-      expensiveDetectorsRan: generatedView.summary.finderEvidence.expensiveDetectorsRan,
-      tripleCount: generatedView.summary.tripleCount,
-      proposalCount: generatedView.summary.proposalCount,
-      durationMs: generatedView.summary.durationMs,
-      detectorDurationMs: generatedView.summary.detectorDurationMs,
-      tripleAssemblyDurationMs: generatedView.summary.tripleAssemblyDurationMs,
-      proposalConstructionDurationMs: generatedView.summary.proposalConstructionDurationMs,
-    });
-    for (const proposal of generatedView.proposals) {
+    const batch = generateProposalBatchForView(viewBank, binaryViewId, options);
+    options.onViewGenerated?.(batch.summary);
+    options.onBatchGenerated?.(batch);
+    for (const proposal of batch.proposals) {
       options.traceSink?.emit({
         type: 'proposal-generated',
         proposalId: proposal.id,
@@ -248,6 +247,42 @@ export const generateProposals = (
   }
 
   return proposals;
+};
+
+/**
+ * Generates proposals for exactly one binary view.
+ *
+ * @param viewBank - Lazy scalar/binary view cache.
+ * @param binaryViewId - Binary view to search.
+ * @param options - Per-view proposal-generation options.
+ * @returns One proposal batch suitable for future streaming frontier scans.
+ */
+export const generateProposalBatchForView = (
+  viewBank: ViewBank,
+  binaryViewId: BinaryViewId,
+  options: ProposalViewGenerationOptions = {},
+): ProposalViewBatch => {
+  const maxPerView = options.maxProposalsPerView ?? DEFAULT_MAX_PROPOSALS_PER_VIEW;
+  const binaryView = viewBank.getBinaryView(binaryViewId);
+  const batch = generateProposalsForView(binaryView, maxPerView);
+  emitProposalViewGenerated(batch.summary, options.traceSink);
+  return batch;
+};
+
+/**
+ * Builds a scan-level summary from proposal-view batches.
+ *
+ * @param batches - Proposal batches in generation order.
+ * @returns Aggregate proposal-generation summary.
+ */
+export const summarizeProposalBatches = (
+  batches: readonly ProposalViewBatch[],
+): ProposalGenerationSummary => {
+  return {
+    viewCount: batches.length,
+    proposalCount: batches.reduce((sum, batch) => sum + batch.proposals.length, 0),
+    views: batches.map((batch) => batch.summary),
+  } satisfies ProposalGenerationSummary;
 };
 
 /**
@@ -346,7 +381,7 @@ export const detectBestFinderEvidence = (
 const generateProposalsForView = (
   binaryView: BinaryView,
   maxPerView: number,
-): ProposalViewGeneration => {
+): ProposalViewBatch => {
   const startedAt = nowMs();
 
   const detectorStartedAt = nowMs();
@@ -365,6 +400,7 @@ const generateProposalsForView = (
   const proposalConstructionDurationMs = nowMs() - proposalConstructionStartedAt;
 
   return {
+    binaryViewId: binaryView.id,
     proposals,
     summary: {
       binaryViewId: binaryView.id,
@@ -376,7 +412,28 @@ const generateProposalsForView = (
       tripleAssemblyDurationMs,
       proposalConstructionDurationMs,
     },
-  } satisfies ProposalViewGeneration;
+  } satisfies ProposalViewBatch;
+};
+
+const emitProposalViewGenerated = (
+  summary: ProposalViewGenerationSummary,
+  traceSink?: TraceSink,
+): void => {
+  traceSink?.emit({
+    type: 'proposal-view-generated',
+    binaryViewId: summary.binaryViewId,
+    rowScanFinderCount: summary.finderEvidence.rowScanCount,
+    floodFinderCount: summary.finderEvidence.floodCount,
+    matcherFinderCount: summary.finderEvidence.matcherCount,
+    dedupedFinderCount: summary.finderEvidence.dedupedCount,
+    expensiveDetectorsRan: summary.finderEvidence.expensiveDetectorsRan,
+    tripleCount: summary.tripleCount,
+    proposalCount: summary.proposalCount,
+    durationMs: summary.durationMs,
+    detectorDurationMs: summary.detectorDurationMs,
+    tripleAssemblyDurationMs: summary.tripleAssemblyDurationMs,
+    proposalConstructionDurationMs: summary.proposalConstructionDurationMs,
+  });
 };
 
 const detectFinderEvidenceWithSummary = (binaryView: BinaryView): FinderEvidenceDetection => {

@@ -55,7 +55,7 @@ createViewBank(image)
   +--> lazy binary views      (otsu / sauvola / hybrid) x (normal / inverted)
   |
   v
-generateProposals() over prioritized proposal-view subset
+generateProposalBatchForView() over prioritized proposal-view subset
   |
   v
 rankProposals() globally
@@ -100,7 +100,7 @@ graph TD
     B --> C["createViewBank"]
     C --> D["lazy scalar views"]
     C --> E["lazy binary views"]
-    E --> F["generateProposals on prioritized proposal views"]
+    E --> F["generateProposalBatchForView on prioritized proposal views"]
     F --> G["rankProposals globally"]
     G --> H["proposal budget slice"]
     H --> I["clusterRankedProposals"]
@@ -203,7 +203,7 @@ Examples from the current ordered subset:
 This is a proposal-generation policy, not a full decode-neighborhood policy.
 
 ## 5. Proposal generation
-`generateProposals(...)` iterates the prioritized proposal views.
+`generateProposals(...)` currently iterates the prioritized proposal views and collects per-view proposal batches. Each batch is produced by `generateProposalBatchForView(...)`, the first-class seam that future streaming scans will consume directly.
 
 For each binary view it:
 1. runs row-scan finder detection
@@ -217,7 +217,7 @@ Proposal kinds currently include:
 - `finder-triple`
 - `quad`
 
-The result of this stage is a global pool of QR candidate explanations, not a winner.
+The result of this stage is a set of `ProposalViewBatch` values that can be flattened into today’s global pool of QR candidate explanations. The batch boundary is intentionally explicit so a future streaming frontier can start judging one view while later views are still generating.
 
 ## 6. Global proposal ranking
 `rankProposalCandidates(...)` scores and sorts all proposals globally, while preserving the cheap initial geometry candidates computed during scoring. The legacy `rankProposals(...)` helper is now a projection over that richer ranked-candidate shape.

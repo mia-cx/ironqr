@@ -4,10 +4,13 @@ import { createNormalizedImage } from '../../src/pipeline/frame.js';
 import { resolveGrid } from '../../src/pipeline/geometry.js';
 import {
   detectBestFinderEvidence,
+  generateProposalBatchForView,
   generateProposals,
   rankProposalCandidates,
+  summarizeProposalBatches,
 } from '../../src/pipeline/proposals.js';
 import { sampleGrid } from '../../src/pipeline/samplers.js';
+import { createTraceCollector } from '../../src/pipeline/trace.js';
 import { createViewBank, otsuBinarize, toGrayscale } from '../../src/pipeline/views.js';
 import { decodeGridLogical } from '../../src/qr/index.js';
 import {
@@ -96,6 +99,26 @@ describe('single-image baseline pipeline (internal modules)', () => {
       'gray:hybrid:inverted',
       'gray:otsu:inverted',
     ]);
+  });
+
+  it('generates a first-class proposal batch for one binary view', () => {
+    const imageData = gridToImageData(buildHiGrid());
+    const bank = createViewBank(createNormalizedImage(imageData));
+    const trace = createTraceCollector();
+    const batch = generateProposalBatchForView(bank, 'gray:otsu:normal', { traceSink: trace });
+    const generated = generateProposals(bank, { viewIds: ['gray:otsu:normal'] });
+    const summary = summarizeProposalBatches([batch]);
+
+    expect(batch.binaryViewId).toBe('gray:otsu:normal');
+    expect(batch.summary.binaryViewId).toBe(batch.binaryViewId);
+    expect(batch.summary.proposalCount).toBe(batch.proposals.length);
+    expect(batch.proposals.length).toBeGreaterThan(0);
+    expect(generated.map((proposal) => proposal.id)).toEqual(
+      batch.proposals.map((proposal) => proposal.id),
+    );
+    expect(summary.viewCount).toBe(1);
+    expect(summary.proposalCount).toBe(batch.proposals.length);
+    expect(trace.events.some((event) => event.type === 'proposal-view-generated')).toBe(true);
   });
 
   it('keeps ranking-time geometry candidates for decode reuse', () => {
