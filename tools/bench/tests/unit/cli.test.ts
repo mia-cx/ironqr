@@ -1,0 +1,22 @@
+import { describe, expect, it } from 'bun:test';
+import { parseArgs } from '../../src/cli.js';
+
+describe('bench cli args', () => {
+  it('keeps ironqr cache enabled by default', () => {
+    const { options } = parseArgs(['accuracy']);
+    expect(options.cacheEnabled).toBe(true);
+    expect(options.ironqrCacheEnabled).toBe(true);
+  });
+
+  it('can disable only the ironqr cache', () => {
+    const { options } = parseArgs(['accuracy', '--no-ironqr-cache']);
+    expect(options.cacheEnabled).toBe(true);
+    expect(options.ironqrCacheEnabled).toBe(false);
+  });
+
+  it('can disable every accuracy cache', () => {
+    const { options } = parseArgs(['accuracy', '--no-cache']);
+    expect(options.cacheEnabled).toBe(false);
+    expect(options.ironqrCacheEnabled).toBe(true);
+  });
+});
