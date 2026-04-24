@@ -13,13 +13,15 @@ Today the main entrypoints are:
 ```ts
 scanFrame(input)                    -> Promise<readonly ScanResult[]>
 scanFrame(input, { observability }) -> Promise<ScanReport>
+scanImage(input)                    -> Promise<readonly ScanResult[]>
+scanImage(input, { observability }) -> Promise<ScanReport>
 scanFrameRanked(input, options?)    -> Promise<readonly RankedScanResult[]>
 decodeGrid(input)                   -> Promise<DecodeGridResult>
 ```
 
-`scanFrame()` is the main public consumer API.
-Without observability it returns plain decoded results.
-With `options.observability`, it returns a `ScanReport` envelope containing result-level and scan-level metadata.
+`scanFrame()` is the main public consumer API. `scanImage()` is the same still-image scanner exposed with an image-oriented name; internally it delegates to `scanFrame()`.
+Without observability these functions return plain decoded results.
+With `options.observability`, they return a `ScanReport` envelope containing result-level and scan-level metadata.
 
 `scanFrameRanked()` still exists as a legacy richer API that includes winning proposal metadata directly.
 
@@ -55,8 +57,9 @@ createViewBank(image)
   +--> lazy binary views      (otsu / sauvola / hybrid) x (normal / inverted)
   |
   v
-for each prioritized proposal view:
+Effect-native ProposalBatchSource over prioritized proposal views
   |
+  +--> cooperative scheduler yield
   +--> generateProposalBatchForView()
   +--> add batch to proposal frontier
   +--> rankProposalCandidates() globally
@@ -72,7 +75,8 @@ for each cluster representative:
   |
   +--> runDecodeCascade()
           |
-          +--> createGeometryCandidates()
+          +--> use ranking-time geometry candidates
+          +--> create any missing seeded geometry candidates
           +--> try decode neighborhood on initial geometry
           +--> refine by fitness
           +--> rescue: alignment refit / corner nudges / version neighborhood
@@ -97,8 +101,10 @@ graph TD
     B --> C["createViewBank"]
     C --> D["lazy scalar views"]
     C --> E["lazy binary views"]
-    E --> F["next prioritized proposal view"]
-    F --> G["generateProposalBatchForView"]
+    E --> Z["Effect ProposalBatchSource"]
+    Z --> F["next prioritized proposal view"]
+    F --> AA["cooperative scheduler yield"]
+    AA --> G["generateProposalBatchForView"]
     G --> H["add to proposal frontier"]
     H --> I["rankProposalCandidates globally"]
     I --> X["proposal budget slice"]
@@ -109,8 +115,9 @@ graph TD
     K -- "fail repeatedly" --> L["kill cluster"]
     K -- "pass" --> M["runDecodeCascade"]
 
-    M --> N["createGeometryCandidates"]
-    N --> O["decode neighborhood on initial geometry"]
+    M --> N["reuse ranking-time geometry candidates"]
+    N --> AB["expand seeded geometry when needed"]
+    AB --> O["decode neighborhood on initial geometry"]
     O --> P["fitness refinement"]
     P --> Q["alignment, corner nudge, version rescue"]
     Q --> R["sampleGrid"]
@@ -128,6 +135,8 @@ graph TD
 
 ## 1. Public boundary
 `scanFrame()` runs one internal Effect-backed scan implementation.
+
+The scan is internally synchronous CPU work, but the proposal-view frontier is consumed through an Effect-native sequential batch source. That source gives the runtime cooperative yield points between proposal-view batches without introducing workers or browser-only scheduling APIs.
 
 That public boundary has two modes:
 - without `observability`: return plain `ScanResult[]`
@@ -214,7 +223,7 @@ For each binary view it:
 
 The primary proposal kind is `finder-triple`. Inferred quad geometry from the same finder evidence is stored as an `inferred-quad` geometry seed on that proposal rather than emitted as a duplicate proposal. The explicit `quad` proposal kind remains available for future detectors that produce independent boundary corners, but finder-derived quads should not double the proposal frontier.
 
-The result of this stage is a growing set of `ProposalViewBatch` values. The batch source is Effect-native and sequential: it yields cooperatively before and after each proposal-view batch, but does not use workers or browser-specific scheduling APIs. For ordinary single-code scans, the frontier can be ranked, clustered, structurally screened, and decoded after early useful batches; if a high-priority view decodes successfully, later proposal views are never generated. Early frontier passes are deliberately capped so hard misses do not repeatedly re-rank and re-cluster the entire frontier after every view. For `allowMultiple: true` and unresolved scans, the scanner continues through the full proposal-view list.
+The result of this stage is a growing set of `ProposalViewBatch` values. The batch source is Effect-native and sequential: it yields cooperatively before and after each proposal-view batch through `ScanScheduler`, but does not use workers or browser-specific scheduling APIs. The default scheduler uses `Effect.yieldNow` at those seams. For ordinary single-code scans, the frontier can be ranked, clustered, structurally screened, and decoded after early useful batches; if a high-priority view decodes successfully, later proposal views are never generated and the batch source is cancelled internally. Early frontier passes are deliberately capped at `4` so hard misses do not repeatedly re-rank and re-cluster the entire frontier after every view. For `allowMultiple: true` and unresolved scans, the scanner continues through the full proposal-view list.
 
 ## 6. Streaming proposal frontier
 After each generated proposal batch, `rankProposalCandidates(...)` scores and sorts the current frontier globally, while preserving the cheap initial geometry candidates computed during scoring. The legacy `rankProposals(...)` helper is now a projection over that richer ranked-candidate shape.
@@ -229,7 +238,7 @@ Current score components include:
 
 This is one of the core architectural changes:
 `ironqr` no longer behaves like a threshold loop.
-It builds many candidates, then spends expensive work on the best ones first. The decode cascade reuses the ranking-time geometry candidates before entering refinement and rescue paths, so the same initial homography work is not repeated for every processed representative.
+It builds many candidates, then spends expensive work on the best ones first. The decode cascade reuses the ranking-time geometry candidates before entering refinement and rescue paths, so the same initial homography work is not repeated for every processed representative. Finder-derived quad hypotheses are also carried as geometry seeds inside the finder-triple proposal, which keeps the search frontier smaller without losing the alternate homography.
 
 ## 7. Proposal budget
 After ranking, the scanner truncates the proposal list to a bounded global budget.
@@ -291,12 +300,13 @@ Current cluster kill rule:
 For a surviving representative, `runDecodeCascade(...)` performs the expensive search.
 
 Search order is roughly:
-1. initial geometry + source/decode-neighborhood views
-2. fitness refinement
-3. alignment-assisted refit
-4. corner nudges
-5. version-neighborhood rescue
-6. version-neighborhood + fitness refinement
+1. ranking-time geometry candidates, including seeded finder/quad hypotheses
+2. source/decode-neighborhood views
+3. fitness refinement
+4. alignment-assisted refit
+5. corner nudges
+6. version-neighborhood rescue
+7. version-neighborhood + fitness refinement
 
 Inside each decode attempt, `decodeGridLogical(...)` now also performs limited header rescue when the sampled grid is close but noisy:
 - ranked near-miss format-info candidates after strict BCH decode fails
@@ -305,7 +315,7 @@ Inside each decode attempt, `decodeGridLogical(...)` now also performs limited h
 This is proposal-local search: once a promising proposal survives screening, the scanner spends most of its budget trying to make that proposal decode before dropping to weaker candidates.
 
 ## 11. Geometry candidates
-The decode cascade begins by creating geometry candidates.
+The decode cascade begins with geometry candidates cached during ranking. If a caller enters the decode cascade without cached candidates, it can still create them from the proposal.
 
 A geometry candidate carries:
 - QR version
@@ -322,6 +332,8 @@ Current geometry modes include:
 - `finder-homography`
 - `center-homography`
 - `quad-homography`
+
+For finder-triple proposals, `finder-homography` and `center-homography` come directly from the finder evidence. `quad-homography` can come from an `inferred-quad` geometry seed on that same proposal, so finder-derived quads no longer create duplicate proposals.
 
 ## 12. Off-image rejection
 Before expensive decode work, geometry is rejected if key projected points fall outside the source image.
