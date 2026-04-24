@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { Effect } from 'effect';
 import { createNormalizedImage } from '../../src/pipeline/frame.js';
-import { resolveGrid } from '../../src/pipeline/geometry.js';
+import { createGeometryCandidates, resolveGrid } from '../../src/pipeline/geometry.js';
 import {
   detectBestFinderEvidence,
   generateProposalBatchForView,
@@ -119,6 +119,23 @@ describe('single-image baseline pipeline (internal modules)', () => {
     expect(summary.viewCount).toBe(1);
     expect(summary.proposalCount).toBe(batch.proposals.length);
     expect(trace.events.some((event) => event.type === 'proposal-view-generated')).toBe(true);
+  });
+
+  it('keeps inferred quad geometry as a seed on the finder-triple proposal', () => {
+    const imageData = gridToImageData(buildHiGrid());
+    const bank = createViewBank(createNormalizedImage(imageData));
+    const batch = generateProposalBatchForView(bank, 'gray:otsu:normal');
+    const proposal = batch.proposals[0];
+
+    expect(proposal?.kind).toBe('finder-triple');
+    if (proposal?.kind !== 'finder-triple') return;
+    expect(proposal.geometrySeeds?.some((seed) => seed.kind === 'inferred-quad')).toBe(true);
+    expect(batch.proposals.some((candidate) => candidate.kind === 'quad')).toBe(false);
+    expect(
+      createGeometryCandidates(proposal).some(
+        (candidate) => candidate.geometryMode === 'quad-homography',
+      ),
+    ).toBe(true);
   });
 
   it('keeps ranking-time geometry candidates for decode reuse', () => {

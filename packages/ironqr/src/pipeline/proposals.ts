@@ -1,4 +1,4 @@
-import type { Point } from '../contracts/geometry.js';
+import type { CornerSet, Point } from '../contracts/geometry.js';
 import {
   candidateVersionsFromFinders,
   createGeometryCandidates,
@@ -13,6 +13,21 @@ const DEFAULT_MAX_PROPOSALS_PER_VIEW = 12;
 const MAX_TRIPLE_COMBINATIONS = 120;
 const FINDER_RATIO_TOLERANCE = 0.9;
 const QUIET_ZONE_DISTANCE_MODULES = 5.25;
+
+/**
+ * Geometry seed carried by a proposal.
+ */
+export type ProposalGeometrySeed =
+  | {
+      /** Use the proposal's finder evidence to build finder/center homographies. */
+      readonly kind: 'finder-triple';
+    }
+  | {
+      /** Use inferred boundary corners derived from the same finder evidence. */
+      readonly kind: 'inferred-quad';
+      /** Inferred QR boundary corners. */
+      readonly corners: CornerSet;
+    };
 
 /**
  * Proposal detector source identifiers.
@@ -71,6 +86,8 @@ export interface FinderTripleProposal {
   readonly binaryViewId: BinaryViewId;
   /** Finder evidence tuple. */
   readonly finders: readonly [FinderEvidence, FinderEvidence, FinderEvidence];
+  /** Geometry hypotheses derived from this finder evidence. */
+  readonly geometrySeeds?: readonly ProposalGeometrySeed[];
   /** Candidate versions to try during geometry/decode. */
   readonly estimatedVersions: readonly number[];
   /** Final proposal score. */
@@ -482,29 +499,19 @@ const proposalsFromFinderTriples = (
     const triple = triples[index]!;
     const estimatedVersions = candidateVersionsFromFinders(triple.finders, 2);
     if (estimatedVersions.length === 0) continue;
+    const inferredCorners = inferQuadCorners(triple.finders, estimatedVersions[0]!);
     proposals.push({
       id: `${binaryView.id}:triple:${index}`,
       kind: 'finder-triple',
       binaryViewId: binaryView.id,
       finders: triple.finders,
+      geometrySeeds: inferredCorners
+        ? [{ kind: 'finder-triple' }, { kind: 'inferred-quad', corners: inferredCorners }]
+        : [{ kind: 'finder-triple' }],
       estimatedVersions,
       proposalScore: 0,
       scoreBreakdown: emptyScoreBreakdown(),
     });
-
-    const inferredCorners = inferQuadCorners(triple.finders, estimatedVersions[0]!);
-    if (inferredCorners) {
-      proposals.push({
-        id: `${binaryView.id}:quad:${index}`,
-        kind: 'quad',
-        binaryViewId: binaryView.id,
-        corners: inferredCorners,
-        finderLikeEvidence: triple.finders,
-        estimatedVersions,
-        proposalScore: 0,
-        scoreBreakdown: emptyScoreBreakdown(),
-      });
-    }
   }
 
   return proposals;

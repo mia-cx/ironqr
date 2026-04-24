@@ -122,9 +122,10 @@ Ranking should pick likely QR candidates, then geometry should cheaply test whic
 Support at least:
 - finder-triple homography resolution
 - center-based homography resolution
-- explicit-corner / quad resolution when available
+- inferred-quad geometry seeds carried by finder-triple proposals
+- explicit-corner / quad resolution when an independent detector produces boundary corners
 
-The geometry layer should not care which detector created the proposal.
+Finder-derived quads should be geometry seeds, not duplicate proposals. The geometry layer should not care which detector created the proposal.
 
 ## Stage 7 — early structural rejection
 ### What

@@ -2,6 +2,7 @@ import type { Bounds, CornerSet, Point } from '../contracts/geometry.js';
 import type {
   FinderEvidence,
   FinderTripleProposal,
+  ProposalGeometrySeed,
   QuadProposal,
   ScanProposal,
 } from './proposals.js';
@@ -615,6 +616,9 @@ const createFinderGeometryCandidates = (
   if (oriented === null) return [];
 
   const candidates: GeometryCandidate[] = [];
+  const geometrySeeds = proposal.geometrySeeds ?? [
+    { kind: 'finder-triple' } satisfies ProposalGeometrySeed,
+  ];
   let index = 0;
   for (const version of proposal.estimatedVersions) {
     const size = version * 4 + 17;
@@ -705,6 +709,20 @@ const createFinderGeometryCandidates = (
       if (candidate) candidates.push(candidate);
       index += 1;
     }
+
+    for (const seed of geometrySeeds) {
+      if (seed.kind !== 'inferred-quad') continue;
+      const candidate = createQuadGeometryCandidateFromCorners(
+        proposal.id,
+        proposal.binaryViewId,
+        seed.corners,
+        version,
+        index,
+        proposal.proposalScore + 0.5,
+      );
+      if (candidate) candidates.push(candidate);
+      index += 1;
+    }
   }
 
   return candidates.sort((left, right) => right.geometryScore - left.geometryScore);
@@ -715,28 +733,46 @@ const createQuadGeometryCandidates = (proposal: QuadProposal): readonly Geometry
   const candidates: GeometryCandidate[] = [];
   let index = 0;
   for (const version of proposal.estimatedVersions) {
-    const size = version * 4 + 17;
-    const homography = fitHomography([
-      [{ x: -0.5, y: -0.5 }, proposal.corners.topLeft],
-      [{ x: size - 0.5, y: -0.5 }, proposal.corners.topRight],
-      [{ x: size - 0.5, y: size - 0.5 }, proposal.corners.bottomRight],
-      [{ x: -0.5, y: size - 0.5 }, proposal.corners.bottomLeft],
-    ]);
-    if (homography === null) continue;
-    const candidate = buildGridResolutionFromHomography(
-      version,
-      size,
-      homography,
-      `${proposal.id}:quad:${index}`,
+    const candidate = createQuadGeometryCandidateFromCorners(
       proposal.id,
       proposal.binaryViewId,
-      'quad-homography',
-      scoreGeometryCandidate(homography, size, proposal.proposalScore + 0.5),
+      proposal.corners,
+      version,
+      index,
+      proposal.proposalScore + 0.5,
     );
     if (candidate) candidates.push(candidate);
     index += 1;
   }
   return candidates.sort((left, right) => right.geometryScore - left.geometryScore);
+};
+
+const createQuadGeometryCandidateFromCorners = (
+  proposalId: string,
+  binaryViewId: BinaryViewId,
+  corners: CornerSet,
+  version: number,
+  index: number,
+  baseScore: number,
+): GeometryCandidate | null => {
+  const size = version * 4 + 17;
+  const homography = fitHomography([
+    [{ x: -0.5, y: -0.5 }, corners.topLeft],
+    [{ x: size - 0.5, y: -0.5 }, corners.topRight],
+    [{ x: size - 0.5, y: size - 0.5 }, corners.bottomRight],
+    [{ x: -0.5, y: size - 0.5 }, corners.bottomLeft],
+  ]);
+  if (homography === null) return null;
+  return buildGridResolutionFromHomography(
+    version,
+    size,
+    homography,
+    `${proposalId}:quad:${index}`,
+    proposalId,
+    binaryViewId,
+    'quad-homography',
+    scoreGeometryCandidate(homography, size, baseScore),
+  );
 };
 
 const calibrateFinderModuleSizes = (

@@ -210,11 +210,9 @@ For each binary view it:
 3. dedupes finder evidence
 4. builds plausible finder triples
 5. estimates candidate QR versions
-6. emits one or more proposals
+6. emits finder-triple proposals with one or more geometry seeds
 
-Proposal kinds currently include:
-- `finder-triple`
-- `quad`
+The primary proposal kind is `finder-triple`. Inferred quad geometry from the same finder evidence is stored as an `inferred-quad` geometry seed on that proposal rather than emitted as a duplicate proposal. The explicit `quad` proposal kind remains available for future detectors that produce independent boundary corners, but finder-derived quads should not double the proposal frontier.
 
 The result of this stage is a growing set of `ProposalViewBatch` values. The batch source is Effect-native and sequential: it yields cooperatively before and after each proposal-view batch, but does not use workers or browser-specific scheduling APIs. For ordinary single-code scans, the frontier can be ranked, clustered, structurally screened, and decoded after early useful batches; if a high-priority view decodes successfully, later proposal views are never generated. Early frontier passes are deliberately capped so hard misses do not repeatedly re-rank and re-cluster the entire frontier after every view. For `allowMultiple: true` and unresolved scans, the scanner continues through the full proposal-view list.
 

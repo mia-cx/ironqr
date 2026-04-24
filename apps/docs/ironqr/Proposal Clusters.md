@@ -9,7 +9,7 @@ Typical duplicates come from:
 - different scalar views (`gray`, `r`, `g`, `b`, `oklab-*`)
 - different threshold families (`otsu`, `sauvola`, `hybrid`)
 - polarity variants (`normal`, `inverted`)
-- triple vs quad variants derived from the same finder evidence
+- multiple geometry seeds on one finder-triple proposal
 
 ## Why cluster?
 The expensive work is usually not proposal generation itself. It is the repeated decode cascade across many nearly identical proposals.
