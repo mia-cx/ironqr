@@ -88,10 +88,10 @@ export interface TimingSummary {
 
 export interface IronqrPerformanceProfile {
   readonly stages: readonly TimingSummary[];
-  readonly proposalViews: readonly [];
-  readonly decodeViews: readonly [];
-  readonly samplers: readonly [];
-  readonly refinements: readonly [];
+  readonly proposalViews: readonly TimingSummary[];
+  readonly decodeViews: readonly TimingSummary[];
+  readonly samplers: readonly TimingSummary[];
+  readonly refinements: readonly TimingSummary[];
   readonly decodeAttempts: readonly TimingSummary[];
 }
 
@@ -104,7 +104,7 @@ export interface PerformanceReportSummary {
   };
   readonly hotSpots: {
     readonly slowestStages: readonly TimingSummary[];
-    readonly slowestProposalViews: readonly [];
+    readonly slowestProposalViews: readonly TimingSummary[];
     readonly slowestDecodeAttempts: readonly TimingSummary[];
   };
   readonly pass: BenchmarkVerdict;
@@ -327,7 +327,7 @@ export const runPerformanceBenchmark = async (
       },
       hotSpots: {
         slowestStages: ironqrProfile?.stages.slice(0, 10) ?? [],
-        slowestProposalViews: [],
+        slowestProposalViews: ironqrProfile?.proposalViews.slice(0, 10) ?? [],
         slowestDecodeAttempts: ironqrProfile?.decodeAttempts.slice(0, 10) ?? [],
       },
       pass,
@@ -399,6 +399,9 @@ const buildIronqrProfile = async (
     decodeAttempts: [] as number[],
   } satisfies Record<string, number[]>;
   const attemptTimings: Record<string, number[]> = {};
+  const decodeViewTimings: Record<string, number[]> = {};
+  const samplerTimings: Record<string, number[]> = {};
+  const refinementTimings: Record<string, number[]> = {};
 
   for (const asset of assets) {
     const image = await readBenchImage(path.join(repoRoot, 'corpus', 'data', asset.relativePath));
@@ -418,9 +421,10 @@ const buildIronqrProfile = async (
     if (hasAttemptTimings(timings)) {
       for (const attempt of timings.attempts) {
         const key = `${attempt.decodeBinaryViewId}/${attempt.sampler}/${attempt.refinement}`;
-        const durations = attemptTimings[key] ?? [];
-        durations.push(attempt.durationMs);
-        attemptTimings[key] = durations;
+        pushTiming(attemptTimings, key, attempt.durationMs);
+        pushTiming(decodeViewTimings, attempt.decodeBinaryViewId, attempt.durationMs);
+        pushTiming(samplerTimings, attempt.sampler, attempt.durationMs);
+        pushTiming(refinementTimings, attempt.refinement, attempt.durationMs);
       }
     }
   }
@@ -428,9 +432,15 @@ const buildIronqrProfile = async (
   return {
     stages: summarizeTimingRecord(stageTimings).sort((left, right) => right.totalMs - left.totalMs),
     proposalViews: [],
-    decodeViews: [],
-    samplers: [],
-    refinements: [],
+    decodeViews: summarizeTimingRecord(decodeViewTimings).sort(
+      (left, right) => right.totalMs - left.totalMs,
+    ),
+    samplers: summarizeTimingRecord(samplerTimings).sort(
+      (left, right) => right.totalMs - left.totalMs,
+    ),
+    refinements: summarizeTimingRecord(refinementTimings).sort(
+      (left, right) => right.totalMs - left.totalMs,
+    ),
     decodeAttempts: summarizeTimingRecord(attemptTimings).sort(
       (left, right) => right.totalMs - left.totalMs,
     ),
@@ -439,6 +449,12 @@ const buildIronqrProfile = async (
 
 const hasAttemptTimings = (timings: ScanTimingSummary): timings is ScanTimingDetails => {
   return 'attempts' in timings;
+};
+
+const pushTiming = (record: Record<string, number[]>, key: string, durationMs: number): void => {
+  const durations = record[key] ?? [];
+  durations.push(durationMs);
+  record[key] = durations;
 };
 
 const summarizeTimingRecord = (record: Record<string, readonly number[]>): TimingSummary[] => {
