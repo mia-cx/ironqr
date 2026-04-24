@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -93,6 +94,50 @@ const mapConcurrent = async <Input, Output>(
 };
 
 const roundDurationMs = (value: number): number => Math.round(value * 100) / 100;
+
+const hashSeed = (seed: string): number => {
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
+const seededRandom = (seed: string): (() => number) => {
+  let state = hashSeed(seed);
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const sampleAssets = (
+  assets: readonly CorpusAsset[],
+  selection: AccuracyBenchmarkOptions['selection'] = {},
+): readonly CorpusAsset[] => {
+  let selected = [...assets];
+  if (selection.assetIds && selection.assetIds.length > 0) {
+    const requested = new Set(selection.assetIds);
+    selected = selected.filter((asset) => requested.has(asset.id));
+  }
+  if (selection.labels && selection.labels.length > 0) {
+    const labels = new Set(selection.labels);
+    selected = selected.filter((asset) => labels.has(asset.label));
+  }
+  if (selection.maxAssets !== undefined && selected.length > selection.maxAssets) {
+    const random = seededRandom(selection.seed ?? crypto.randomUUID());
+    selected = selected
+      .map((asset) => ({ asset, sort: random() }))
+      .sort((left, right) => left.sort - right.sort)
+      .slice(0, selection.maxAssets)
+      .map((entry) => entry.asset);
+  }
+  return selected;
+};
 
 const defaultWorkerCount = (): number => {
   const available = typeof os.availableParallelism === 'function' ? os.availableParallelism() : 4;
@@ -375,7 +420,10 @@ export const runAccuracyBenchmark = async (
     const activeCache = cache;
     const activeWorkerPool = workerPool;
     const manifest = await readBenchCorpusManifest(repoRoot);
-    const approvedAssets = manifest.assets.filter((asset) => asset.review.status === 'approved');
+    const approvedAssets = sampleAssets(
+      manifest.assets.filter((asset) => asset.review.status === 'approved'),
+      options.selection,
+    );
     const positiveCount = approvedAssets.filter((asset) => asset.label === 'qr-pos').length;
     const negativeCount = approvedAssets.length - positiveCount;
     progress.onManifestLoaded(

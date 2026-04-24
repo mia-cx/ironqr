@@ -32,6 +32,9 @@ export interface PerformanceBenchmarkOptions {
   };
   readonly selection?: {
     readonly seed?: string | null;
+    readonly assetIds?: readonly string[];
+    readonly labels?: readonly ('qr-pos' | 'qr-neg')[];
+    readonly maxAssets?: number;
     readonly filters?: Record<string, unknown>;
   };
 }
@@ -128,6 +131,14 @@ export const runPerformanceBenchmark = async (
       },
       progress: { enabled: false },
       execution: options.workers === undefined ? {} : { workers: options.workers },
+      selection: {
+        assetIds: options.selection?.assetIds ?? [],
+        labels: options.selection?.labels ?? [],
+        ...(options.selection?.maxAssets === undefined ? {} : { maxAssets: options.selection.maxAssets }),
+        ...(options.selection?.seed === null || options.selection?.seed === undefined
+          ? {}
+          : { seed: options.selection.seed }),
+      },
     });
     lastAssets = accuracy.assets;
     cacheSummary = accuracy.cache;

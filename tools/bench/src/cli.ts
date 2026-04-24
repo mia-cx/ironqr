@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { resolveRepoRootFromModuleUrl } from '../../corpus-cli/src/repo-root.js';
 import {
@@ -15,6 +16,11 @@ import {
   writePerformanceReport,
   type BenchmarkVerdict,
 } from './index.js';
+
+const parseLabel = (value: string): 'qr-pos' | 'qr-neg' => {
+  if (value === 'qr-pos' || value === 'qr-neg') return value;
+  throw new Error(`--label must be qr-pos or qr-neg, got: ${value}`);
+};
 
 const parsePositiveInteger = (value: string, flag: string): number => {
   if (!/^[1-9]\d*$/.test(value)) {
@@ -34,6 +40,10 @@ interface CliOptions {
   readonly progressEnabled: boolean;
   readonly workers?: number;
   readonly iterations?: number;
+  readonly assetIds: readonly string[];
+  readonly labels: readonly ('qr-pos' | 'qr-neg')[];
+  readonly maxAssets?: number;
+  readonly seed?: string;
 }
 
 export const parseArgs = (
@@ -50,6 +60,10 @@ export const parseArgs = (
   let progressEnabled = true;
   let workers: number | undefined;
   let iterations: number | undefined;
+  const assetIds: string[] = [];
+  const labels: Array<'qr-pos' | 'qr-neg'> = [];
+  let maxAssets: number | undefined;
+  let seed: string | undefined;
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -92,6 +106,50 @@ export const parseArgs = (
     }
     if (arg === '--ironqr-trace' || arg.startsWith('--ironqr-trace=')) {
       throw new Error('Focused accuracy does not support full trace collection; use bench performance');
+    }
+    if (arg === '--asset') {
+      const next = rest[index + 1];
+      if (!next) throw new Error('--asset requires a value');
+      assetIds.push(next);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--asset=')) {
+      assetIds.push(arg.slice('--asset='.length));
+      continue;
+    }
+    if (arg === '--label') {
+      const next = rest[index + 1];
+      if (!next) throw new Error('--label requires a value');
+      labels.push(parseLabel(next));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--label=')) {
+      labels.push(parseLabel(arg.slice('--label='.length)));
+      continue;
+    }
+    if (arg === '--max-assets') {
+      const next = rest[index + 1];
+      if (!next) throw new Error('--max-assets requires a value');
+      maxAssets = parsePositiveInteger(next, '--max-assets');
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--max-assets=')) {
+      maxAssets = parsePositiveInteger(arg.slice('--max-assets='.length), '--max-assets');
+      continue;
+    }
+    if (arg === '--seed') {
+      const next = rest[index + 1];
+      if (!next) throw new Error('--seed requires a value');
+      seed = next;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--seed=')) {
+      seed = arg.slice('--seed='.length);
+      continue;
     }
     if (arg === '--workers') {
       const next = rest[index + 1];
@@ -151,6 +209,10 @@ export const parseArgs = (
       ...(refreshCacheEngineId === undefined ? {} : { refreshCacheEngineId }),
       ...(workers === undefined ? {} : { workers }),
       ...(iterations === undefined ? {} : { iterations }),
+      assetIds,
+      labels,
+      ...(maxAssets === undefined ? {} : { maxAssets }),
+      ...(seed === undefined ? {} : { seed }),
       ...(reportFile === undefined ? {} : { reportFile }),
       ...(cacheFile === undefined ? {} : { cacheFile }),
     },
@@ -178,6 +240,7 @@ const runAccuracy = async (repoRoot: string, options: CliOptions): Promise<void>
     ? path.resolve(repoRoot, options.cacheFile)
     : getDefaultAccuracyCachePath(repoRoot);
   const engines = resolveAccuracyEngines();
+  const seed = options.seed ?? (options.maxAssets === undefined ? undefined : crypto.randomUUID());
   const result = await runAccuracyBenchmark(repoRoot, engines, reportFile, {
     cache: {
       enabled: options.cacheEnabled,
@@ -187,6 +250,12 @@ const runAccuracy = async (repoRoot: string, options: CliOptions): Promise<void>
     },
     progress: { enabled: options.progressEnabled },
     execution: options.workers === undefined ? {} : { workers: options.workers },
+    selection: {
+      assetIds: options.assetIds,
+      labels: options.labels,
+      ...(options.maxAssets === undefined ? {} : { maxAssets: options.maxAssets }),
+      ...(seed === undefined ? {} : { seed }),
+    },
   });
   printAccuracySummary(result, { failuresOnly: options.failuresOnly });
   await writeAccuracyReport(result);
@@ -199,6 +268,7 @@ const runPerformance = async (repoRoot: string, options: CliOptions): Promise<vo
   const cacheFile = options.cacheFile
     ? path.resolve(repoRoot, options.cacheFile)
     : getDefaultAccuracyCachePath(repoRoot);
+  const seed = options.seed ?? (options.maxAssets === undefined ? undefined : crypto.randomUUID());
   const result = await runPerformanceBenchmark(repoRoot, reportFile, {
     ...(options.iterations === undefined ? {} : { iterations: options.iterations }),
     ...(options.workers === undefined ? {} : { workers: options.workers }),
@@ -209,6 +279,17 @@ const runPerformance = async (repoRoot: string, options: CliOptions): Promise<vo
       ...(options.refreshCacheEngineId ? { refreshEngineId: options.refreshCacheEngineId } : {}),
     },
     progress: { enabled: options.progressEnabled },
+    selection: {
+      seed: seed ?? null,
+      assetIds: options.assetIds,
+      labels: options.labels,
+      ...(options.maxAssets === undefined ? {} : { maxAssets: options.maxAssets }),
+      filters: {
+        assetIds: options.assetIds,
+        labels: options.labels,
+        maxAssets: options.maxAssets ?? null,
+      },
+    },
   });
   printPerformanceSummary(result);
   await writePerformanceReport(result);

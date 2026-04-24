@@ -227,6 +227,12 @@ export interface AccuracyBenchmarkOptions {
   readonly execution?: {
     readonly workers?: number;
   };
+  readonly selection?: {
+    readonly assetIds?: readonly string[];
+    readonly labels?: readonly CorpusAssetLabel[];
+    readonly maxAssets?: number;
+    readonly seed?: string;
+  };
   readonly observability?: {
     readonly verbose?: boolean;
     readonly ironqrTraceMode?: IronqrTraceMode;

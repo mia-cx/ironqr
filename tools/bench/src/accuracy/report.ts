@@ -138,14 +138,14 @@ export const printAccuracyHome = (
     'help',
     ['command'],
     [
+      ['bun run bench'],
       ['bun run bench accuracy'],
-      ['bun run bench accuracy --list-engines'],
       ['bun run bench accuracy --refresh-cache'],
       ['bun run bench accuracy --no-progress'],
       ['bun run bench accuracy --workers 8'],
-      ['bun run bench accuracy --verbose'],
-      ['bun run bench accuracy --ironqr-trace off|summary|full'],
       ['bun run bench performance'],
+      ['bun run bench performance --iterations 8'],
+      ['bun run bench engines'],
     ],
   );
 };
