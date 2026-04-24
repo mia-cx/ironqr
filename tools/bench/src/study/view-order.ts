@@ -1,4 +1,8 @@
-import { createTraceCollector, scanFrame } from '../../../../packages/ironqr/src/index.js';
+import {
+  createTraceCollector,
+  listDefaultBinaryViewIds,
+  scanFrame,
+} from '../../../../packages/ironqr/src/index.js';
 import type {
   IronqrTraceEvent,
   ProposalViewGeneratedEvent,
@@ -156,7 +160,8 @@ export const viewProposalsStudyPlugin: StudyPlugin<
     const startedAt = performance.now();
     log(`${asset.id}: loading image ${image.width}x${image.height}`);
     const results = await scanFrame(image, {
-      allowMultiple: asset.expectedTexts.length > 1,
+      allowMultiple: true,
+      proposalViewIds: listDefaultBinaryViewIds(),
       traceSink,
     });
     const scanDurationMs = round(performance.now() - startedAt);
