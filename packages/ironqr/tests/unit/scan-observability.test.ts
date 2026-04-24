@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { Effect } from 'effect';
 import { scanFrame } from '../../src/index.js';
 import { buildHiGrid, gridToImageData, makeImageData } from '../helpers.js';
 
@@ -43,6 +44,37 @@ describe('scanFrame observability', () => {
     if (report.scan.timings && 'attempts' in report.scan.timings) {
       expect(report.scan.timings.attempts.length).toBeGreaterThan(0);
     }
+  });
+
+  it('uses the cooperative scheduler between proposal batches', async () => {
+    const imageData = gridToImageData(buildHiGrid());
+    let beforeCount = 0;
+    let afterCount = 0;
+    const report = await scanFrame(imageData, {
+      scheduler: {
+        yieldBeforeProposalView: () =>
+          Effect.sync(() => {
+            beforeCount += 1;
+          }),
+        yieldAfterProposalBatch: () =>
+          Effect.sync(() => {
+            afterCount += 1;
+          }),
+      },
+      observability: {
+        scan: {
+          proposals: 'summary',
+        },
+      },
+    });
+
+    expect('scan' in report).toBe(true);
+    if (!('scan' in report)) return;
+    const viewCount = report.scan.proposals?.viewCount;
+    expect(viewCount).toBeNumber();
+    if (viewCount === undefined) return;
+    expect(beforeCount).toBe(viewCount);
+    expect(afterCount).toBe(viewCount);
   });
 
   it('exhausts proposal views when no early single-code result decodes', async () => {

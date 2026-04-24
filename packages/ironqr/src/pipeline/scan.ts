@@ -39,6 +39,21 @@ import { type BinaryViewId, createViewBank, type ScalarViewId, type ViewBank } f
 export interface ScanRuntimeOptions extends ScanOptions {
   /** Optional typed trace sink for diagnostics, tests, and benchmark harnesses. */
   readonly traceSink?: TraceSink;
+  /** Optional cooperative scheduler used between proposal-view batches. */
+  readonly scheduler?: ScanScheduler;
+}
+
+/**
+ * Cooperative scheduling hooks for long scan work.
+ *
+ * These hooks are Effect-native so browser hosts can yield between proposal
+ * batches without introducing worker/runtime-specific APIs into the scanner.
+ */
+export interface ScanScheduler {
+  /** Optional yield point before one proposal view is generated. */
+  readonly yieldBeforeProposalView?: (viewId: BinaryViewId) => Effect.Effect<void>;
+  /** Optional yield point after one proposal batch is generated. */
+  readonly yieldAfterProposalBatch?: (batch: ProposalViewBatch) => Effect.Effect<void>;
 }
 
 /**
@@ -317,6 +332,11 @@ interface ClusterProcessingResult {
   readonly processedRepresentativeCount: number;
 }
 
+interface ProposalBatchSource {
+  next(): Effect.Effect<ProposalViewBatch | null, ScannerError>;
+  cancel(): Effect.Effect<void>;
+}
+
 const MAX_CLUSTER_REPRESENTATIVES = 3;
 const MAX_CLUSTER_STRUCTURAL_FAILURES = 3;
 const MAX_EARLY_FRONTIER_PASSES = 4;
@@ -408,14 +428,19 @@ const scanFrameExecutionOnce = (
     );
     let stopScanning = false;
     let earlyFrontierPasses = 0;
+    const batchSource = createSequentialProposalBatchSource({
+      viewBank,
+      viewIds: viewBank.listProposalViewIds(),
+      ...(maxProposalsPerView === undefined ? {} : { maxProposalsPerView }),
+      ...(traceSink === undefined ? {} : { traceSink }),
+      scheduler: options.scheduler ?? defaultScanScheduler,
+    });
 
-    for (const binaryViewId of viewBank.listProposalViewIds()) {
+    while (true) {
       const proposalGenerationStartedAt = nowMs();
-      const batch = generateProposalBatchForView(viewBank, binaryViewId, {
-        ...(maxProposalsPerView === undefined ? {} : { maxProposalsPerView }),
-        ...(traceSink === undefined ? {} : { traceSink }),
-      });
+      const batch = yield* batchSource.next();
       proposalGenerationMs += nowMs() - proposalGenerationStartedAt;
+      if (batch === null) break;
       proposalBatches.push(batch);
       generatedProposals.push(...batch.proposals);
 
@@ -440,7 +465,10 @@ const scanFrameExecutionOnce = (
       });
       clusterProcessingMs += nowMs() - clusterProcessingStartedAt;
       stopScanning = processed.stopScanning;
-      if (stopScanning) break;
+      if (stopScanning) {
+        yield* batchSource.cancel();
+        break;
+      }
     }
 
     if (!stopScanning) {
@@ -500,6 +528,50 @@ const scanFrameExecutionOnce = (
       proposalGeneration: summarizeProposalBatches(proposalBatches),
     } satisfies ScanExecution;
   });
+};
+
+const defaultScanScheduler: Required<ScanScheduler> = {
+  yieldBeforeProposalView: () => Effect.yieldNow,
+  yieldAfterProposalBatch: () => Effect.yieldNow,
+};
+
+const createSequentialProposalBatchSource = (options: {
+  readonly viewBank: ViewBank;
+  readonly viewIds: readonly BinaryViewId[];
+  readonly maxProposalsPerView?: number;
+  readonly traceSink?: TraceSink;
+  readonly scheduler: ScanScheduler;
+}): ProposalBatchSource => {
+  let index = 0;
+  let cancelled = false;
+  return {
+    next() {
+      return Effect.gen(function* () {
+        if (cancelled) return null;
+        const binaryViewId = options.viewIds[index];
+        if (binaryViewId === undefined) return null;
+        index += 1;
+
+        yield* options.scheduler.yieldBeforeProposalView?.(binaryViewId) ?? Effect.void;
+        if (cancelled) return null;
+
+        const batch = generateProposalBatchForView(options.viewBank, binaryViewId, {
+          ...(options.maxProposalsPerView === undefined
+            ? {}
+            : { maxProposalsPerView: options.maxProposalsPerView }),
+          ...(options.traceSink === undefined ? {} : { traceSink: options.traceSink }),
+        });
+
+        yield* options.scheduler.yieldAfterProposalBatch?.(batch) ?? Effect.void;
+        return cancelled ? null : batch;
+      });
+    },
+    cancel() {
+      return Effect.sync(() => {
+        cancelled = true;
+      });
+    },
+  } satisfies ProposalBatchSource;
 };
 
 const buildFrontierSnapshot = (
