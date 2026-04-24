@@ -184,7 +184,7 @@ bun run bench performance --report-file tools/bench/reports/performance.json
 
 No `--engine`: always run the full wired target engine set.
 
-Memory profiling is out of scope for this rewrite. File a follow-up issue to design memory profiling after timing reports are stable.
+Memory profiling is out of scope for this rewrite. Follow-up design issue: #47.
 
 ### `bench study <study-id>`
 
@@ -846,7 +846,7 @@ Replace:
 
 ### Slice 5.5 — memory profiling follow-up issue
 
-- Draft a GitHub issue for memory profiling.
+- Track memory profiling in #47.
 - Do not implement memory profiling in this rewrite.
 
 ### Slice 6 — full suite
