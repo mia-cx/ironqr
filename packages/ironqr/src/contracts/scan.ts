@@ -32,10 +32,56 @@ export const ScannerErrorSchema = S.Struct({
 });
 export type ScannerErrorShape = S.Schema.Type<typeof ScannerErrorSchema>;
 
+export const ScanPathMetadataLevelSchema = S.Literals(['none', 'basic', 'full']);
+export type ScanPathMetadataLevel = S.Schema.Type<typeof ScanPathMetadataLevelSchema>;
+
+export const ScanAttemptMetadataLevelSchema = S.Literals(['none', 'summary', 'full']);
+export type ScanAttemptMetadataLevel = S.Schema.Type<typeof ScanAttemptMetadataLevelSchema>;
+
+export const ScanViewMetadataLevelSchema = S.Literals(['none', 'summary']);
+export type ScanViewMetadataLevel = S.Schema.Type<typeof ScanViewMetadataLevelSchema>;
+
+export const ScanFailureMetadataLevelSchema = S.Literals(['none', 'summary']);
+export type ScanFailureMetadataLevel = S.Schema.Type<typeof ScanFailureMetadataLevelSchema>;
+
+export const ScanTimingMetadataLevelSchema = S.Literals(['none', 'summary', 'full']);
+export type ScanTimingMetadataLevel = S.Schema.Type<typeof ScanTimingMetadataLevelSchema>;
+
+export const ScanTraceEventsLevelSchema = S.Literals(['off', 'summary', 'full']);
+export type ScanTraceEventsLevel = S.Schema.Type<typeof ScanTraceEventsLevelSchema>;
+
+export const ScanObservabilityResultSchema = S.Struct({
+  path: S.optional(ScanPathMetadataLevelSchema),
+  attempts: S.optional(ScanAttemptMetadataLevelSchema),
+});
+export type ScanObservabilityResult = S.Schema.Type<typeof ScanObservabilityResultSchema>;
+
+export const ScanObservabilityScanSchema = S.Struct({
+  views: S.optional(ScanViewMetadataLevelSchema),
+  failure: S.optional(ScanFailureMetadataLevelSchema),
+  timings: S.optional(ScanTimingMetadataLevelSchema),
+});
+export type ScanObservabilityScan = S.Schema.Type<typeof ScanObservabilityScanSchema>;
+
+export const ScanObservabilityTraceSchema = S.Struct({
+  events: S.optional(ScanTraceEventsLevelSchema),
+});
+export type ScanObservabilityTrace = S.Schema.Type<typeof ScanObservabilityTraceSchema>;
+
+export const ScanObservabilityOptionsSchema = S.Struct({
+  result: S.optional(ScanObservabilityResultSchema),
+  scan: S.optional(ScanObservabilityScanSchema),
+  trace: S.optional(ScanObservabilityTraceSchema),
+});
+export type ScanObservabilityOptions = S.Schema.Type<typeof ScanObservabilityOptionsSchema>;
+
 export const ScanOptionsSchema = S.Struct({
   allowMultiple: S.optional(S.Boolean),
-  debug: S.optional(S.Boolean),
+  /** @deprecated Prefer `maxProposals`. Kept as a compatibility alias during migration. */
   maxCandidates: S.optional(S.Number),
+  maxProposals: S.optional(S.Number),
+  maxProposalsPerView: S.optional(S.Number),
+  observability: S.optional(ScanObservabilityOptionsSchema),
 });
 export type ScanOptions = S.Schema.Type<typeof ScanOptionsSchema>;
 

@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { Effect } from 'effect';
-import {
-  detectFinderPatterns,
-  otsuBinarize,
-  resolveGrid,
-  sampleGrid,
-  toGrayscale,
-} from '../../src/image/index.js';
+import { createNormalizedImage } from '../../src/pipeline/frame.js';
+import { resolveGrid } from '../../src/pipeline/geometry.js';
+import { detectBestFinderEvidence } from '../../src/pipeline/proposals.js';
+import { sampleGrid } from '../../src/pipeline/samplers.js';
+import { createViewBank, otsuBinarize, toGrayscale } from '../../src/pipeline/views.js';
 import { decodeGridLogical } from '../../src/qr/index.js';
 import {
   appendBits,
@@ -22,7 +20,7 @@ describe('single-image baseline pipeline (internal modules)', () => {
     const height = 10;
     const pixels = new Uint8ClampedArray(width * height * 4).fill(255);
     const imageData = makeImageData(width, height, pixels);
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     expect(luma.every((value) => value === 255)).toBe(true);
   });
 
@@ -34,7 +32,7 @@ describe('single-image baseline pipeline (internal modules)', () => {
       pixels[i + 3] = 255;
     }
     const imageData = makeImageData(width, height, pixels);
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     expect(luma.every((value) => value === 0)).toBe(true);
   });
 
@@ -43,7 +41,7 @@ describe('single-image baseline pipeline (internal modules)', () => {
     const height = 4;
     const pixels = new Uint8ClampedArray(width * height * 4);
     const imageData = makeImageData(width, height, pixels);
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     expect(luma.every((value) => value === 255)).toBe(true);
   });
 
@@ -55,7 +53,7 @@ describe('single-image baseline pipeline (internal modules)', () => {
       pixels[i + 3] = 128;
     }
     const imageData = makeImageData(width, height, pixels);
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     for (const value of luma) {
       expect(value).toBeGreaterThanOrEqual(126);
       expect(value).toBeLessThanOrEqual(129);
@@ -70,11 +68,37 @@ describe('single-image baseline pipeline (internal modules)', () => {
     expect(binary.every((value) => value === 255)).toBe(true);
   });
 
-  it('detectFinderPatterns returns fewer than 3 candidates for a blank image', () => {
+  it('orders proposal views by the current view-study priority list', () => {
+    const imageData = makeImageData(2, 2, new Uint8ClampedArray(2 * 2 * 4).fill(255));
+    const bank = createViewBank(createNormalizedImage(imageData));
+
+    expect(bank.listProposalViewIds()).toEqual([
+      'gray:otsu:normal',
+      'oklab-l:hybrid:normal',
+      'gray:sauvola:normal',
+      'oklab-l:sauvola:normal',
+      'oklab-l:otsu:normal',
+      'b:hybrid:normal',
+      'gray:hybrid:normal',
+      'r:otsu:normal',
+      'r:sauvola:normal',
+      'g:sauvola:normal',
+      'b:otsu:normal',
+      'g:otsu:normal',
+      'g:hybrid:normal',
+      'b:sauvola:normal',
+      'r:hybrid:normal',
+      'oklab+b:hybrid:normal',
+      'gray:hybrid:inverted',
+      'gray:otsu:inverted',
+    ]);
+  });
+
+  it('detectBestFinderEvidence returns fewer than 3 candidates for a blank image', () => {
     const width = 210;
     const height = 210;
     const binary = new Uint8Array(width * height).fill(255);
-    const finders = detectFinderPatterns(binary, width, height);
+    const finders = detectBestFinderEvidence(binary, width, height);
     expect(finders.length).toBeLessThan(3);
   });
 
@@ -88,17 +112,17 @@ describe('single-image baseline pipeline (internal modules)', () => {
 
   it('detects 3 finder patterns in a synthetic v1-M QR image at 10px/module', () => {
     const imageData = gridToImageData(buildHiGrid());
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     const binary = otsuBinarize(luma, imageData.width, imageData.height);
-    const finders = detectFinderPatterns(binary, imageData.width, imageData.height);
+    const finders = detectBestFinderEvidence(binary, imageData.width, imageData.height);
     expect(finders.length).toBe(3);
   });
 
   it('resolveGrid returns a valid GridResolution from 3 finder candidates', () => {
     const imageData = gridToImageData(buildHiGrid());
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     const binary = otsuBinarize(luma, imageData.width, imageData.height);
-    const finders = detectFinderPatterns(binary, imageData.width, imageData.height);
+    const finders = detectBestFinderEvidence(binary, imageData.width, imageData.height);
     expect(finders.length).toBe(3);
     const [topLeft, topRight, bottomLeft] = finders;
     if (!topLeft || !topRight || !bottomLeft) throw new Error('Expected exactly three finders.');
@@ -111,9 +135,9 @@ describe('single-image baseline pipeline (internal modules)', () => {
 
   it('full internal pipeline decodes a synthetic v1-M "HI" QR image', async () => {
     const imageData = gridToImageData(buildHiGrid());
-    const luma = toGrayscale(imageData);
+    const luma = toGrayscale(createNormalizedImage(imageData));
     const binary = otsuBinarize(luma, imageData.width, imageData.height);
-    const finders = detectFinderPatterns(binary, imageData.width, imageData.height);
+    const finders = detectBestFinderEvidence(binary, imageData.width, imageData.height);
     expect(finders.length).toBe(3);
     const [topLeft, topRight, bottomLeft] = finders;
     if (!topLeft || !topRight || !bottomLeft) throw new Error('Expected exactly three finders.');
@@ -130,12 +154,12 @@ describe('single-image baseline pipeline (internal modules)', () => {
     expect(result.errorCorrectionLevel).toBe('M');
   });
 
-  it('not-found path: detectFinderPatterns returns fewer than 3 candidates for a blank image', () => {
+  it('not-found path: detectBestFinderEvidence returns fewer than 3 candidates for a blank image', () => {
     const width = 210;
     const height = 210;
     const luma = new Uint8Array(width * height).fill(255);
     const binary = otsuBinarize(luma, width, height);
-    const finders = detectFinderPatterns(binary, width, height);
+    const finders = detectBestFinderEvidence(binary, width, height);
     expect(finders.length).toBeLessThan(3);
   });
 });
