@@ -249,7 +249,7 @@ export const buildAccuracyReport = async (result: AccuracyBenchmarkResult) => {
     kind: 'accuracy-report' as const,
     schemaVersion: REPORT_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
-    status: pass.status === 'failed' ? 'failed' : 'passed',
+    status: hasEngineErrors(result) ? 'errored' : pass.status === 'failed' ? 'failed' : 'passed',
     verdicts: { pass, regression },
     benchmark: {
       name: 'Accuracy Benchmark',
@@ -290,12 +290,21 @@ export const buildAccuracyReport = async (result: AccuracyBenchmarkResult) => {
   };
 };
 
+const hasEngineErrors = (result: AccuracyBenchmarkResult): boolean =>
+  result.assets.some((asset) => asset.results.some((entry) => entry.outcome === 'fail-error'));
+
 const buildAccuracyPassVerdict = (
   result: AccuracyBenchmarkResult,
   gaps: ReturnType<typeof findAccuracyGaps>,
 ): BenchmarkVerdict => {
   const ironqr = result.summaries.find((summary) => summary.engineId === 'ironqr');
   if (!ironqr) return failedVerdict('ironqr did not produce a summary.');
+  const engineErrors = result.assets.flatMap((asset) =>
+    asset.results.filter((entry) => entry.outcome === 'fail-error'),
+  );
+  if (engineErrors.length > 0) {
+    return failedVerdict(`benchmark engine error(s) occurred: ${engineErrors.length}`);
+  }
   if (ironqr.falsePositives > 0) {
     return failedVerdict(`ironqr produced ${ironqr.falsePositives} false positive(s).`);
   }
