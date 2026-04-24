@@ -1,11 +1,11 @@
 # View Study
 
-Related: [[Proposal Clusters]], [[Ranked Proposal Pipeline]], [[Pipeline Stage Contracts]], [[Diagnostics and Benchmark Boundary]], [[Thresholding Research Notes]]
+Related: [[Proposal Clusters]], [[Ranked Proposal Pipeline]], [[Pipeline Stage Contracts]], [[Diagnostics and Benchmark Boundary]], [[Thresholding Research Notes]], [[Bench Study Plugin Contract]]
 
 ## Scope
 This note documents how `packages/ironqr` uses corpus evidence to choose proposal-view policy.
 
-The study tooling and reports may live in `tools/bench` and one-off scripts, but this note is about the `ironqr` policy surface they inform.
+The study tooling and reports may live in `tools/bench`, ideally behind the pluggable contract described in [[Bench Study Plugin Contract]], but this note is about the `ironqr` policy surface they inform. If a study needs extra proposal metadata or metrics, those should be added to `ironqr` behind explicit opt-in diagnostics flags so production scans stay cheap while consumers can still tune scanner policy.
 
 ## Goal
 Measure which binary views are actually useful for surfacing real QR candidates, so proposal and cluster representative order can be driven by corpus evidence instead of intuition.
