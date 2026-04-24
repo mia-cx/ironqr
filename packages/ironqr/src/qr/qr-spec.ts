@@ -143,6 +143,37 @@ const bitCount = (value: number): number => {
   return count;
 };
 
+const dedupeDecodedFormatInfoCandidates = (
+  candidates: readonly DecodedFormatInfoCandidate[],
+): readonly DecodedFormatInfoCandidate[] => {
+  const bestByKey = new Map<string, DecodedFormatInfoCandidate>();
+  for (const candidate of candidates) {
+    const key = `${candidate.errorCorrectionLevel}:${candidate.maskPattern}`;
+    const current = bestByKey.get(key);
+    if (!current || candidate.hammingDistance < current.hammingDistance) {
+      bestByKey.set(key, candidate);
+    }
+  }
+  return [...bestByKey.values()].sort(
+    (left, right) => left.hammingDistance - right.hammingDistance,
+  );
+};
+
+const dedupeDecodedVersionInfoCandidates = (
+  candidates: readonly DecodedVersionInfoCandidate[],
+): readonly DecodedVersionInfoCandidate[] => {
+  const bestByVersion = new Map<number, DecodedVersionInfoCandidate>();
+  for (const candidate of candidates) {
+    const current = bestByVersion.get(candidate.version);
+    if (!current || candidate.hammingDistance < current.hammingDistance) {
+      bestByVersion.set(candidate.version, candidate);
+    }
+  }
+  return [...bestByVersion.values()].sort(
+    (left, right) => left.hammingDistance - right.hammingDistance,
+  );
+};
+
 /**
  * Builds the masked 15-bit QR format information codeword.
  *
@@ -413,21 +444,23 @@ export const buildFunctionModuleMask = (size: number, version: number): boolean[
  * @returns The decoded error correction level, mask pattern, and winning Hamming distance.
  * @throws {ScannerError} Thrown when neither copy can be decoded within QR tolerance.
  */
-export const decodeFormatInfo = (
-  matrix: boolean[][],
-): {
+export interface DecodedFormatInfoCandidate {
   readonly errorCorrectionLevel: QrErrorCorrectionLevel;
   readonly maskPattern: number;
   readonly hammingDistance: number;
-} => {
+}
+
+export const decodeFormatInfoCandidates = (
+  matrix: boolean[][],
+  options: {
+    readonly maxDistance?: number;
+    readonly limit?: number;
+  } = {},
+): readonly DecodedFormatInfoCandidate[] => {
   const firstCopyPositions = FORMAT_INFO_FIRST_COPY_POSITIONS;
   const secondCopyPositions = getFormatInfoSecondCopyPositions(matrix.length);
+  const candidates: DecodedFormatInfoCandidate[] = [];
 
-  let bestDistance = Number.POSITIVE_INFINITY;
-  let bestEcl: QrErrorCorrectionLevel = 'M';
-  let bestMask = 0;
-
-  // Compare both embedded copies against every legal codeword and keep the closest match.
   for (const observed of [
     readBits(matrix, firstCopyPositions),
     readBits(matrix, secondCopyPositions),
@@ -435,21 +468,36 @@ export const decodeFormatInfo = (
     for (const ecl of ['L', 'M', 'Q', 'H'] as const) {
       for (let maskPattern = 0; maskPattern < 8; maskPattern += 1) {
         const candidate = buildFormatInfoCodeword(ecl, maskPattern);
-        const distance = bitCount(candidate ^ observed);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestEcl = ecl;
-          bestMask = maskPattern;
-        }
+        candidates.push({
+          errorCorrectionLevel: ecl,
+          maskPattern,
+          hammingDistance: bitCount(candidate ^ observed),
+        });
       }
     }
   }
 
-  if (bestDistance > 3) {
+  return dedupeDecodedFormatInfoCandidates(candidates)
+    .filter(
+      (candidate) => candidate.hammingDistance <= (options.maxDistance ?? Number.POSITIVE_INFINITY),
+    )
+    .slice(0, Math.max(1, options.limit ?? Number.POSITIVE_INFINITY));
+};
+
+export const decodeFormatInfo = (
+  matrix: boolean[][],
+): {
+  readonly errorCorrectionLevel: QrErrorCorrectionLevel;
+  readonly maskPattern: number;
+  readonly hammingDistance: number;
+} => {
+  const [best] = decodeFormatInfoCandidates(matrix, { maxDistance: 3, limit: 1 });
+
+  if (!best) {
     throw new ScannerError('decode_failed', 'Could not decode QR format information.');
   }
 
-  return { errorCorrectionLevel: bestEcl, maskPattern: bestMask, hammingDistance: bestDistance };
+  return best;
 };
 
 /**
@@ -459,12 +507,23 @@ export const decodeFormatInfo = (
  * @returns The decoded QR version.
  * @throws {ScannerError} Thrown when the version information cannot be decoded within tolerance.
  */
-export const decodeVersionInfo = (matrix: boolean[][]): number => {
+export interface DecodedVersionInfoCandidate {
+  readonly version: number;
+  readonly hammingDistance: number;
+}
+
+export const decodeVersionInfoCandidates = (
+  matrix: boolean[][],
+  options: {
+    readonly maxDistance?: number;
+    readonly limit?: number;
+  } = {},
+): readonly DecodedVersionInfoCandidate[] => {
   const size = matrix.length;
   const version = getVersionFromSize(size);
 
   if (version < 7) {
-    return version;
+    return [{ version, hammingDistance: 0 }];
   }
 
   const firstCopyPositions = getVersionInfoFirstCopyPositions(size);
@@ -473,26 +532,39 @@ export const decodeVersionInfo = (matrix: boolean[][]): number => {
     readBits(matrix, firstCopyPositions),
     readBits(matrix, secondCopyPositions),
   ];
-
-  let bestVersion = version;
-  let bestDistance = Number.POSITIVE_INFINITY;
+  const candidates: DecodedVersionInfoCandidate[] = [];
 
   for (let candidateVersion = 7; candidateVersion <= 40; candidateVersion += 1) {
     const candidate = buildVersionInfoCodeword(candidateVersion);
     for (const observed of observedValues) {
-      const distance = bitCount(candidate ^ observed);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestVersion = candidateVersion;
-      }
+      candidates.push({
+        version: candidateVersion,
+        hammingDistance: bitCount(candidate ^ observed),
+      });
     }
   }
 
-  if (bestDistance > 3) {
+  return dedupeDecodedVersionInfoCandidates(candidates)
+    .filter(
+      (candidate) => candidate.hammingDistance <= (options.maxDistance ?? Number.POSITIVE_INFINITY),
+    )
+    .slice(0, Math.max(1, options.limit ?? Number.POSITIVE_INFINITY));
+};
+
+export const decodeVersionInfo = (matrix: boolean[][]): number => {
+  const size = matrix.length;
+  const version = getVersionFromSize(size);
+
+  if (version < 7) {
+    return version;
+  }
+
+  const [best] = decodeVersionInfoCandidates(matrix, { maxDistance: 3, limit: 1 });
+  if (!best) {
     throw new ScannerError('decode_failed', 'Could not decode QR version information.');
   }
 
-  return bestVersion;
+  return best.version;
 };
 
 /**
