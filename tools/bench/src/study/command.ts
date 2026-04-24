@@ -263,6 +263,7 @@ const runPlugin = async (input: {
         cacheable: input.cache.summary().enabled,
       });
       input.progress.onMessage(`study asset started ${asset.id}`);
+      await yieldToProgressRenderer();
       const result = await input.plugin.runAsset({
         repoRoot: input.repoRoot,
         asset,
@@ -318,6 +319,10 @@ const runPlugin = async (input: {
   };
   const result = await input.plugin.run(context);
   return { result, config: {}, engines: [], observability: {}, interrupted: false };
+};
+
+const yieldToProgressRenderer = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 };
 
 const studyUnitResult = (

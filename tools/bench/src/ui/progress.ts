@@ -146,6 +146,8 @@ export const createBenchProgressReporter = (options: {
     },
     onMessage: (message) => {
       dashboard.message = `${options.commandName}: ${message}`;
+      dashboard.studyEvents.push(message);
+      if (dashboard.studyEvents.length > 20) dashboard.studyEvents.shift();
       queueRender();
     },
     requestStop: () => {

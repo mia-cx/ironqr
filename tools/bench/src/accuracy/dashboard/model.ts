@@ -80,6 +80,7 @@ export interface BenchDashboardModel {
   readonly activeScans: Map<string, ActiveScan>;
   readonly recentScans: RecentScan[];
   readonly slowestFreshScans: SlowScan[];
+  readonly studyEvents: string[];
 }
 
 export const MAX_SLOWEST_FRESH_SCANS = 8;
@@ -124,6 +125,7 @@ export const createBenchDashboardModel = (): BenchDashboardModel => ({
   activeScans: new Map(),
   recentScans: [],
   slowestFreshScans: [],
+  studyEvents: [],
 });
 
 export const ensureDashboardEngine = (

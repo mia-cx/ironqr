@@ -153,7 +153,7 @@ export class BenchOpenTuiDashboard {
       });
       const scorecard = createPanel(BoxRenderable, TextRenderable, renderer, {
         id: 'scorecard',
-        title: isStudy ? 'Study summary' : 'Accuracy scorecard',
+        title: isStudy ? 'Study events' : 'Accuracy scorecard',
         accent: THEME.green,
         height: SCORECARD_PANEL_ROWS,
       });
@@ -312,7 +312,7 @@ export class BenchOpenTuiDashboard {
     );
     panels.scorecard.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? renderStudySummary(this.dashboard, { width: contentWidth })
+        ? renderStudyEvents(this.dashboard, { width: contentWidth })
         : renderScorecard(this.dashboard, { width: contentWidth }),
       panelBodyRows(SCORECARD_PANEL_ROWS),
     );
@@ -430,27 +430,17 @@ const renderStudyProgress = (
   ];
 };
 
-const renderStudySummary = (
+const renderStudyEvents = (
   dashboard: BenchDashboardModel,
   options: { readonly width: number },
 ): readonly string[] => {
-  const rows = [...dashboard.engines.values()];
-  const lines = [
-    'study summary',
-    truncateLine('plugin        complete  fresh  cache-hit  last-ms', options.width),
-  ];
+  const rows = dashboard.studyEvents.slice(-8).reverse();
+  const lines = ['study events'];
   if (rows.length === 0) {
     lines.push('none yet');
     return lines;
   }
-  for (const row of rows) {
-    lines.push(
-      truncateLine(
-        `${padRight(row.id, 13)} ${padLeft(String(row.completed), 8)} ${padLeft(String(row.fresh), 6)} ${padLeft(String(row.cacheHits), 10)} ${padLeft(row.lastDurationMs === null ? '-' : formatDuration(row.lastDurationMs), 8)}`,
-        options.width,
-      ),
-    );
-  }
+  for (const row of rows) lines.push(truncateLine(row, options.width));
   return lines;
 };
 
@@ -466,19 +456,8 @@ const cacheTotals = (dashboard: BenchDashboardModel) => {
   return { hits, misses, writes };
 };
 
-const padRight = (value: string, width: number): string =>
-  value.length >= width ? value.slice(0, width) : `${value}${' '.repeat(width - value.length)}`;
-
-const padLeft = (value: string, width: number): string =>
-  value.length >= width ? value.slice(0, width) : `${' '.repeat(width - value.length)}${value}`;
-
 const truncateLine = (value: string, width: number): string =>
   value.length > width ? value.slice(0, Math.max(0, width - 1)) : value;
-
-const formatDuration = (durationMs: number): string => {
-  if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
-  return `${(durationMs / 1_000).toFixed(1)}s`;
-};
 
 const headerText = (dashboard: BenchDashboardModel): string => {
   const percent = clamp01(

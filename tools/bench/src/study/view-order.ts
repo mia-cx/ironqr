@@ -133,14 +133,31 @@ export const viewProposalsStudyPlugin: StudyPlugin<
   cacheKey: (config) => JSON.stringify(config),
   engines: () => [ironqrDescriptor()],
   observability: (config) => ({ traceMode: config.traceMode, traceEvents: 'full' }),
-  runAsset: async ({ asset, signal }) => {
+  runAsset: async ({ asset, signal, log }) => {
     if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
     const image = await asset.loadImage();
     const trace = createTraceCollector();
+    let generatedViewCount = 0;
+    let generatedProposalCount = 0;
+    const traceSink = {
+      get events() {
+        return trace.events;
+      },
+      emit(event: IronqrTraceEvent) {
+        trace.emit(event);
+        if (event.type !== 'proposal-view-generated') return;
+        generatedViewCount += 1;
+        generatedProposalCount += event.proposalCount;
+        log(
+          `${asset.id}: view ${generatedViewCount} ${event.binaryViewId} proposals=${event.proposalCount} total=${generatedProposalCount}`,
+        );
+      },
+    };
     const startedAt = performance.now();
+    log(`${asset.id}: loading image ${image.width}x${image.height}`);
     const results = await scanFrame(image, {
       allowMultiple: asset.expectedTexts.length > 1,
-      traceSink: trace,
+      traceSink,
     });
     const scanDurationMs = round(performance.now() - startedAt);
     const decodedTexts = uniqueTexts(
