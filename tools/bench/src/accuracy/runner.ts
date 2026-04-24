@@ -1,9 +1,9 @@
-import crypto from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { type BenchCorpusAsset, loadBenchCorpusAssets } from '../core/corpus.js';
+import { describeAccuracyEngine, resolveAccuracyEngines } from '../core/engines.js';
 import { getDefaultAccuracyCachePath, openAccuracyCacheStore } from './cache.js';
-import { describeAccuracyEngine, listAccuracyEngines } from './engines.js';
 import { createAccuracyProgressReporter } from './progress.js';
 import { expectedTextsFor, scoreNegativeScan, scorePositiveScan } from './scoring.js';
 import type {
@@ -11,7 +11,6 @@ import type {
   AccuracyBenchmarkOptions,
   AccuracyBenchmarkResult,
   AccuracyEngine,
-  AccuracyEngineDescriptor,
   AccuracyEngineRunOptions,
   AccuracyEngineSummary,
   AccuracyScanResult,
@@ -22,52 +21,12 @@ import { createAccuracyWorkerPool } from './worker-pool.js';
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
 const DEFAULT_REPORT_FILE = path.join(REPORTS_DIRECTORY, 'accuracy.json');
 const DEFAULT_WORKER_LIMIT = 8;
-const CORPUS_MANIFEST_VERSION = 1;
-
 export const normalizeAccuracyEngineRunOptions = (
   options?: AccuracyEngineRunOptions,
 ): AccuracyEngineRunOptions => ({
   verbose: options?.verbose ?? false,
   ironqrTraceMode: options?.ironqrTraceMode ?? 'off',
 });
-
-interface CorpusAsset {
-  readonly id: string;
-  readonly label: 'qr-pos' | 'qr-neg';
-  readonly sha256: string;
-  readonly relativePath: string;
-  readonly review: {
-    readonly status: string;
-  };
-  readonly groundTruth?: {
-    readonly codes: readonly { readonly text: string }[];
-  };
-}
-
-interface CorpusManifest {
-  readonly version: number;
-  readonly assets: readonly CorpusAsset[];
-}
-
-const readBenchCorpusManifest = async (repoRoot: string): Promise<CorpusManifest> => {
-  const filePath = path.join(repoRoot, 'corpus', 'data', 'manifest.json');
-  const parsed: unknown = JSON.parse(await readFile(filePath, 'utf8'));
-  if (!isCorpusManifest(parsed)) {
-    throw new Error(`Invalid corpus manifest: ${filePath}`);
-  }
-  if (parsed.version > CORPUS_MANIFEST_VERSION) {
-    throw new Error(
-      `Incompatible corpus manifest version: ${parsed.version}; bench supports ${CORPUS_MANIFEST_VERSION}.`,
-    );
-  }
-  return parsed;
-};
-
-const isCorpusManifest = (value: unknown): value is CorpusManifest => {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<CorpusManifest>;
-  return typeof candidate.version === 'number' && Array.isArray(candidate.assets);
-};
 
 const mapConcurrent = async <Input, Output>(
   values: readonly Input[],
@@ -94,63 +53,6 @@ const mapConcurrent = async <Input, Output>(
 
 const roundDurationMs = (value: number): number => Math.round(value * 100) / 100;
 
-const hashSeed = (seed: string): number => {
-  let hash = 2166136261;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash ^= seed.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-};
-
-const seededRandom = (seed: string): (() => number) => {
-  let state = hashSeed(seed);
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-const resolveSelection = (
-  selection: AccuracyBenchmarkOptions['selection'] = {},
-): NonNullable<AccuracyBenchmarkOptions['selection']> & { readonly seed?: string } => ({
-  assetIds: selection.assetIds ?? [],
-  labels: selection.labels ?? [],
-  ...(selection.maxAssets === undefined ? {} : { maxAssets: selection.maxAssets }),
-  ...(selection.seed === undefined && selection.maxAssets !== undefined
-    ? { seed: crypto.randomUUID() }
-    : selection.seed === undefined
-      ? {}
-      : { seed: selection.seed }),
-});
-
-const sampleAssets = (
-  assets: readonly CorpusAsset[],
-  selection: NonNullable<AccuracyBenchmarkOptions['selection']> = {},
-): readonly CorpusAsset[] => {
-  let selected = [...assets];
-  if (selection.assetIds && selection.assetIds.length > 0) {
-    const requested = new Set(selection.assetIds);
-    selected = selected.filter((asset) => requested.has(asset.id));
-  }
-  if (selection.labels && selection.labels.length > 0) {
-    const labels = new Set(selection.labels);
-    selected = selected.filter((asset) => labels.has(asset.label));
-  }
-  if (selection.maxAssets !== undefined && selected.length > selection.maxAssets) {
-    const random = seededRandom(selection.seed ?? crypto.randomUUID());
-    selected = selected
-      .map((asset) => ({ asset, sort: random() }))
-      .sort((left, right) => left.sort - right.sort)
-      .slice(0, selection.maxAssets)
-      .map((entry) => entry.asset);
-  }
-  return selected;
-};
-
 const defaultWorkerCount = (): number => {
   const available = typeof os.availableParallelism === 'function' ? os.availableParallelism() : 4;
   return Math.max(1, Math.min(DEFAULT_WORKER_LIMIT, available));
@@ -166,22 +68,7 @@ const resolveWorkerCount = (requested?: number): number => {
   return requested;
 };
 
-export const inspectAccuracyEngines = (): readonly AccuracyEngineDescriptor[] => {
-  return listAccuracyEngines().map(describeAccuracyEngine);
-};
-
-export const resolveAccuracyEngines = (): readonly AccuracyEngine[] => {
-  const engines = listAccuracyEngines();
-  const unavailable = engines.filter((engine) => !engine.availability().available);
-  if (unavailable.length > 0) {
-    throw new Error(
-      `Unavailable benchmark engine(s): ${unavailable
-        .map((engine) => `${engine.id}: ${engine.availability().reason ?? 'unavailable'}`)
-        .join('; ')}`,
-    );
-  }
-  return engines;
-};
+export { inspectAccuracyEngines, resolveAccuracyEngines } from '../core/engines.js';
 
 const summarizeEngine = (
   engineId: string,
@@ -232,7 +119,7 @@ export const isCacheableEngineResult = (
 };
 
 const cacheRunKey = (
-  asset: CorpusAsset,
+  asset: BenchCorpusAsset,
   expectedTexts: readonly string[],
   runOptions: AccuracyEngineRunOptions,
 ): string => {
@@ -246,7 +133,7 @@ const cacheRunKey = (
 
 const toEngineAssetResult = (
   engineId: string,
-  label: CorpusAsset['label'],
+  label: BenchCorpusAsset['label'],
   expectedTexts: readonly string[],
   scan: AccuracyScanResult,
   durationMs: number,
@@ -295,7 +182,7 @@ const stripDiagnosticsForCache = (scan: AccuracyScanResult): AccuracyScanResult 
 });
 
 const scoreAssetForEngine = async (
-  asset: CorpusAsset,
+  asset: BenchCorpusAsset,
   repoRoot: string,
   engine: AccuracyEngine,
   cache: Awaited<ReturnType<typeof openAccuracyCacheStore>>,
@@ -303,9 +190,7 @@ const scoreAssetForEngine = async (
   progress: ReturnType<typeof createAccuracyProgressReporter>,
   runOptions: AccuracyEngineRunOptions,
 ): Promise<EngineAssetResult> => {
-  const expectedTexts = expectedTextsFor({
-    expectedTexts: asset.groundTruth?.codes.map((code) => code.text) ?? [],
-  });
+  const expectedTexts = expectedTextsFor({ expectedTexts: asset.expectedTexts });
   const runKey = cacheRunKey(asset, expectedTexts, runOptions);
   const cacheLookupAsset = {
     id: asset.id,
@@ -351,7 +236,7 @@ const scoreAssetForEngine = async (
       id: asset.id,
       label: asset.label,
       sha256: asset.sha256,
-      imagePath: path.join(repoRoot, 'corpus', 'data', asset.relativePath),
+      imagePath: asset.imagePath,
       relativePath: asset.relativePath,
       expectedTexts,
     },
@@ -432,24 +317,17 @@ export const runAccuracyBenchmark = async (
     workerPool = createAccuracyWorkerPool(workerCount, progress);
     const activeCache = cache;
     const activeWorkerPool = workerPool;
-    const manifest = await readBenchCorpusManifest(repoRoot);
-    const selection = resolveSelection(options.selection);
-    const approvedAssets = sampleAssets(
-      manifest.assets.filter((asset) => asset.review.status === 'approved'),
-      selection,
-    );
-    const positiveCount = approvedAssets.filter((asset) => asset.label === 'qr-pos').length;
-    const negativeCount = approvedAssets.length - positiveCount;
+    const corpus = await loadBenchCorpusAssets(repoRoot, options.selection);
+    const { assets, positiveCount, negativeCount, selection } = corpus;
     progress.onManifestLoaded(
-      approvedAssets.length,
+      assets.length,
       engines.map((engine) => engine.id),
       options.cache?.enabled ?? true,
       { positiveCount, negativeCount },
     );
-    progress.onAssetsStarted(approvedAssets.length);
-    const assets = approvedAssets.map((asset, index) => {
-      progress.onAssetPrepared(asset.id, index + 1, approvedAssets.length);
-      return asset;
+    progress.onAssetsStarted(assets.length);
+    assets.forEach((asset, index) => {
+      progress.onAssetPrepared(asset.id, index + 1, assets.length);
     });
 
     progress.onBenchmarkStarted(
@@ -459,7 +337,7 @@ export const runAccuracyBenchmark = async (
     );
     const runOptions = normalizeAccuracyEngineRunOptions(options.observability);
 
-    const assetResults = await mapConcurrent<CorpusAsset, AccuracyAssetResult>(
+    const assetResults = await mapConcurrent<BenchCorpusAsset, AccuracyAssetResult>(
       assets,
       assetConcurrency,
       async (asset): Promise<AccuracyAssetResult> => ({
@@ -467,9 +345,7 @@ export const runAccuracyBenchmark = async (
         sha256: asset.sha256,
         label: asset.label,
         relativePath: asset.relativePath,
-        expectedTexts: expectedTextsFor({
-          expectedTexts: asset.groundTruth?.codes.map((code) => code.text) ?? [],
-        }),
+        expectedTexts: expectedTextsFor({ expectedTexts: asset.expectedTexts }),
         results: await Promise.all(
           engines.map((engine) =>
             scoreAssetForEngine(
@@ -498,9 +374,9 @@ export const runAccuracyBenchmark = async (
       selection: {
         seed: selection.seed ?? null,
         filters: {
-          assetIds: selection.assetIds ?? [],
-          labels: selection.labels ?? [],
-          maxAssets: selection.maxAssets ?? null,
+          assetIds: selection.assetIds,
+          labels: selection.labels,
+          maxAssets: selection.maxAssets,
         },
       },
       options: {

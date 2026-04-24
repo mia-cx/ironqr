@@ -7,6 +7,15 @@ export {
   runAccuracyBenchmark,
 } from './accuracy/runner.js';
 export type * from './accuracy/types.js';
+export type { BenchCorpusAsset, CorpusAssetLabel } from './core/corpus.js';
+export { loadBenchCorpusAssets } from './core/corpus.js';
+export {
+  describeAccuracyEngine,
+  getAccuracyEngineById,
+  inspectAccuracyEngines as inspectTargetEngines,
+  listAccuracyEngines,
+  resolveAccuracyEngines as resolveTargetEngines,
+} from './core/engines.js';
 export type { BenchmarkVerdict } from './core/reports.js';
 export { writeJsonReport, writeReportWithSnapshot } from './core/reports.js';
 export { printPerformanceSummary, writePerformanceReport } from './performance/report.js';

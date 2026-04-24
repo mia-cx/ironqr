@@ -1,4 +1,4 @@
-import type { CorpusAssetLabel } from '../accuracy/types.js';
+import type { CorpusAssetLabel } from './corpus.js';
 
 export type BenchOutcomeBucket = 'pos-pass' | 'pos-partial' | 'pos-fail' | 'neg-pass' | 'neg-fail';
 

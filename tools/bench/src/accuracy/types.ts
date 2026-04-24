@@ -1,17 +1,8 @@
 import type { IronqrTraceEvent } from '../../../../packages/ironqr/src/pipeline/trace.js';
-import type { BenchImageData } from '../shared/image.js';
+import type { BenchCorpusAsset, CorpusAssetLabel } from '../core/corpus.js';
 
-export type CorpusAssetLabel = 'qr-pos' | 'qr-neg';
-
-export interface CorpusBenchAsset {
-  readonly id: string;
-  readonly label: CorpusAssetLabel;
-  readonly sha256: string;
-  readonly imagePath: string;
-  readonly relativePath: string;
-  readonly expectedTexts: readonly string[];
-  readonly loadImage: () => Promise<BenchImageData>;
-}
+export type { CorpusAssetLabel } from '../core/corpus.js';
+export type CorpusBenchAsset = BenchCorpusAsset;
 
 export type EngineFailureReason =
   | 'failed_to_find_finders'

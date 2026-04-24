@@ -29,6 +29,7 @@ const toBenchAsset = (
 ): CorpusBenchAsset => {
   return {
     id: message.asset.id,
+    assetId: message.asset.id,
     label: message.asset.label,
     sha256: message.asset.sha256,
     imagePath: message.asset.imagePath,

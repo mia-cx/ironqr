@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { CorpusAssetLabel } from '../accuracy/types.js';
+import type { CorpusAssetLabel } from './corpus.js';
 
 export type BenchReportStatus = 'passed' | 'failed' | 'errored' | 'interrupted';
 export type BenchmarkVerdictStatus = 'passed' | 'failed' | 'unavailable';
@@ -64,7 +64,8 @@ export interface BenchReportEnvelope<Kind extends string, Summary extends object
 export interface ReportCorpusInput {
   readonly repoRoot: string;
   readonly assets: readonly {
-    readonly assetId: string;
+    readonly id?: string;
+    readonly assetId?: string;
     readonly label: CorpusAssetLabel;
   }[];
 }
@@ -81,7 +82,7 @@ export const buildReportCorpus = async ({ repoRoot, assets }: ReportCorpusInput)
     positiveCount: assets.filter((asset) => asset.label === 'qr-pos').length,
     negativeCount: assets.filter((asset) => asset.label === 'qr-neg').length,
     manifestHash: createHash('sha256').update(manifest).digest('hex'),
-    assetIds: assets.map((asset) => asset.assetId),
+    assetIds: assets.map((asset) => asset.assetId ?? asset.id ?? 'unknown'),
   };
 };
 

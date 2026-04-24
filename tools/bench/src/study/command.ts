@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { CorpusAssetLabel, CorpusBenchAsset } from '../accuracy/types.js';
+import type { CorpusAssetLabel } from '../core/corpus.js';
+import { type BenchCorpusAsset, loadBenchCorpusAssets } from '../core/corpus.js';
 import {
   type BenchmarkVerdict,
   type BenchReportEnvelope,
@@ -11,14 +12,12 @@ import {
   readRepoMetadata,
   writeReportWithSnapshot,
 } from '../core/reports.js';
-import { readBenchImage } from '../shared/image.js';
 import { createStudyPluginRegistry } from './registry.js';
 import type { StudyPlugin, StudyPluginResult } from './types.js';
 import { viewOrderStudyPlugin } from './view-order.js';
 
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
-const CORPUS_MANIFEST_VERSION = 1;
 
 type StudyReport = BenchReportEnvelope<'study-report', Record<string, unknown>, StudyReportDetails>;
 
@@ -40,20 +39,6 @@ interface StudyOptions {
   readonly cacheFile?: string;
   readonly reportFile?: string;
   readonly progressEnabled?: boolean;
-}
-
-interface CorpusManifestAsset {
-  readonly id: string;
-  readonly label: CorpusAssetLabel;
-  readonly sha256: string;
-  readonly relativePath: string;
-  readonly review: { readonly status: string };
-  readonly groundTruth?: { readonly codes: readonly { readonly text: string }[] };
-}
-
-interface CorpusManifest {
-  readonly version: number;
-  readonly assets: readonly CorpusManifestAsset[];
 }
 
 export interface StudyBenchmarkResult {
@@ -120,7 +105,7 @@ export const runStudyBenchmark = async (
     repo: await readRepoMetadata(repoRoot),
     corpus: await buildReportCorpus({
       repoRoot,
-      assets: assets.map((asset) => ({ assetId: asset.id, label: asset.label })),
+      assets,
     }),
     selection: { seed: selection.seed, filters: selection.filters },
     engines: [],
@@ -170,71 +155,13 @@ const stableStudySeed = (studyId: string, filters: Record<string, unknown>): str
 const loadStudyAssets = async (
   repoRoot: string,
   selection: ReturnType<typeof resolveStudySelection>,
-): Promise<readonly CorpusBenchAsset[]> => {
-  const manifest = await readCorpusManifest(repoRoot);
-  const approved = manifest.assets.filter((asset) => asset.review.status === 'approved');
-  let selected = approved;
-  if (selection.assetIds.length > 0) {
-    const requested = new Set(selection.assetIds);
-    selected = selected.filter((asset) => requested.has(asset.id));
-  }
-  if (selection.labels.length > 0) {
-    const labels = new Set(selection.labels);
-    selected = selected.filter((asset) => labels.has(asset.label));
-  }
-  if (selection.maxAssets !== null && selected.length > selection.maxAssets) {
-    const random = seededRandom(selection.seed);
-    selected = selected
-      .map((asset) => ({ asset, sort: random() }))
-      .sort((left, right) => left.sort - right.sort)
-      .slice(0, selection.maxAssets)
-      .map((entry) => entry.asset);
-  }
-  return selected.map((asset) => ({
-    id: asset.id,
-    label: asset.label,
-    sha256: asset.sha256,
-    relativePath: asset.relativePath,
-    imagePath: path.join(repoRoot, 'corpus', 'data', asset.relativePath),
-    expectedTexts: asset.groundTruth?.codes.map((code) => code.text) ?? [],
-    loadImage: () => readBenchImage(path.join(repoRoot, 'corpus', 'data', asset.relativePath)),
-  }));
-};
-
-const readCorpusManifest = async (repoRoot: string): Promise<CorpusManifest> => {
-  const filePath = path.join(repoRoot, 'corpus', 'data', 'manifest.json');
-  const parsed: unknown = JSON.parse(await readFile(filePath, 'utf8'));
-  if (!isCorpusManifest(parsed)) throw new Error(`Invalid corpus manifest: ${filePath}`);
-  if (parsed.version > CORPUS_MANIFEST_VERSION) {
-    throw new Error(
-      `Incompatible corpus manifest version: ${parsed.version}; bench supports ${CORPUS_MANIFEST_VERSION}.`,
-    );
-  }
-  return parsed;
-};
-
-const isCorpusManifest = (value: unknown): value is CorpusManifest => {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<CorpusManifest>;
-  return typeof candidate.version === 'number' && Array.isArray(candidate.assets);
-};
-
-const hashSeed = (seed: string): number => {
-  let hash = 2166136261;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash ^= seed.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-};
-
-const seededRandom = (seed: string): (() => number) => {
-  let state = hashSeed(seed);
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
+): Promise<readonly BenchCorpusAsset[]> => {
+  const corpus = await loadBenchCorpusAssets(repoRoot, {
+    assetIds: selection.assetIds,
+    labels: selection.labels,
+    maxAssets: selection.maxAssets,
+    seed: selection.seed,
+    generateSeedWhenSampling: false,
+  });
+  return corpus.assets;
 };
