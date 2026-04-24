@@ -159,6 +159,96 @@ const stripDiagnosticsForCache = (scan: AccuracyScanResult): AccuracyScanResult 
   diagnostics: null,
 });
 
+const runEngineInProcess = async (
+  asset: BenchCorpusAsset,
+  engine: AccuracyEngine,
+  progress: ReturnType<typeof createAccuracyProgressReporter>,
+  runOptions: AccuracyEngineRunOptions,
+  cacheable: boolean,
+): Promise<{
+  readonly scan: AccuracyScanResult;
+  readonly durationMs: number;
+  readonly imageLoadDurationMs: number | null;
+  readonly totalJobDurationMs: number;
+}> => {
+  progress.onScanStarted({
+    engineId: engine.id,
+    assetId: asset.id,
+    relativePath: asset.relativePath,
+    label: asset.label,
+    cached: false,
+    cacheable,
+  });
+  let imageLoadDurationMs: number | null = null;
+  const startedAt = performance.now();
+  const scan = await engine.scan(
+    {
+      ...asset,
+      loadImage: async () => {
+        progress.onImageLoadStarted({
+          engineId: engine.id,
+          assetId: asset.id,
+          relativePath: asset.relativePath,
+          label: asset.label,
+        });
+        const imageStartedAt = performance.now();
+        const image = await asset.loadImage();
+        imageLoadDurationMs = roundDurationMs(performance.now() - imageStartedAt);
+        progress.onImageLoadFinished({
+          engineId: engine.id,
+          assetId: asset.id,
+          width: image.width,
+          height: image.height,
+        });
+        return image;
+      },
+    },
+    runOptions,
+  );
+  const totalJobDurationMs = roundDurationMs(performance.now() - startedAt);
+  return {
+    scan,
+    durationMs: roundDurationMs(totalJobDurationMs - (imageLoadDurationMs ?? 0)),
+    imageLoadDurationMs,
+    totalJobDurationMs,
+  };
+};
+
+const runEngineInWorker = async (
+  asset: BenchCorpusAsset,
+  engine: AccuracyEngine,
+  workerPool: ReturnType<typeof createAccuracyWorkerPool>,
+  runOptions: AccuracyEngineRunOptions,
+  expectedTexts: readonly string[],
+  cacheable: boolean,
+): Promise<{
+  readonly scan: AccuracyScanResult;
+  readonly durationMs: number;
+  readonly imageLoadDurationMs: number | null;
+  readonly totalJobDurationMs: number;
+}> => {
+  const job = {
+    engineId: engine.id,
+    cacheable,
+    asset: {
+      id: asset.id,
+      label: asset.label,
+      sha256: asset.sha256,
+      imagePath: asset.imagePath,
+      relativePath: asset.relativePath,
+      expectedTexts,
+    },
+    runOptions,
+  };
+  return workerPool.run(job).catch(async (firstError) => {
+    return workerPool.run(job).catch((secondError) => {
+      throw new Error(
+        `Accuracy worker repeatedly failed for ${engine.id}/${asset.id}: ${String(firstError)}; ${String(secondError)}`,
+      );
+    });
+  });
+};
+
 const scoreAssetForEngine = async (
   asset: BenchCorpusAsset,
   engine: AccuracyEngine,
@@ -206,26 +296,11 @@ const scoreAssetForEngine = async (
     return result;
   }
 
-  const job = {
-    engineId: engine.id,
-    cacheable: cache.isEnabledFor(engine),
-    asset: {
-      id: asset.id,
-      label: asset.label,
-      sha256: asset.sha256,
-      imagePath: asset.imagePath,
-      relativePath: asset.relativePath,
-      expectedTexts,
-    },
-    runOptions,
-  };
-  const execution = await workerPool.run(job).catch(async (firstError) => {
-    return workerPool.run(job).catch((secondError) => {
-      throw new Error(
-        `Accuracy worker repeatedly failed for ${engine.id}/${asset.id}: ${String(firstError)}; ${String(secondError)}`,
-      );
-    });
-  });
+  const cacheable = cache.isEnabledFor(engine);
+  const execution =
+    engine.execution?.workerSafe === false
+      ? await runEngineInProcess(asset, engine, progress, runOptions, cacheable)
+      : await runEngineInWorker(asset, engine, workerPool, runOptions, expectedTexts, cacheable);
 
   const result = toEngineAssetResult(
     engine.id,

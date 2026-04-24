@@ -126,6 +126,9 @@ export interface AccuracyEngine {
   readonly kind: 'first-party' | 'third-party';
   readonly capabilities: AccuracyEngineCapabilities;
   readonly cache: AccuracyEngineCachePolicy;
+  readonly execution?: {
+    readonly workerSafe?: boolean;
+  };
   availability: () => AccuracyEngineAvailability;
   scan: (
     asset: CorpusBenchAsset,
