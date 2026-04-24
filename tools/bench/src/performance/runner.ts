@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { bucketForOutcome, emptyBucketCounts, type BenchOutcomeBucket } from '../core/outcome.js';
 import {
@@ -163,7 +164,7 @@ export const runPerformanceBenchmark = async (
   if (!ironqr) throw new Error('Missing ironqr performance summary');
   const baselines = summaries.filter((summary) => summary.engineId !== 'ironqr');
   const pass = buildPerformancePassVerdict(ironqr, baselines);
-  const regression = unavailableVerdict('No previous summary comparison implemented yet.');
+  const regression = await buildPerformanceRegressionVerdict(reportFile, ironqr);
 
   const report: PerformanceReport = {
     kind: 'performance-report',
@@ -231,6 +232,33 @@ const summarizePerformanceEngine = (
     throughputAssetsPerSecond: averageDurationMs === 0 ? 0 : round(1000 / averageDurationMs),
     buckets,
   };
+};
+
+const buildPerformanceRegressionVerdict = async (
+  reportFile: string,
+  ironqr: PerformanceEngineSummary,
+): Promise<BenchmarkVerdict> => {
+  try {
+    const previous = JSON.parse(await readFile(reportFile, 'utf8')) as {
+      readonly summary?: {
+        readonly ironqr?: {
+          readonly p95DurationMs?: number;
+          readonly throughputAssetsPerSecond?: number;
+        };
+      };
+    };
+    const previousIronqr = previous.summary?.ironqr;
+    if (!previousIronqr) return unavailableVerdict('Previous performance summary is missing ironqr data.');
+    if (ironqr.p95DurationMs > (previousIronqr.p95DurationMs ?? Number.POSITIVE_INFINITY)) {
+      return failedVerdict('ironqr p95 duration regressed versus previous performance summary.');
+    }
+    if (ironqr.throughputAssetsPerSecond < (previousIronqr.throughputAssetsPerSecond ?? 0)) {
+      return failedVerdict('ironqr throughput regressed versus previous performance summary.');
+    }
+    return passedVerdict('Performance summary did not regress versus previous report.');
+  } catch {
+    return unavailableVerdict('No previous performance summary is available for regression comparison.');
+  }
 };
 
 const buildPerformancePassVerdict = (

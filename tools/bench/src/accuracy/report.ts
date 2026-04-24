@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import {
   buildReportCorpus,
   type BenchmarkVerdict,
@@ -244,7 +245,7 @@ export const buildAccuracyReport = async (result: AccuracyBenchmarkResult) => {
   const baselines = result.summaries.filter((summary) => summary.engineId !== 'ironqr');
   const gaps = findAccuracyGaps(result);
   const pass = buildAccuracyPassVerdict(result, gaps);
-  const regression = unavailableVerdict('No previous summary comparison implemented yet.');
+  const regression = await buildAccuracyRegressionVerdict(result, ironqr, gaps);
   return {
     kind: 'accuracy-report' as const,
     schemaVersion: REPORT_SCHEMA_VERSION,
@@ -292,6 +293,36 @@ export const buildAccuracyReport = async (result: AccuracyBenchmarkResult) => {
 
 const hasEngineErrors = (result: AccuracyBenchmarkResult): boolean =>
   result.assets.some((asset) => asset.results.some((entry) => entry.outcome === 'fail-error'));
+
+const buildAccuracyRegressionVerdict = async (
+  result: AccuracyBenchmarkResult,
+  ironqr: AccuracyBenchmarkResult['summaries'][number],
+  gaps: ReturnType<typeof findAccuracyGaps>,
+): Promise<BenchmarkVerdict> => {
+  try {
+    const previous = JSON.parse(await readFile(result.reportFile, 'utf8')) as {
+      readonly summary?: {
+        readonly ironqr?: { readonly fullPassRate?: number; readonly falsePositiveRate?: number };
+        readonly gaps?: { readonly ironqrMissedBaselineHitCount?: number };
+      };
+    };
+    const previousIronqr = previous.summary?.ironqr;
+    if (!previousIronqr) return unavailableVerdict('Previous accuracy summary is missing ironqr data.');
+    const previousGapCount = previous.summary?.gaps?.ironqrMissedBaselineHitCount ?? 0;
+    if (ironqr.falsePositiveRate > (previousIronqr.falsePositiveRate ?? 0)) {
+      return failedVerdict('ironqr false-positive rate regressed versus previous accuracy summary.');
+    }
+    if (ironqr.fullPassRate < (previousIronqr.fullPassRate ?? 0)) {
+      return failedVerdict('ironqr full-pass rate regressed versus previous accuracy summary.');
+    }
+    if (gaps.ironqrMissedBaselineHit.length > previousGapCount) {
+      return failedVerdict('ironqr baseline-miss gap count regressed versus previous accuracy summary.');
+    }
+    return passedVerdict('Accuracy summary did not regress versus previous report.');
+  } catch {
+    return unavailableVerdict('No previous accuracy summary is available for regression comparison.');
+  }
+};
 
 const buildAccuracyPassVerdict = (
   result: AccuracyBenchmarkResult,
