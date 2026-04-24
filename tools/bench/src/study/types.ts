@@ -17,11 +17,17 @@ export interface StudyPluginOutput {
   readonly cacheFile?: string;
 }
 
+export interface StudyReportReaders {
+  readonly accuracy: () => Promise<unknown | null>;
+  readonly performance: () => Promise<unknown | null>;
+}
+
 export interface StudyPluginContext {
   readonly repoRoot: string;
   readonly assets: readonly CorpusBenchAsset[];
   readonly output: StudyPluginOutput;
   readonly flags: Readonly<Record<string, string | number | boolean>>;
+  readonly reports: StudyReportReaders;
   readonly signal?: AbortSignal;
   readonly log: (message: string) => void;
 }

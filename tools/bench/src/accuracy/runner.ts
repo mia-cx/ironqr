@@ -374,6 +374,7 @@ export const runAccuracyBenchmark = async (
     const activeWorkerPool = workerPool;
     const corpus = await loadBenchCorpusAssets(repoRoot, options.selection);
     const { assets, positiveCount, negativeCount, selection } = corpus;
+    progress.onMessage(`seed=${selection.seed ?? 'none'}`);
     progress.onManifestLoaded(
       assets.length,
       engines.map((engine) => engine.id),

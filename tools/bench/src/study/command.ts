@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import type { CorpusAssetLabel } from '../core/corpus.js';
@@ -72,13 +72,16 @@ export const runStudyBenchmark = async (
   await mkdir(path.dirname(cacheFile), { recursive: true });
 
   const selection = resolveStudySelection(studyId, options);
+  if (options.progressEnabled === false) {
+    process.stdout.write(`studySeed: ${JSON.stringify(selection.seed)}\n`);
+  }
   const assets = await loadStudyAssets(repoRoot, selection);
   const progress = createBenchProgressReporter({
     commandName: 'study',
     enabled: options.progressEnabled ?? true,
     ...(options.requestStop === undefined ? {} : { requestStop: options.requestStop }),
   });
-  progress.onMessage(`study ${studyId} loaded ${assets.length} assets`);
+  progress.onMessage(`study ${studyId} loaded ${assets.length} assets seed=${selection.seed}`);
   const logs: string[] = [];
   try {
     const result = await plugin.run({
@@ -89,6 +92,7 @@ export const runStudyBenchmark = async (
         ...(selection.maxAssets === null ? {} : { 'max-assets': selection.maxAssets }),
         seed: selection.seed,
       },
+      reports: createStudyReportReaders(repoRoot),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       log: (message) => {
         logs.push(message);
@@ -137,6 +141,22 @@ export const runStudyBenchmark = async (
     return { reportFile, report };
   } finally {
     progress.stop();
+  }
+};
+
+const createStudyReportReaders = (repoRoot: string) => ({
+  accuracy: () => readJsonOrNull(path.join(repoRoot, REPORTS_DIRECTORY, 'accuracy.json')),
+  performance: () => readJsonOrNull(path.join(repoRoot, REPORTS_DIRECTORY, 'performance.json')),
+});
+
+const readJsonOrNull = async (filePath: string): Promise<unknown | null> => {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
   }
 };
 

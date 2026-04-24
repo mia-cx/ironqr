@@ -283,8 +283,10 @@ export const buildAccuracyReport = async (result: AccuracyBenchmarkResult) => {
     selection: result.selection,
     engines: result.engines.map((engine) => ({
       id: engine.id,
-      adapterVersion: '1',
-      runtimeVersion: engine.capabilities.runtime,
+      adapterVersion: engine.adapterVersion,
+      packageName: engine.packageName,
+      ...(engine.packageVersion === null ? {} : { packageVersion: engine.packageVersion }),
+      runtimeVersion: engine.runtimeVersion,
     })),
     options: result.options,
     summary: {

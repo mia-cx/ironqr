@@ -5,7 +5,11 @@ import type { ScanTimingSpan } from '../../../../packages/ironqr/src/contracts/s
 import { describeAccuracyEngine, resolveAccuracyEngines } from '../accuracy/engines.js';
 import { expectedTextsFor, scoreNegativeScan, scorePositiveScan } from '../accuracy/scoring.js';
 import type { AccuracyEngine, AccuracyScanResult, EngineAssetResult } from '../accuracy/types.js';
-import { type BenchCorpusAsset, loadBenchCorpusAssets } from '../core/corpus.js';
+import {
+  type BenchCorpusAsset,
+  loadBenchCorpusAssets,
+  stableSeededShuffle,
+} from '../core/corpus.js';
 import { type BenchOutcomeBucket, bucketForOutcome, emptyBucketCounts } from '../core/outcome.js';
 import {
   type BenchmarkVerdict,
@@ -263,6 +267,8 @@ export const runPerformanceBenchmark = async (
     seed: selection.seed,
     filters: selection.filters,
   });
+  const warmupSeed = `${selection.seed ?? crypto.randomUUID()}:warmup`;
+  progress.onMessage(`seed=${selection.seed ?? 'none'} warmupSeed=${warmupSeed}`);
 
   let warmupResults: readonly PerformanceWarmupResult[] = [];
   let iterationResults: readonly PerformanceIterationResult[] = [];
@@ -270,7 +276,7 @@ export const runPerformanceBenchmark = async (
   let status: PerformanceReport['status'] = 'passed';
 
   try {
-    warmupResults = await runPerformanceWarmup(engines, assets, progress);
+    warmupResults = await runPerformanceWarmup(engines, assets, progress, warmupSeed);
     const jobs = buildPerformanceJobs(iterations, assets, engines);
     const partialRun = await mapConcurrentPartial(
       jobs,
@@ -372,16 +378,22 @@ export const runPerformanceBenchmark = async (
     repo: await readRepoMetadata(repoRoot),
     corpus: await buildReportCorpus({ repoRoot, assets }),
     selection: { seed: selection.seed, filters: selection.filters },
-    engines: engines.map((engine) => ({
-      id: engine.id,
-      adapterVersion: engine.cache.version,
-      packageName: engine.id,
-      runtimeVersion: describeAccuracyEngine(engine).capabilities.runtime,
-    })),
+    engines: engines.map((engine) => {
+      const descriptor = describeAccuracyEngine(engine);
+      return {
+        id: descriptor.id,
+        adapterVersion: descriptor.adapterVersion,
+        packageName: descriptor.packageName,
+        ...(descriptor.packageVersion === null
+          ? {}
+          : { packageVersion: descriptor.packageVersion }),
+        runtimeVersion: descriptor.runtimeVersion,
+      };
+    }),
     options: {
       iterations,
       workers: workerCount,
-      warmup: { assetCount: Math.min(1, assets.length) },
+      warmup: { assetCount: Math.min(1, assets.length), seed: warmupSeed },
     },
     summary: {
       ironqr,
@@ -433,9 +445,10 @@ const runPerformanceWarmup = async (
   engines: readonly AccuracyEngine[],
   assets: readonly BenchCorpusAsset[],
   progress: ReturnType<typeof createBenchProgressReporter>,
+  warmupSeed: string,
 ): Promise<readonly PerformanceWarmupResult[]> => {
   if (assets.length === 0) return [];
-  const warmupAssets = loadWarmupAssets(assets);
+  const warmupAssets = loadWarmupAssets(assets, warmupSeed);
   return Promise.all(
     engines.map(async (engine) => {
       const asset = warmupAssets[0];
@@ -454,8 +467,10 @@ const runPerformanceWarmup = async (
   );
 };
 
-const loadWarmupAssets = (assets: readonly BenchCorpusAsset[]): readonly BenchCorpusAsset[] =>
-  assets.slice(0, 1);
+const loadWarmupAssets = (
+  assets: readonly BenchCorpusAsset[],
+  warmupSeed: string,
+): readonly BenchCorpusAsset[] => stableSeededShuffle(assets, warmupSeed).slice(0, 1);
 
 const buildPerformanceJobs = (
   iterations: number,

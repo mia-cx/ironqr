@@ -309,6 +309,11 @@ interface RunControl {
   readonly requestStop: () => void;
 }
 
+const printSeedWhenLogOnly = (command: string, seed: string | null | undefined): void => {
+  if (seed === undefined) return;
+  console.log(`${command}Seed: ${JSON.stringify(seed)}`);
+};
+
 const runAccuracy = async (
   repoRoot: string,
   options: CliOptions,
@@ -325,6 +330,7 @@ const runAccuracy = async (
     : getDefaultAccuracyCachePath(repoRoot);
   const engines = resolveAccuracyEngines();
   const seed = options.seed ?? crypto.randomUUID();
+  if (!options.progressEnabled) printSeedWhenLogOnly('accuracy', seed);
   const result = await runAccuracyBenchmark(repoRoot, engines, reportFile, {
     cache: {
       enabled: options.cacheEnabled,
@@ -367,6 +373,7 @@ const runPerformance = async (
     ? path.resolve(repoRoot, options.cacheFile)
     : getDefaultPerformanceCachePath(repoRoot);
   const seed = options.seed ?? crypto.randomUUID();
+  if (!options.progressEnabled) printSeedWhenLogOnly('performance', seed);
   const result = await runPerformanceBenchmark(repoRoot, reportFile, {
     ...(options.iterations === undefined ? {} : { iterations: options.iterations }),
     ...(options.workers === undefined ? {} : { workers: options.workers }),

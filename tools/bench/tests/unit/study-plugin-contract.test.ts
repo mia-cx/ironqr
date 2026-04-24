@@ -49,6 +49,7 @@ describe('study plugin contract', () => {
       assets: [],
       output: { reportFile: '/repo/tools/bench/reports/study.json' },
       flags: { 'max-assets': 0 },
+      reports: { accuracy: async () => null, performance: async () => null },
       log: () => {},
     });
 

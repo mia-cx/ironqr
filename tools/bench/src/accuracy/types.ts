@@ -204,7 +204,12 @@ export interface AccuracyEngineSummary {
 }
 
 export type AccuracyEngineDescriptor = Pick<AccuracyEngine, 'id' | 'kind' | 'capabilities'> &
-  AccuracyEngineAvailability;
+  AccuracyEngineAvailability & {
+    readonly adapterVersion: string;
+    readonly packageName: string;
+    readonly packageVersion: string | null;
+    readonly runtimeVersion: string;
+  };
 
 export interface AccuracyBenchmarkCacheSummary {
   readonly enabled: boolean;
