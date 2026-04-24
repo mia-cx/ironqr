@@ -28,6 +28,7 @@ const BAR_HEIGHT = 4;
 const FILLED_BAR = '███';
 const EMPTY_BAR = '░░░';
 const NO_SAMPLE_BAR = '···';
+const CACHE_ONLY_BAR = '▒▒▒';
 
 export const renderTimingChart = (
   model: BenchDashboardModel,
@@ -49,7 +50,7 @@ export const renderTimingChart = (
 
   const lines = [
     'avg fresh ms / asset',
-    `legend: P=QR pass  F=QR fail  N=NEG pass  X=NEG fail${viewportLabel(model.engineOrder.length, engineOffset, engines.length)}`,
+    `legend: P=QR pass  F=QR fail  N=NEG pass  X=NEG fail  c=cache hits${viewportLabel(model.engineOrder.length, engineOffset, engines.length)}`,
     '',
   ];
   if (engines.length === 0) return lines;
@@ -70,6 +71,7 @@ export const renderTimingChart = (
     `${padRight('avg', ROW_LABEL_WIDTH)}${joinEngineGroups(engines.map(renderAverageRow))}`,
   );
   lines.push(`${padRight('n', ROW_LABEL_WIDTH)}${joinEngineGroups(engines.map(renderCountRow))}`);
+  lines.push(`${padRight('c', ROW_LABEL_WIDTH)}${joinEngineGroups(engines.map(renderCacheRow))}`);
   return lines;
 };
 
@@ -106,7 +108,8 @@ const barGlyph = (
 ): string => {
   const bucket = engine.timing[key];
   if (bucket.count === 0) return NO_SAMPLE_BAR;
-  const avgMs = averageTimingMs(bucket) ?? 0;
+  const avgMs = averageTimingMs(bucket);
+  if (avgMs === null) return row === 1 ? CACHE_ONLY_BAR : EMPTY_BAR;
   const level = Math.max(1, Math.ceil((avgMs / scaleMax) * barHeight));
   if (row > level) return EMPTY_BAR;
   return FILLED_BAR;
@@ -121,6 +124,12 @@ const renderAverageRow = (engine: DashboardEngineStats): string => {
 const renderCountRow = (engine: DashboardEngineStats): string => {
   return timingBucketKeys()
     .map((key) => padRight(String(engine.timing[key].count), BUCKET_WIDTH))
+    .join(BUCKET_GAP);
+};
+
+const renderCacheRow = (engine: DashboardEngineStats): string => {
+  return timingBucketKeys()
+    .map((key) => padRight(String(engine.timing[key].cachedCount), BUCKET_WIDTH))
     .join(BUCKET_GAP);
 };
 

@@ -6,6 +6,8 @@ export type TimingBucketKey = 'positive-pass' | 'positive-fail' | 'negative-pass
 
 export interface TimingBucketStats {
   readonly count: number;
+  readonly freshCount: number;
+  readonly cachedCount: number;
   readonly totalMs: number;
   readonly maxMs: number;
 }
@@ -89,7 +91,13 @@ const TIMING_BUCKETS: readonly TimingBucketKey[] = [
   'negative-fail',
 ];
 
-const emptyTimingBucket = (): TimingBucketStats => ({ count: 0, totalMs: 0, maxMs: 0 });
+const emptyTimingBucket = (): TimingBucketStats => ({
+  count: 0,
+  freshCount: 0,
+  cachedCount: 0,
+  totalMs: 0,
+  maxMs: 0,
+});
 
 const createTimingBuckets = (): TimingBuckets => ({
   'positive-pass': emptyTimingBucket(),
@@ -289,8 +297,13 @@ export const onDashboardScanFinished = (
   }
 
   recordOutcome(engine, event.result);
+  recordTiming(
+    engine,
+    classifyTimingBucket(event.result),
+    event.result.durationMs,
+    event.result.cached,
+  );
   if (!event.result.cached) {
-    recordTiming(engine, classifyTimingBucket(event.result), event.result.durationMs);
     recordSlowScan(model, event);
   }
   recordRecentScan(model, event, nowMs);
@@ -312,8 +325,8 @@ export const classifyTimingBucket = (result: EngineAssetResult): TimingBucketKey
 };
 
 export const averageTimingMs = (bucket: TimingBucketStats): number | null => {
-  if (bucket.count === 0) return null;
-  return bucket.totalMs / bucket.count;
+  if (bucket.freshCount === 0) return null;
+  return bucket.totalMs / bucket.freshCount;
 };
 
 export const timingBucketKeys = (): readonly TimingBucketKey[] => TIMING_BUCKETS;
@@ -337,12 +350,15 @@ const recordTiming = (
   engine: DashboardEngineStats,
   key: TimingBucketKey,
   durationMs: number,
+  cached: boolean,
 ): void => {
   const current = engine.timing[key];
   engine.timing[key] = {
     count: current.count + 1,
-    totalMs: current.totalMs + durationMs,
-    maxMs: Math.max(current.maxMs, durationMs),
+    freshCount: current.freshCount + (cached ? 0 : 1),
+    cachedCount: current.cachedCount + (cached ? 1 : 0),
+    totalMs: current.totalMs + (cached ? 0 : durationMs),
+    maxMs: cached ? current.maxMs : Math.max(current.maxMs, durationMs),
   };
 };
 
