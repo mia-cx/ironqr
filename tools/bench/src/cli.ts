@@ -479,6 +479,7 @@ const runStudy = async (
     cacheEnabled: options.cacheEnabled,
     refreshCache: options.refreshCache,
     studyFlags: options.studyFlags,
+    ...(options.workers === undefined ? {} : { workers: options.workers }),
     assetIds: options.assetIds,
     labels: options.labels,
     ...(options.maxAssets === undefined ? {} : { maxAssets: options.maxAssets }),

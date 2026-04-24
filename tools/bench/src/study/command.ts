@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import type { AccuracyEngineDescriptor, EngineAssetResult } from '../accuracy/types.js';
@@ -14,6 +15,7 @@ import {
   readRepoMetadata,
   writeReportWithSnapshot,
 } from '../core/reports.js';
+import { mapConcurrentPartial } from '../core/runner.js';
 import { createBenchProgressReporter } from '../ui/progress.js';
 import { openStudyCache } from './cache.js';
 import { createStudyPluginRegistry } from './registry.js';
@@ -27,6 +29,7 @@ import { viewOrderStudyPlugin, viewProposalsStudyPlugin } from './view-order.js'
 
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
+const MAX_STUDY_WORKERS = 8;
 
 type StudyReport = BenchReportEnvelope<'study-report', Record<string, unknown>, StudyReportDetails>;
 
@@ -52,6 +55,7 @@ interface StudyOptions {
   readonly progressEnabled?: boolean;
   readonly cacheEnabled?: boolean;
   readonly refreshCache?: boolean;
+  readonly workers?: number;
   readonly studyFlags?: Readonly<Record<string, string | number | boolean>>;
   readonly signal?: AbortSignal;
   readonly requestStop?: () => void;
@@ -76,6 +80,21 @@ export const getDefaultStudyCachePath = (repoRoot: string, studyId: string): str
 
 export const listStudyPlugins = (): readonly StudyPlugin[] => createDefaultStudyRegistry().list();
 
+const defaultStudyWorkerCount = (): number => {
+  const available = typeof os.availableParallelism === 'function' ? os.availableParallelism() : 4;
+  return Math.max(1, Math.min(MAX_STUDY_WORKERS, Math.floor(available / 2)));
+};
+
+const resolveStudyWorkerCount = (requested?: number): number => {
+  if (requested === undefined) return defaultStudyWorkerCount();
+  if (!Number.isSafeInteger(requested) || requested < 1 || requested > MAX_STUDY_WORKERS) {
+    throw new Error(
+      `Study worker count must be an integer from 1 to ${MAX_STUDY_WORKERS}, got ${requested}`,
+    );
+  }
+  return requested;
+};
+
 export const runStudyBenchmark = async (
   repoRoot: string,
   studyId: string,
@@ -88,6 +107,7 @@ export const runStudyBenchmark = async (
   await mkdir(path.dirname(reportFile), { recursive: true });
   await mkdir(path.dirname(cacheFile), { recursive: true });
 
+  const workerCount = resolveStudyWorkerCount(options.workers);
   const selection = resolveStudySelection(studyId, options);
   if (options.progressEnabled === false) {
     process.stdout.write(`studySeed: ${JSON.stringify(selection.seed)}\n`);
@@ -127,6 +147,7 @@ export const runStudyBenchmark = async (
       ...(options.studyFlags === undefined ? {} : { studyFlags: options.studyFlags }),
       reports,
       cache,
+      workerCount,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       log,
       progress,
@@ -164,6 +185,7 @@ export const runStudyBenchmark = async (
         progressEnabled: options.progressEnabled ?? true,
         cacheEnabled: options.cacheEnabled ?? true,
         refreshCache: options.refreshCache ?? false,
+        workers: workerCount,
         config,
         observability,
       },
@@ -193,6 +215,7 @@ const runPlugin = async (input: {
   readonly studyFlags?: Readonly<Record<string, string | number | boolean>>;
   readonly reports: ReturnType<typeof createStudyReportReaders>;
   readonly cache: StudyCacheHandle<unknown>;
+  readonly workerCount: number;
   readonly signal?: AbortSignal;
   readonly log: (message: string) => void;
   readonly progress: ReturnType<typeof createBenchProgressReporter>;
@@ -209,80 +232,84 @@ const runPlugin = async (input: {
     ...(input.studyFlags ?? {}),
   };
   if (isGenericStudyPlugin(input.plugin)) {
+    const runAsset = input.plugin.runAsset;
+    const summarize = input.plugin.summarize;
+    const renderReport = input.plugin.renderReport;
     const config = input.plugin.parseConfig?.({ flags, assets: input.assets }) ?? {};
     const baseCacheKey = input.plugin.cacheKey?.(config) ?? JSON.stringify(config);
     const engines = input.plugin.engines?.(config) ?? [];
     const observability = input.plugin.observability?.(config) ?? {};
-    const assetResults: unknown[] = [];
-    input.progress.onBenchmarkStarted(input.assets.length, [input.plugin.id], 1);
+    input.progress.onBenchmarkStarted(input.assets.length, [input.plugin.id], input.workerCount);
 
-    let interrupted = false;
-    for (const [index, asset] of input.assets.entries()) {
-      if (input.signal?.aborted) {
-        interrupted = true;
-        input.log('study interrupted; writing partial report from completed assets');
-        break;
-      }
-      input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
-      const cacheKey = JSON.stringify({
-        studyId: input.plugin.id,
-        studyVersion: input.plugin.version,
-        configKey: baseCacheKey,
-        assetId: asset.id,
-        assetSha256: asset.sha256,
-        engines: engines.map((engine) => ({ id: engine.id, version: engine.adapterVersion })),
-        observability,
-      });
-      const cached = await input.cache.read(asset, cacheKey);
-      if (cached !== null) {
+    const run = await mapConcurrentPartial(
+      input.assets,
+      input.workerCount,
+      async (asset, index) => {
+        input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
+        const cacheKey = JSON.stringify({
+          studyId: input.plugin.id,
+          studyVersion: input.plugin.version,
+          configKey: baseCacheKey,
+          assetId: asset.id,
+          assetSha256: asset.sha256,
+          engines: engines.map((engine) => ({ id: engine.id, version: engine.adapterVersion })),
+          observability,
+        });
+        const cached = await input.cache.read(asset, cacheKey);
+        if (cached !== null) {
+          input.progress.onScanStarted({
+            engineId: input.plugin.id,
+            assetId: asset.id,
+            relativePath: asset.relativePath,
+            label: asset.label,
+            cached: true,
+            cacheable: true,
+          });
+          input.progress.onScanFinished({
+            engineId: input.plugin.id,
+            assetId: asset.id,
+            relativePath: asset.relativePath,
+            result: studyUnitResult(input.plugin.id, asset, cached, true),
+            wroteToCache: false,
+          });
+          input.progress.onMessage(`study cache hit ${asset.id}`);
+          return cached;
+        }
         input.progress.onScanStarted({
           engineId: input.plugin.id,
           assetId: asset.id,
           relativePath: asset.relativePath,
           label: asset.label,
-          cached: true,
-          cacheable: true,
+          cached: false,
+          cacheable: input.cache.summary().enabled,
         });
+        input.progress.onMessage(`study asset started ${asset.id}`);
+        await yieldToProgressRenderer();
+        const result = await runAsset({
+          repoRoot: input.repoRoot,
+          asset,
+          config,
+          reports: input.reports,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          log: input.log,
+        });
+        await input.cache.write(asset, cacheKey, result);
         input.progress.onScanFinished({
           engineId: input.plugin.id,
           assetId: asset.id,
           relativePath: asset.relativePath,
-          result: studyUnitResult(input.plugin.id, asset, cached, true),
-          wroteToCache: false,
+          result: studyUnitResult(input.plugin.id, asset, result, false),
+          wroteToCache: input.cache.summary().enabled,
         });
-        input.progress.onMessage(`study cache hit ${asset.id}`);
-        assetResults.push(cached);
-        continue;
-      }
-      input.progress.onScanStarted({
-        engineId: input.plugin.id,
-        assetId: asset.id,
-        relativePath: asset.relativePath,
-        label: asset.label,
-        cached: false,
-        cacheable: input.cache.summary().enabled,
-      });
-      input.progress.onMessage(`study asset started ${asset.id}`);
-      await yieldToProgressRenderer();
-      const result = await input.plugin.runAsset({
-        repoRoot: input.repoRoot,
-        asset,
-        config,
-        reports: input.reports,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-        log: input.log,
-      });
-      await input.cache.write(asset, cacheKey, result);
-      assetResults.push(result);
-      input.progress.onScanFinished({
-        engineId: input.plugin.id,
-        assetId: asset.id,
-        relativePath: asset.relativePath,
-        result: studyUnitResult(input.plugin.id, asset, result, false),
-        wroteToCache: input.cache.summary().enabled,
-      });
-      input.progress.onMessage(`study asset finished ${asset.id}`);
-    }
+        input.progress.onMessage(`study asset finished ${asset.id}`);
+        return result;
+      },
+      input.signal === undefined ? {} : { signal: input.signal },
+    );
+    if (run.error !== null) throw run.error;
+    const interrupted = run.interrupted;
+    if (interrupted) input.log('study interrupted; writing partial report from completed assets');
+    const assetResults = run.completed;
 
     const summaryInput = {
       config,
@@ -290,8 +317,8 @@ const runPlugin = async (input: {
       results: assetResults,
       cache: input.cache.summary(),
     };
-    const summary = input.plugin.summarize(summaryInput);
-    const report = input.plugin.renderReport({ ...summaryInput, summary });
+    const summary = summarize(summaryInput);
+    const report = renderReport({ ...summaryInput, summary });
     return {
       result: {
         pluginId: input.plugin.id,

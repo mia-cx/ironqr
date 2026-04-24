@@ -31,17 +31,23 @@ export const openStudyCache = async <AssetResult>(
   let misses = 0;
   let writes = 0;
   let invalidRows = 0;
+  let saveCounter = 0;
+  let saveTail = Promise.resolve();
 
   const save = async (): Promise<void> => {
     if (!options.enabled) return;
-    const snapshot: StudyCacheSnapshot = {
-      version: 1,
-      entries: Object.fromEntries(entries),
-    };
-    await mkdir(path.dirname(options.file), { recursive: true });
-    const tempFile = `${options.file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempFile, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
-    await rename(tempFile, options.file);
+    saveTail = saveTail.then(async () => {
+      const snapshot: StudyCacheSnapshot = {
+        version: 1,
+        entries: Object.fromEntries(entries),
+      };
+      await mkdir(path.dirname(options.file), { recursive: true });
+      saveCounter += 1;
+      const tempFile = `${options.file}.${process.pid}.${Date.now()}.${saveCounter}.tmp`;
+      await writeFile(tempFile, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+      await rename(tempFile, options.file);
+    });
+    await saveTail;
   };
 
   return {
