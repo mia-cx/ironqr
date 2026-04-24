@@ -357,26 +357,27 @@ const scoreAssetForEngine = async (
     return result;
   }
 
-  const execution = await workerPool
-    .run({
-      engineId: engine.id,
-      cacheable: cache.isEnabledFor(engine),
-      asset: {
-        id: asset.id,
-        label: asset.label,
-        sha256: asset.sha256,
-        imagePath: path.join(repoRoot, 'corpus', 'data', asset.relativePath),
-        relativePath: asset.relativePath,
-        expectedTexts,
-      },
-      runOptions,
-    })
-    .catch((error) => ({
-      scan: unexpectedFailureScan(error),
+  const job = {
+    engineId: engine.id,
+    cacheable: cache.isEnabledFor(engine),
+    asset: {
+      id: asset.id,
+      label: asset.label,
+      sha256: asset.sha256,
+      imagePath: path.join(repoRoot, 'corpus', 'data', asset.relativePath),
+      relativePath: asset.relativePath,
+      expectedTexts,
+    },
+    runOptions,
+  };
+  const execution = await workerPool.run(job).catch(async () => {
+    return workerPool.run(job).catch((secondError) => ({
+      scan: unexpectedFailureScan(secondError),
       durationMs: 0,
       imageLoadDurationMs: null,
       totalJobDurationMs: 0,
     }));
+  });
 
   const result = toEngineAssetResult(
     engine.id,
