@@ -24,6 +24,13 @@ const DEFAULT_REPORT_FILE = path.join(REPORTS_DIRECTORY, 'accuracy.json');
 const DEFAULT_WORKER_LIMIT = 8;
 const CORPUS_MANIFEST_VERSION = 1;
 
+export const normalizeAccuracyEngineRunOptions = (
+  options?: AccuracyEngineRunOptions,
+): AccuracyEngineRunOptions => ({
+  verbose: options?.verbose ?? false,
+  ironqrTraceMode: options?.ironqrTraceMode ?? 'off',
+});
+
 interface CorpusAsset {
   readonly id: string;
   readonly label: 'qr-positive' | 'non-qr-negative';
@@ -199,10 +206,11 @@ const cacheRunKey = (
   expectedTexts: readonly string[],
   runOptions: AccuracyEngineRunOptions,
 ): string => {
+  const normalizedRunOptions = normalizeAccuracyEngineRunOptions(runOptions);
   return JSON.stringify({
     label: asset.label,
     expectedTexts,
-    ironqrTraceMode: runOptions.ironqrTraceMode ?? 'summary',
+    ironqrTraceMode: normalizedRunOptions.ironqrTraceMode,
   });
 };
 
@@ -404,10 +412,7 @@ export const runAccuracyBenchmark = async (
       engines.map((engine) => engine.id),
       workerCount,
     );
-    const runOptions: AccuracyEngineRunOptions = {
-      verbose: options.observability?.verbose ?? false,
-      ironqrTraceMode: options.observability?.ironqrTraceMode ?? 'summary',
-    };
+    const runOptions = normalizeAccuracyEngineRunOptions(options.observability);
 
     const assetResults = await mapConcurrent<CorpusAsset, AccuracyAssetResult>(
       assets,

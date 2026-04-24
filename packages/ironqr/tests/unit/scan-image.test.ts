@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { Effect } from 'effect';
-import { createNormalizedImage } from '../../src/pipeline/frame.js';
+import {
+  createNormalizedImage,
+  MAX_IMAGE_SOURCE_BYTES,
+  normalizeImageInput,
+} from '../../src/pipeline/frame.js';
 import { createGeometryCandidates, resolveGrid } from '../../src/pipeline/geometry.js';
 import {
   detectBestFinderEvidence,
@@ -73,6 +77,24 @@ describe('single-image baseline pipeline (internal modules)', () => {
     const luma = new Uint8Array(width * height).fill(255);
     const binary = otsuBinarize(luma, width, height);
     expect(binary.every((value) => value === 255)).toBe(true);
+  });
+
+  it('rejects oversized canvas-like browser sources before bitmap conversion', async () => {
+    await expect(
+      Effect.runPromise(normalizeImageInput({ width: 8193, height: 1 })),
+    ).rejects.toThrow('must not exceed 8192px per side');
+  });
+
+  it('rejects oversized Blob-like browser sources before bitmap conversion', async () => {
+    await expect(
+      Effect.runPromise(
+        normalizeImageInput({
+          size: MAX_IMAGE_SOURCE_BYTES + 1,
+          type: 'image/png',
+          arrayBuffer: async () => new ArrayBuffer(0),
+        }),
+      ),
+    ).rejects.toThrow('Browser image source size must not exceed');
   });
 
   it('orders proposal views by the current view-study priority list', () => {

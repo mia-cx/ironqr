@@ -3,7 +3,8 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Effect } from 'effect';
 import { resolveSeedFetchDelayMs } from '../../src/import/remote/adapters.js';
-import { fetchText } from '../../src/import/remote/fetch.js';
+import { fetchText, isPixabayApiSearchUrl } from '../../src/import/remote/fetch.js';
+import { assertAllowedSeed } from '../../src/import/remote/policy.js';
 import {
   importStagedRemoteAssets,
   readStagedRemoteAsset,
@@ -183,6 +184,11 @@ describe('remote corpus import', () => {
         fetchText('https://pixabay.com/images/search/qr%20code/', fetchImpl, false),
       ),
     ).rejects.toThrow('Pixabay returned a Cloudflare challenge to this CLI fetch');
+  });
+
+  it('rejects non-HTTPS remote seeds before fetching', () => {
+    expect(() => assertAllowedSeed('http://pixabay.com/api/?q=qr')).toThrow('must use HTTPS');
+    expect(isPixabayApiSearchUrl('http://pixabay.com/api/?q=qr')).toBe(false);
   });
 
   it('uses burst pacing for Pixabay API runs under 100 staged assets', () => {

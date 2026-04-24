@@ -471,7 +471,11 @@ const isPixabayApiResponse = (value: unknown): value is PixabayApiResponse =>
 export const isPixabayApiSearchUrl = (url: string): boolean => {
   try {
     const parsed = new URL(url);
-    return normalizeHost(parsed.hostname) === 'pixabay.com' && parsed.pathname === '/api/';
+    return (
+      parsed.protocol === 'https:' &&
+      normalizeHost(parsed.hostname) === 'pixabay.com' &&
+      parsed.pathname === '/api/'
+    );
   } catch {
     return false;
   }
@@ -484,6 +488,9 @@ const buildPixabayApiUrl = (
   perPage: number,
 ): string => {
   const parsed = new URL(seedUrl);
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Pixabay API seed URL must use HTTPS: ${seedUrl}`);
+  }
   parsed.searchParams.delete('key');
   parsed.searchParams.set('key', apiKey);
   parsed.searchParams.set('page', String(page));

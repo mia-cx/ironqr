@@ -1,8 +1,11 @@
 import { Effect } from 'effect';
 import type {
+  BlobLikeImageSource,
   BrowserImageSource,
+  CanvasLikeImageSource,
   ImageBitmapLikeSource,
   ImageDataLike,
+  VideoFrameLikeSource,
 } from '../contracts/scan.js';
 import { ScannerError } from '../qr/errors.js';
 
@@ -32,6 +35,8 @@ type BrowserBitmapRuntime = {
 export const MAX_IMAGE_DIMENSION = 8192;
 /** Maximum supported image area accepted before allocation-heavy scan work. */
 export const MAX_IMAGE_PIXELS = 24_000_000;
+/** Maximum compressed browser source size accepted before bitmap decode. */
+export const MAX_IMAGE_SOURCE_BYTES = MAX_IMAGE_PIXELS * RGBA_CHANNELS;
 
 /**
  * Cached derived views attached to a normalized image.
@@ -234,8 +239,56 @@ const isImageBitmapLike = (value: BrowserImageSource): value is ImageBitmapLikeS
   );
 };
 
+const isBlobLike = (value: BrowserImageSource): value is BlobLikeImageSource => {
+  return (
+    'size' in value &&
+    typeof value.size === 'number' &&
+    'arrayBuffer' in value &&
+    typeof value.arrayBuffer === 'function'
+  );
+};
+
+const hasCanvasDimensions = (value: BrowserImageSource): value is CanvasLikeImageSource => {
+  return 'width' in value && 'height' in value;
+};
+
+const hasVideoFrameDimensions = (value: BrowserImageSource): value is VideoFrameLikeSource => {
+  return (
+    ('displayWidth' in value || 'codedWidth' in value) &&
+    ('displayHeight' in value || 'codedHeight' in value)
+  );
+};
+
+const preflightBrowserImageSource = (input: BrowserImageSource): void => {
+  if (isBlobLike(input)) {
+    if (!Number.isSafeInteger(input.size) || input.size < 0) {
+      throw new ScannerError('invalid_input', 'Browser image source size must be a safe integer.');
+    }
+    if (input.size > MAX_IMAGE_SOURCE_BYTES) {
+      throw new ScannerError(
+        'invalid_input',
+        `Browser image source size must not exceed ${MAX_IMAGE_SOURCE_BYTES} bytes.`,
+      );
+    }
+  }
+
+  if (hasCanvasDimensions(input)) {
+    validateImageDimensions(input.width, input.height);
+    return;
+  }
+
+  if (hasVideoFrameDimensions(input)) {
+    validateImageDimensions(
+      input.displayWidth ?? input.codedWidth ?? 0,
+      input.displayHeight ?? input.codedHeight ?? 0,
+    );
+  }
+};
+
 const toImageData = async (input: BrowserImageSource): Promise<ImageDataLike> => {
   if (isImageDataLike(input)) return input;
+
+  preflightBrowserImageSource(input);
 
   const runtime = globalThis as unknown as BrowserBitmapRuntime;
   const OffscreenCanvasCtor = runtime.OffscreenCanvas;

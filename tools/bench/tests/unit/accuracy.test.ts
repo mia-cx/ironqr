@@ -2,7 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { createTraceCollector, createTraceCounter } from '../../../../packages/ironqr/src/index.js';
 import { classifyIronqrFailure, summarizeIronqrTrace } from '../../src/accuracy/adapters/ironqr.js';
 import { openAccuracyCacheStore } from '../../src/accuracy/cache.js';
-import { isCacheableEngineResult } from '../../src/accuracy/runner.js';
+import {
+  isCacheableEngineResult,
+  normalizeAccuracyEngineRunOptions,
+} from '../../src/accuracy/runner.js';
 import {
   scoreNegativeScan,
   scorePositiveScan,
@@ -96,6 +99,23 @@ describe('accuracy scoring', () => {
         cached: false,
       }),
     ).toBe('no-decode');
+  });
+});
+
+describe('accuracy run options', () => {
+  it('keeps ironqr traces disabled unless explicitly requested', () => {
+    expect(normalizeAccuracyEngineRunOptions()).toEqual({
+      verbose: false,
+      ironqrTraceMode: 'off',
+    });
+    expect(normalizeAccuracyEngineRunOptions({ verbose: true })).toEqual({
+      verbose: true,
+      ironqrTraceMode: 'off',
+    });
+    expect(normalizeAccuracyEngineRunOptions({ ironqrTraceMode: 'summary' })).toEqual({
+      verbose: false,
+      ironqrTraceMode: 'summary',
+    });
   });
 });
 
