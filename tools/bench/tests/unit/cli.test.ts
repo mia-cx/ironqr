@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { parseArgs } from '../../src/cli.js';
 
 describe('bench cli args', () => {
-  it('keeps ironqr cache and auto progress enabled by default', () => {
+  it('keeps ironqr cache and OpenTUI progress enabled by default', () => {
     const { options } = parseArgs(['accuracy']);
     expect(options.cacheEnabled).toBe(true);
     expect(options.ironqrCacheEnabled).toBe(true);
-    expect(options.progressMode).toBe('auto');
+    expect(options.progressEnabled).toBe(true);
   });
 
   it('can disable only the ironqr cache', () => {
@@ -37,12 +37,10 @@ describe('bench cli args', () => {
     expect(() => parseArgs(['accuracy', '--workers', '1.5'])).toThrow('positive integer');
   });
 
-  it('can select a progress renderer', () => {
-    expect(parseArgs(['accuracy', '--progress=plain']).options.progressMode).toBe('plain');
-    expect(parseArgs(['accuracy', '--progress', 'dashboard']).options.progressMode).toBe(
-      'dashboard',
-    );
-    expect(parseArgs(['accuracy', '--progress=tui']).options.progressMode).toBe('tui');
-    expect(parseArgs(['accuracy', '--quiet']).options.progressMode).toBe('off');
+  it('only supports disabling OpenTUI progress', () => {
+    expect(parseArgs(['accuracy', '--quiet']).options.progressEnabled).toBe(false);
+    expect(parseArgs(['accuracy', '--no-progress']).options.progressEnabled).toBe(false);
+    expect(() => parseArgs(['accuracy', '--progress=plain'])).toThrow('Use --no-progress');
+    expect(() => parseArgs(['accuracy', '--progress', 'dashboard'])).toThrow('Use --no-progress');
   });
 });

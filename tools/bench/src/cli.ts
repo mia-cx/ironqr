@@ -19,16 +19,6 @@ const parsePositiveInteger = (value: string, flag: string): number => {
   return Number(value);
 };
 
-const isProgressMode = (value: string): value is CliOptions['progressMode'] => {
-  return (
-    value === 'auto' ||
-    value === 'plain' ||
-    value === 'dashboard' ||
-    value === 'tui' ||
-    value === 'off'
-  );
-};
-
 interface CliOptions {
   readonly help: boolean;
   readonly engines: readonly string[];
@@ -39,7 +29,7 @@ interface CliOptions {
   readonly cacheEnabled: boolean;
   readonly ironqrCacheEnabled: boolean;
   readonly refreshCache: boolean;
-  readonly progressMode: 'auto' | 'plain' | 'dashboard' | 'tui' | 'off';
+  readonly progressEnabled: boolean;
   readonly verbose: boolean;
   readonly ironqrTraceMode: 'off' | 'summary' | 'full';
   readonly workers?: number;
@@ -58,7 +48,7 @@ export const parseArgs = (
   let cacheEnabled = true;
   let ironqrCacheEnabled = true;
   let refreshCache = false;
-  let progressMode: 'auto' | 'plain' | 'dashboard' | 'tui' | 'off' = 'auto';
+  let progressEnabled = true;
   let verbose = false;
   let ironqrTraceMode: 'off' | 'summary' | 'full' = 'off';
   let workers: number | undefined;
@@ -91,26 +81,11 @@ export const parseArgs = (
       continue;
     }
     if (arg === '--no-progress' || arg === '--quiet') {
-      progressMode = 'off';
+      progressEnabled = false;
       continue;
     }
-    if (arg === '--progress') {
-      const next = rest[index + 1];
-      if (!next) throw new Error('--progress requires a value');
-      if (!isProgressMode(next)) {
-        throw new Error(`--progress must be one of auto|plain|dashboard|tui|off, got: ${next}`);
-      }
-      progressMode = next;
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--progress=')) {
-      const value = arg.slice('--progress='.length);
-      if (!isProgressMode(value)) {
-        throw new Error(`--progress must be one of auto|plain|dashboard|tui|off, got: ${value}`);
-      }
-      progressMode = value;
-      continue;
+    if (arg === '--progress' || arg.startsWith('--progress=')) {
+      throw new Error('Use --no-progress to disable OpenTUI progress');
     }
     if (arg === '--verbose') {
       verbose = true;
@@ -191,7 +166,7 @@ export const parseArgs = (
       cacheEnabled,
       ironqrCacheEnabled,
       refreshCache,
-      progressMode,
+      progressEnabled,
       verbose,
       ironqrTraceMode,
       ...(workers === undefined ? {} : { workers }),
@@ -211,7 +186,6 @@ const printUsage = (): void => {
   console.log('  "bun run bench accuracy --refresh-cache"');
   console.log('  "bun run bench accuracy --no-cache"');
   console.log('  "bun run bench accuracy --no-ironqr-cache"');
-  console.log('  "bun run bench accuracy --progress auto|tui|dashboard|plain|off"');
   console.log('  "bun run bench accuracy --no-progress"');
   console.log('  "bun run bench accuracy --workers 8"');
   console.log('  "bun run bench accuracy --verbose"');
@@ -240,9 +214,7 @@ const runAccuracy = async (repoRoot: string, options: CliOptions): Promise<void>
       disabledEngineIds: options.ironqrCacheEnabled ? [] : ['ironqr'],
     },
     progress: {
-      enabled: options.progressMode !== 'off',
-      mode: options.progressMode,
-      verbose: options.verbose,
+      enabled: options.progressEnabled,
     },
     execution: {
       ...(options.workers === undefined ? {} : { workers: options.workers }),
@@ -257,7 +229,7 @@ const runAccuracy = async (repoRoot: string, options: CliOptions): Promise<void>
       : {}),
   });
   printAccuracySummary(result, { failuresOnly: options.failuresOnly, verbose: options.verbose });
-  if (options.progressMode !== 'off') {
+  if (options.progressEnabled) {
     console.error(`[bench] stage report: writing ${result.reportFile}`);
   }
   await writeAccuracyReport(result);
