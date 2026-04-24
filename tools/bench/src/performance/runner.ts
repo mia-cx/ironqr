@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { scanFrame } from '../../../../packages/ironqr/src/index.js';
+import type { ScanTimingDetails, ScanTimingSummary } from '../../../../packages/ironqr/src/pipeline/scan.js';
 import { bucketForOutcome, emptyBucketCounts, type BenchOutcomeBucket } from '../core/outcome.js';
 import {
   buildReportCorpus,
@@ -11,6 +13,7 @@ import {
   REPORT_SCHEMA_VERSION,
   unavailableVerdict,
 } from '../core/reports.js';
+import { readBenchImage } from '../shared/image.js';
 import { describeAccuracyEngine } from '../accuracy/engines.js';
 import { resolveAccuracyEngines, runAccuracyBenchmark } from '../accuracy/runner.js';
 import type { AccuracyAssetResult, EngineAssetResult } from '../accuracy/types.js';
@@ -63,6 +66,23 @@ export interface PerformanceIterationResult {
   readonly cached: boolean;
 }
 
+export interface TimingSummary {
+  readonly name: string;
+  readonly sampleCount: number;
+  readonly totalMs: number;
+  readonly averageMs: number;
+  readonly maxMs: number;
+}
+
+export interface IronqrPerformanceProfile {
+  readonly stages: readonly TimingSummary[];
+  readonly proposalViews: readonly [];
+  readonly decodeViews: readonly [];
+  readonly samplers: readonly [];
+  readonly refinements: readonly [];
+  readonly decodeAttempts: readonly TimingSummary[];
+}
+
 export interface PerformanceReportSummary {
   readonly ironqr: PerformanceEngineSummary;
   readonly baselines: readonly PerformanceEngineSummary[];
@@ -71,9 +91,9 @@ export interface PerformanceReportSummary {
     readonly ironqrThroughputRank: number | null;
   };
   readonly hotSpots: {
-    readonly slowestStages: readonly [];
+    readonly slowestStages: readonly TimingSummary[];
     readonly slowestProposalViews: readonly [];
-    readonly slowestDecodeAttempts: readonly [];
+    readonly slowestDecodeAttempts: readonly TimingSummary[];
   };
   readonly pass: BenchmarkVerdict;
   readonly regression: BenchmarkVerdict;
@@ -89,7 +109,7 @@ export interface PerformanceReportSummary {
 export interface PerformanceReportDetails {
   readonly engines: readonly PerformanceEngineSummary[];
   readonly assets: readonly PerformanceIterationResult[];
-  readonly ironqrProfile: null;
+  readonly ironqrProfile: IronqrPerformanceProfile | null;
 }
 
 export type PerformanceReport = BenchReportEnvelope<
@@ -163,6 +183,7 @@ export const runPerformanceBenchmark = async (
   const ironqr = summaries.find((summary) => summary.engineId === 'ironqr');
   if (!ironqr) throw new Error('Missing ironqr performance summary');
   const baselines = summaries.filter((summary) => summary.engineId !== 'ironqr');
+  const ironqrProfile = await buildIronqrProfile(repoRoot, lastAssets);
   const pass = buildPerformancePassVerdict(ironqr, baselines);
   const regression = await buildPerformanceRegressionVerdict(reportFile, ironqr);
 
@@ -200,15 +221,87 @@ export const runPerformanceBenchmark = async (
           'desc',
         ),
       },
-      hotSpots: { slowestStages: [], slowestProposalViews: [], slowestDecodeAttempts: [] },
+      hotSpots: {
+        slowestStages: ironqrProfile?.stages.slice(0, 10) ?? [],
+        slowestProposalViews: [],
+        slowestDecodeAttempts: ironqrProfile?.decodeAttempts.slice(0, 10) ?? [],
+      },
       pass,
       regression,
       cache: cacheSummary,
     },
-    details: { engines: summaries, assets: iterationResults, ironqrProfile: null },
+    details: { engines: summaries, assets: iterationResults, ironqrProfile },
   };
 
   return { reportFile, report };
+};
+
+const buildIronqrProfile = async (
+  repoRoot: string,
+  assets: readonly AccuracyAssetResult[],
+): Promise<IronqrPerformanceProfile | null> => {
+  if (assets.length === 0) return null;
+  const stageTimings = {
+    total: [] as number[],
+    normalize: [] as number[],
+    proposalGeneration: [] as number[],
+    ranking: [] as number[],
+    clustering: [] as number[],
+    clusterProcessing: [] as number[],
+    decodeAttempts: [] as number[],
+  } satisfies Record<string, number[]>;
+  const attemptTimings: Record<string, number[]> = {};
+
+  for (const asset of assets) {
+    const image = await readBenchImage(path.join(repoRoot, 'corpus', 'data', asset.relativePath));
+    const report = await scanFrame(image, {
+      allowMultiple: asset.expectedTexts.length > 1,
+      observability: { scan: { timings: 'full' } },
+    });
+    const timings = report.scan.timings;
+    if (!timings) continue;
+    stageTimings.total.push(timings.totalMs);
+    stageTimings.normalize.push(timings.normalizeFrameMs);
+    stageTimings.proposalGeneration.push(timings.proposalGenerationMs);
+    stageTimings.ranking.push(timings.rankingMs);
+    stageTimings.clustering.push(timings.clusteringMs);
+    stageTimings.clusterProcessing.push(timings.clusterProcessingMs);
+    stageTimings.decodeAttempts.push(timings.decodeAttemptMs);
+    if (hasAttemptTimings(timings)) {
+      for (const attempt of timings.attempts) {
+        const key = `${attempt.decodeBinaryViewId}/${attempt.sampler}/${attempt.refinement}`;
+        (attemptTimings[key] ??= []).push(attempt.durationMs);
+      }
+    }
+  }
+
+  return {
+    stages: summarizeTimingRecord(stageTimings).sort((left, right) => right.totalMs - left.totalMs),
+    proposalViews: [],
+    decodeViews: [],
+    samplers: [],
+    refinements: [],
+    decodeAttempts: summarizeTimingRecord(attemptTimings).sort(
+      (left, right) => right.totalMs - left.totalMs,
+    ),
+  };
+};
+
+const hasAttemptTimings = (timings: ScanTimingSummary): timings is ScanTimingDetails => {
+  return 'attempts' in timings;
+};
+
+const summarizeTimingRecord = (record: Record<string, readonly number[]>): TimingSummary[] => {
+  return Object.entries(record).map(([name, values]) => {
+    const totalMs = round(values.reduce((sum, value) => sum + value, 0));
+    return {
+      name,
+      sampleCount: values.length,
+      totalMs,
+      averageMs: values.length === 0 ? 0 : round(totalMs / values.length),
+      maxMs: values.length === 0 ? 0 : round(Math.max(...values)),
+    };
+  });
 };
 
 const summarizePerformanceEngine = (
