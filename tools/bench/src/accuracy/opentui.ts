@@ -19,7 +19,7 @@ type OpenTuiPanel = {
   readonly body: OpenTuiText;
 };
 
-const CHART_PANEL_ROWS = 15;
+const CHART_PANEL_ROWS = 17;
 const SCORECARD_PANEL_ROWS = 11;
 const PANEL_BORDER_ROWS = 2;
 const PANEL_TITLE_ROWS = 1;
@@ -301,7 +301,7 @@ export class BenchOpenTuiDashboard {
     panels.chart.body.content = panelBody(
       renderTimingChart(this.dashboard, {
         width: contentWidth,
-        barHeight: height < 34 ? 3 : 4,
+        barHeight: height < 34 ? 4 : 6,
       }),
       panelBodyRows(CHART_PANEL_ROWS),
     );
