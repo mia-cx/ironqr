@@ -47,6 +47,20 @@ describe('bench cli args', () => {
     expect(options.maxAssets).toBe(3);
   });
 
+  it('parses study list and plugin flags', () => {
+    expect(parseArgs(['study', 'list']).options.listStudies).toBe(true);
+    const { options } = parseArgs([
+      'study',
+      'run',
+      'view-proposals',
+      '--preset',
+      'production',
+      '--top-k=3',
+    ]);
+    expect(options.studyId).toBe('view-proposals');
+    expect(options.studyFlags).toEqual({ preset: 'production', 'top-k': 3 });
+  });
+
   it('rejects unsupported command-specific flags', () => {
     expect(() => parseArgs(['accuracy', '--iterations', '2'])).toThrow('only supported');
     expect(() => parseArgs(['study', 'view-order', '--iterations', '2'])).toThrow('not supported');

@@ -44,12 +44,26 @@ describe('study plugin contract', () => {
   });
 
   it('passes typed context into plugin execution', async () => {
-    const result = await noopStudy.run({
+    const run = noopStudy.run;
+    if (!run) throw new Error('noop study missing run hook');
+    const result = await run.call(noopStudy, {
       repoRoot: '/repo',
       assets: [],
       output: { reportFile: '/repo/tools/bench/reports/study.json' },
       flags: { 'max-assets': 0 },
       reports: { accuracy: async () => null, performance: async () => null },
+      cache: {
+        read: async () => null,
+        write: async () => {},
+        summary: () => ({
+          enabled: true,
+          file: '/repo/tools/bench/.cache/studies/view-order.json',
+          hits: 0,
+          misses: 0,
+          writes: 0,
+          invalidRows: 0,
+        }),
+      },
       log: () => {},
     });
 

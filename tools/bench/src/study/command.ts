@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import type { AccuracyEngineDescriptor } from '../accuracy/types.js';
 import type { CorpusAssetLabel } from '../core/corpus.js';
 import { type BenchCorpusAsset, loadBenchCorpusAssets } from '../core/corpus.js';
 import {
@@ -14,9 +15,15 @@ import {
   writeReportWithSnapshot,
 } from '../core/reports.js';
 import { createBenchProgressReporter } from '../ui/progress.js';
+import { openStudyCache } from './cache.js';
 import { createStudyPluginRegistry } from './registry.js';
-import type { StudyPlugin, StudyPluginResult } from './types.js';
-import { viewOrderStudyPlugin } from './view-order.js';
+import type {
+  StudyCacheHandle,
+  StudyPlugin,
+  StudyPluginContext,
+  StudyPluginResult,
+} from './types.js';
+import { viewOrderStudyPlugin, viewProposalsStudyPlugin } from './view-order.js';
 
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
@@ -30,6 +37,8 @@ interface StudyReportDetails {
     readonly description: string;
     readonly version: string;
   };
+  readonly config: Record<string, unknown>;
+  readonly cache: ReturnType<StudyCacheHandle['summary']>;
   readonly result: StudyPluginResult;
 }
 
@@ -41,6 +50,9 @@ interface StudyOptions {
   readonly cacheFile?: string;
   readonly reportFile?: string;
   readonly progressEnabled?: boolean;
+  readonly cacheEnabled?: boolean;
+  readonly refreshCache?: boolean;
+  readonly studyFlags?: Readonly<Record<string, string | number | boolean>>;
   readonly signal?: AbortSignal;
   readonly requestStop?: () => void;
 }
@@ -51,13 +63,18 @@ export interface StudyBenchmarkResult {
 }
 
 export const createDefaultStudyRegistry = () =>
-  createStudyPluginRegistry([{ plugin: viewOrderStudyPlugin }]);
+  createStudyPluginRegistry([
+    { plugin: viewProposalsStudyPlugin },
+    { plugin: viewOrderStudyPlugin },
+  ]);
 
 export const getDefaultStudyReportPath = (repoRoot: string, studyId: string): string =>
   path.join(repoRoot, REPORTS_DIRECTORY, `study-${studyId}.json`);
 
 export const getDefaultStudyCachePath = (repoRoot: string, studyId: string): string =>
   path.join(repoRoot, STUDY_CACHE_DIRECTORY, `${studyId}.json`);
+
+export const listStudyPlugins = (): readonly StudyPlugin[] => createDefaultStudyRegistry().list();
 
 export const runStudyBenchmark = async (
   repoRoot: string,
@@ -83,26 +100,36 @@ export const runStudyBenchmark = async (
   });
   progress.onMessage(`study ${studyId} loaded ${assets.length} assets seed=${selection.seed}`);
   const logs: string[] = [];
+  const log = (message: string): void => {
+    logs.push(message);
+    if (options.progressEnabled === false) return;
+    if (process.stderr.isTTY) {
+      progress.onMessage(message);
+      return;
+    }
+    process.stdout.write(`[bench study:${studyId}] ${message}\n`);
+  };
+  const reports = createStudyReportReaders(repoRoot);
+  const cache = await openStudyCache<unknown>({
+    enabled: options.cacheEnabled ?? true,
+    refresh: options.refreshCache ?? false,
+    file: cacheFile,
+  });
+
   try {
-    const result = await plugin.run({
+    const { result, config, engines, observability } = await runPlugin({
       repoRoot,
+      plugin,
       assets,
-      output: { reportFile, cacheFile },
-      flags: {
-        ...(selection.maxAssets === null ? {} : { 'max-assets': selection.maxAssets }),
-        seed: selection.seed,
-      },
-      reports: createStudyReportReaders(repoRoot),
+      reportFile,
+      cacheFile,
+      selection,
+      ...(options.studyFlags === undefined ? {} : { studyFlags: options.studyFlags }),
+      reports,
+      cache,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      log: (message) => {
-        logs.push(message);
-        if (options.progressEnabled === false) return;
-        if (process.stderr.isTTY) {
-          progress.onMessage(message);
-          return;
-        }
-        process.stdout.write(`[bench study:${studyId}] ${message}\n`);
-      },
+      log,
+      progress,
     });
 
     const pass = passedVerdict(`Study ${studyId} completed.`);
@@ -123,16 +150,28 @@ export const runStudyBenchmark = async (
       },
       command: { name: 'study', argv: process.argv.slice(2) },
       repo: await readRepoMetadata(repoRoot),
-      corpus: await buildReportCorpus({
-        repoRoot,
-        assets,
-      }),
+      corpus: await buildReportCorpus({ repoRoot, assets }),
       selection: { seed: selection.seed, filters: selection.filters },
-      engines: [],
-      options: { cacheFile, progressEnabled: options.progressEnabled ?? true },
+      engines: engines.map((engine) => ({
+        id: engine.id,
+        adapterVersion: engine.adapterVersion,
+        packageName: engine.packageName,
+        ...(engine.packageVersion === null ? {} : { packageVersion: engine.packageVersion }),
+        runtimeVersion: engine.runtimeVersion,
+      })),
+      options: {
+        cacheFile,
+        progressEnabled: options.progressEnabled ?? true,
+        cacheEnabled: options.cacheEnabled ?? true,
+        refreshCache: options.refreshCache ?? false,
+        config,
+        observability,
+      },
       summary: result.summary,
       details: {
         plugin: pluginDescriptor(plugin),
+        config,
+        cache: cache.summary(),
         result: { ...result, report: { logs, evidence: result.report } },
       },
     };
@@ -143,6 +182,113 @@ export const runStudyBenchmark = async (
     progress.stop();
   }
 };
+
+const runPlugin = async (input: {
+  readonly repoRoot: string;
+  readonly plugin: StudyPlugin;
+  readonly assets: readonly BenchCorpusAsset[];
+  readonly reportFile: string;
+  readonly cacheFile: string;
+  readonly selection: ReturnType<typeof resolveStudySelection>;
+  readonly studyFlags?: Readonly<Record<string, string | number | boolean>>;
+  readonly reports: ReturnType<typeof createStudyReportReaders>;
+  readonly cache: StudyCacheHandle<unknown>;
+  readonly signal?: AbortSignal;
+  readonly log: (message: string) => void;
+  readonly progress: ReturnType<typeof createBenchProgressReporter>;
+}): Promise<{
+  readonly result: StudyPluginResult;
+  readonly config: Record<string, unknown>;
+  readonly engines: readonly AccuracyEngineDescriptor[];
+  readonly observability: Record<string, unknown>;
+}> => {
+  const flags = {
+    ...(input.selection.maxAssets === null ? {} : { 'max-assets': input.selection.maxAssets }),
+    seed: input.selection.seed,
+    ...(input.studyFlags ?? {}),
+  };
+  if (isGenericStudyPlugin(input.plugin)) {
+    const config = input.plugin.parseConfig?.({ flags, assets: input.assets }) ?? {};
+    const baseCacheKey = input.plugin.cacheKey?.(config) ?? JSON.stringify(config);
+    const engines = input.plugin.engines?.(config) ?? [];
+    const observability = input.plugin.observability?.(config) ?? {};
+    const assetResults: unknown[] = [];
+    input.progress.onBenchmarkStarted(input.assets.length, [input.plugin.id], 1);
+
+    for (const [index, asset] of input.assets.entries()) {
+      if (input.signal?.aborted) throw new Error('Study interrupted.');
+      input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
+      const cacheKey = JSON.stringify({
+        studyId: input.plugin.id,
+        studyVersion: input.plugin.version,
+        configKey: baseCacheKey,
+        assetId: asset.id,
+        assetSha256: asset.sha256,
+        engines: engines.map((engine) => ({ id: engine.id, version: engine.adapterVersion })),
+        observability,
+      });
+      const cached = await input.cache.read(asset, cacheKey);
+      if (cached !== null) {
+        input.progress.onMessage(`study cache hit ${asset.id}`);
+        assetResults.push(cached);
+        continue;
+      }
+      input.progress.onMessage(`study asset started ${asset.id}`);
+      const result = await input.plugin.runAsset({
+        repoRoot: input.repoRoot,
+        asset,
+        config,
+        reports: input.reports,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        log: input.log,
+      });
+      await input.cache.write(asset, cacheKey, result);
+      assetResults.push(result);
+      input.progress.onMessage(`study asset finished ${asset.id}`);
+    }
+
+    const summaryInput = {
+      config,
+      assets: input.assets,
+      results: assetResults,
+      cache: input.cache.summary(),
+    };
+    const summary = input.plugin.summarize(summaryInput);
+    const report = input.plugin.renderReport({ ...summaryInput, summary });
+    return {
+      result: {
+        pluginId: input.plugin.id,
+        assetCount: input.assets.length,
+        summary,
+        report,
+      },
+      config,
+      engines,
+      observability,
+    };
+  }
+
+  if (!input.plugin.run) throw new Error(`Study plugin ${input.plugin.id} has no runner hooks.`);
+  const context: StudyPluginContext = {
+    repoRoot: input.repoRoot,
+    assets: input.assets,
+    output: { reportFile: input.reportFile, cacheFile: input.cacheFile },
+    flags,
+    reports: input.reports,
+    cache: input.cache,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+    log: input.log,
+  };
+  const result = await input.plugin.run(context);
+  return { result, config: {}, engines: [], observability: {} };
+};
+
+const isGenericStudyPlugin = (
+  plugin: StudyPlugin,
+): plugin is Required<Pick<StudyPlugin, 'runAsset' | 'summarize' | 'renderReport'>> & StudyPlugin =>
+  plugin.runAsset !== undefined &&
+  plugin.summarize !== undefined &&
+  plugin.renderReport !== undefined;
 
 const createStudyReportReaders = (repoRoot: string) => ({
   accuracy: () => readJsonOrNull(path.join(repoRoot, REPORTS_DIRECTORY, 'accuracy.json')),

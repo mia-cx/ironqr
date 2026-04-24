@@ -30,9 +30,13 @@ export {
   createDefaultStudyRegistry,
   getDefaultStudyCachePath,
   getDefaultStudyReportPath,
+  listStudyPlugins,
   runStudyBenchmark,
 } from './study/command.js';
 export type {
+  StudyAssetInput,
+  StudyCacheHandle,
+  StudyConfigContext,
   StudyPlugin,
   StudyPluginContext,
   StudyPluginFlag,
@@ -41,5 +45,7 @@ export type {
   StudyPluginOutput,
   StudyPluginRegistration,
   StudyPluginResult,
+  StudyReportReaders,
+  StudySummaryInput,
 } from './study/index.js';
 export { createStudyPluginRegistry, StudyPluginRegistry } from './study/index.js';

@@ -8,6 +8,7 @@ import {
   getDefaultAccuracyReportPath,
   getDefaultPerformanceCachePath,
   inspectAccuracyEngines,
+  listStudyPlugins,
   printAccuracyHome,
   printAccuracySummary,
   printPerformanceSummary,
@@ -32,6 +33,13 @@ const parsePositiveInteger = (value: string, flag: string): number => {
   return Number(value);
 };
 
+const parseStudyFlagValue = (value: string): string | number | boolean => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  return value;
+};
+
 interface CliOptions {
   readonly help: boolean;
   readonly failuresOnly: boolean;
@@ -49,6 +57,8 @@ interface CliOptions {
   readonly maxAssets?: number;
   readonly seed?: string;
   readonly studyId?: string;
+  readonly listStudies: boolean;
+  readonly studyFlags: Readonly<Record<string, string | number | boolean>>;
 }
 
 export const parseArgs = (
@@ -58,11 +68,16 @@ export const parseArgs = (
   const rawRest = mode === undefined ? argv : argv.slice(1);
   let studyId: string | undefined;
   let rest = rawRest;
-  if (mode === 'study' && rawRest[0] && !rawRest[0].startsWith('-')) {
+  if (mode === 'study' && rawRest[0] === 'run' && rawRest[1] && !rawRest[1].startsWith('-')) {
+    studyId = rawRest[1];
+    rest = rawRest.slice(2);
+  } else if (mode === 'study' && rawRest[0] && !rawRest[0].startsWith('-')) {
     studyId = rawRest[0];
     rest = rawRest.slice(1);
   }
   let help = false;
+  let listStudies = studyId === 'list';
+  if (listStudies) studyId = undefined;
   let failuresOnly = false;
   let reportFile: string | undefined;
   let reportDir: string | undefined;
@@ -77,12 +92,17 @@ export const parseArgs = (
   const labels: Array<'qr-pos' | 'qr-neg'> = [];
   let maxAssets: number | undefined;
   let seed: string | undefined;
+  const studyFlags: Record<string, string | number | boolean> = {};
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (!arg) continue;
     if (arg === '--help' || arg === '-h') {
       help = true;
+      continue;
+    }
+    if (mode === 'study' && (arg === '--list' || arg === 'list')) {
+      listStudies = true;
       continue;
     }
     if (arg === '--failures-only') {
@@ -223,6 +243,22 @@ export const parseArgs = (
       cacheFile = arg.slice('--cache-file='.length);
       continue;
     }
+    if (mode === 'study' && arg.startsWith('--')) {
+      const [rawName, inlineValue] = arg.slice(2).split('=', 2);
+      if (!rawName) throw new Error(`Unknown argument: ${arg}`);
+      if (inlineValue !== undefined) {
+        studyFlags[rawName] = parseStudyFlagValue(inlineValue);
+        continue;
+      }
+      const next = rest[index + 1];
+      if (next && !next.startsWith('-')) {
+        studyFlags[rawName] = parseStudyFlagValue(next);
+        index += 1;
+        continue;
+      }
+      studyFlags[rawName] = true;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -232,6 +268,8 @@ export const parseArgs = (
     cacheEnabled,
     refreshCache,
     progressEnabled,
+    listStudies,
+    studyFlags,
     ...(refreshCacheEngineId === undefined ? {} : { refreshCacheEngineId }),
     ...(workers === undefined ? {} : { workers }),
     ...(iterations === undefined ? {} : { iterations }),
@@ -253,6 +291,9 @@ const validateModeOptions = (mode: string | undefined, options: CliOptions): voi
   if (options.help) return;
   if (command === 'accuracy' && options.iterations !== undefined) {
     throw new Error('--iterations is only supported by bench performance and the full suite');
+  }
+  if (command === 'study' && options.listStudies && options.studyId !== undefined) {
+    throw new Error('bench study list does not accept a study id');
   }
   if (command === 'study' && options.iterations !== undefined) {
     throw new Error('--iterations is not supported by bench study');
@@ -285,7 +326,8 @@ const printUsage = (): void => {
   console.log('  "bun run bench"');
   console.log('  "bun run bench accuracy"');
   console.log('  "bun run bench performance"');
-  console.log('  "bun run bench study view-order"');
+  console.log('  "bun run bench study list"');
+  console.log('  "bun run bench study view-proposals"');
   console.log('  "bun run bench engines"');
   console.log('  "bun run bench accuracy --refresh-cache"');
   console.log('  "bun run bench performance --iterations 8"');
@@ -402,13 +444,28 @@ const runPerformance = async (
   if (result.report.status === 'errored') process.exitCode = 1;
 };
 
+const printStudyList = (): void => {
+  const plugins = listStudyPlugins();
+  console.log(`studies[${plugins.length}]{id,title,version,flags}:`);
+  for (const plugin of plugins) {
+    const flags = plugin.flags?.map((flag) => `--${flag.name}`).join(' ') ?? '';
+    console.log(
+      `  ${JSON.stringify(plugin.id)},${JSON.stringify(plugin.title)},${JSON.stringify(plugin.version)},${JSON.stringify(flags)}`,
+    );
+  }
+};
+
 const runStudy = async (
   repoRoot: string,
   options: CliOptions,
   control?: RunControl,
 ): Promise<void> => {
+  if (options.listStudies) {
+    printStudyList();
+    return;
+  }
   if (!options.studyId)
-    throw new Error('bench study requires a study id, e.g. bench study view-order');
+    throw new Error('bench study requires a study id, e.g. bench study view-proposals');
   const reportFile = options.reportFile
     ? path.resolve(repoRoot, options.reportFile)
     : options.reportDir
@@ -419,6 +476,9 @@ const runStudy = async (
     ...(reportFile === undefined ? {} : { reportFile }),
     ...(cacheFile === undefined ? {} : { cacheFile }),
     progressEnabled: options.progressEnabled,
+    cacheEnabled: options.cacheEnabled,
+    refreshCache: options.refreshCache,
+    studyFlags: options.studyFlags,
     assetIds: options.assetIds,
     labels: options.labels,
     ...(options.maxAssets === undefined ? {} : { maxAssets: options.maxAssets }),

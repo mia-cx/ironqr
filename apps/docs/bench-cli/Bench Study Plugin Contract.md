@@ -70,12 +70,15 @@ Cache files may change shape when a plugin version changes. Report shape should 
 ## Proposed CLI shape
 
 ```sh
+bun run bench study list
 bun run bench study --list
-bun run bench study view-order
-bun run bench study view-order --max-assets 25 --refresh-cache
-bun run bench study view-order --asset asset-123 --asset asset-456
-bun run bench study view-order --report-file tools/bench/reports/view-study.json
+bun run bench study view-proposals
+bun run bench study view-proposals --max-assets 25 --refresh-cache
+bun run bench study view-proposals --asset asset-123 --asset asset-456
+bun run bench study view-proposals --report-file tools/bench/reports/view-study.json
 ```
+
+`view-order` is kept as a compatibility alias for `view-proposals`.
 
 Bench already has shared concepts that should carry into study mode where they make sense: cache refresh, OpenTUI progress, worker limits, report paths, and corpus filters. A study does not have to use every shared option, but unsupported shared options should fail clearly instead of being silently ignored.
 
@@ -100,8 +103,9 @@ Top-level flags shared by all studies:
 Recommended default paths:
 
 ```txt
-tools/bench/reports/<plugin-id>.json
-tools/bench/.cache/<plugin-id>.json
+tools/bench/reports/study-<plugin-id>.json
+tools/bench/reports/runs/<timestamp>-<short-sha>/study-<plugin-id>.json
+tools/bench/.cache/studies/<plugin-id>.json
 ```
 
 Use simple filesystem-safe plugin ids. There is no need for namespacing while bench studies are only for `ironqr`.
@@ -111,15 +115,23 @@ Use simple filesystem-safe plugin ids. There is no need for namespacing while be
 ```ts
 export type StudyPluginId = string;
 
-export interface StudyPlugin {
+export interface StudyPlugin<Summary extends object, Config extends object, AssetResult> {
   readonly id: StudyPluginId;
   readonly title: string;
   readonly description: string;
   readonly version: string;
   readonly flags?: readonly StudyPluginFlag[];
-  readonly cache?: StudyCachePolicy;
-  readonly concurrency?: StudyConcurrencyPolicy;
-  run(context: StudyPluginContext): Promise<StudyPluginResult>;
+
+  parseConfig?(context: StudyConfigContext): Config;
+  cacheKey?(config: Config): string;
+  runAsset?(input: StudyAssetInput<Config>): Promise<AssetResult>;
+  summarize?(input: StudySummaryInput<Config, AssetResult>): Summary;
+  renderReport?(input: StudySummaryInput<Config, AssetResult> & { readonly summary: Summary }): unknown;
+  engines?(config: Config): readonly AccuracyEngineDescriptor[];
+  observability?(config: Config): Record<string, unknown>;
+
+  // Escape hatch for experiments that must own their full execution loop.
+  run?(context: StudyPluginContext): Promise<StudyPluginResult<Summary>>;
 }
 
 export interface StudyPluginFlag {
@@ -134,8 +146,11 @@ export interface StudyPluginContext {
   readonly assets: readonly CorpusBenchAsset[];
   readonly output: StudyOutputPaths;
   readonly flags: Readonly<Record<string, StudyFlagValue>>;
+  readonly reports: {
+    accuracy(): Promise<unknown | null>;
+    performance(): Promise<unknown | null>;
+  };
   readonly cache: StudyCache;
-  readonly progress: StudyProgressSink;
   readonly signal?: AbortSignal;
   readonly log: (message: string) => void;
 }
@@ -197,9 +212,11 @@ export interface StudyCacheKey {
 Plugins own cached value schemas. The shared runner owns invalidation dimensions:
 - plugin id
 - plugin version
+- plugin config/cache key
+- asset id
 - asset hash
-- operation name
-- relevant flags hash
+- engine id/version metadata declared by the plugin
+- scanner observability metadata declared by the plugin
 
 ## Report envelope
 The shared runner should wrap plugin reports in a common envelope:
@@ -238,7 +255,8 @@ Start with static in-repo registration:
 
 ```ts
 const studyPlugins = createStudyPluginRegistry([
-  { plugin: ironqrViewOrderStudy },
+  { plugin: viewProposalsStudyPlugin },
+  { plugin: viewOrderStudyPlugin }, // compatibility alias
 ]);
 ```
 
@@ -246,8 +264,8 @@ Do not add dynamic external loading yet. In-repo static registration is enough f
 
 Future external loading can be added only if there is a real need for studies outside this repo.
 
-## First plugin target: `view-order`
-This plugin should replace the current one-off view study shape.
+## First plugin target: `view-proposals`
+This plugin replaces the current one-off view study shape. `view-order` remains as a compatibility alias.
 
 It should answer:
 - Which binary views generate useful proposals?
@@ -278,20 +296,20 @@ Study-specific flags could include:
 - Keep `bench accuracy` behavior unchanged.
 
 ### Slice 3 — study CLI shell
-- Add `bench study --list`.
+- Add `bench study list` and `bench study --list`.
 - Add `bench study <plugin-id>` lookup.
 - Parse shared study flags.
-- Parse plugin-declared flags.
+- Parse plugin-declared flags such as `--preset` and `--top-k`.
 - Write report envelope.
 
 ### Slice 4 — cache and OpenTUI progress
-- Add JSON cache store keyed by plugin/version/asset/options.
+- Add JSON cache store keyed by plugin/version/asset/config/engine/observability.
 - Use OpenTUI as the progress UI. Support `--no-progress` for CI and log-only runs.
 - Keep plugin progress API minimal.
 
 ### Slice 5 — first real plugin
-- Port or rebuild the view study as `view-order`.
-- Produce `tools/bench/reports/ironqr-view-order.json`.
+- Rebuild the view study as `view-proposals` with `view-order` as a compatibility alias.
+- Produce `tools/bench/reports/study-view-proposals.json` plus timestamped snapshots.
 - Keep production source of truth in `packages/ironqr/src/pipeline/views.ts`.
 
 ## Open questions
