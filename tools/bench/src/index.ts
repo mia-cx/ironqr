@@ -12,6 +12,13 @@ export { writeJsonReport, writeReportWithSnapshot } from './core/reports.js';
 export { printPerformanceSummary, writePerformanceReport } from './performance/report.js';
 export type { PerformanceBenchmarkResult, PerformanceReport } from './performance/runner.js';
 export { getDefaultPerformanceReportPath, runPerformanceBenchmark } from './performance/runner.js';
+export type { StudyBenchmarkResult } from './study/command.js';
+export {
+  createDefaultStudyRegistry,
+  getDefaultStudyCachePath,
+  getDefaultStudyReportPath,
+  runStudyBenchmark,
+} from './study/command.js';
 export type {
   StudyPlugin,
   StudyPluginContext,

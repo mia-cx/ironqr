@@ -35,6 +35,13 @@ describe('bench cli args', () => {
     expect(options.seed).toBe('smoke');
   });
 
+  it('parses study id before study flags', () => {
+    const { mode, options } = parseArgs(['study', 'view-order', '--max-assets', '3']);
+    expect(mode).toBe('study');
+    expect(options.studyId).toBe('view-order');
+    expect(options.maxAssets).toBe(3);
+  });
+
   it('rejects partially numeric worker and iteration counts', () => {
     expect(() => parseArgs(['accuracy', '--workers=2abc'])).toThrow('positive integer');
     expect(() => parseArgs(['accuracy', '--workers', '1.5'])).toThrow('positive integer');

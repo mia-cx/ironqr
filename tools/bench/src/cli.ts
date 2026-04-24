@@ -13,6 +13,7 @@ import {
   resolveAccuracyEngines,
   runAccuracyBenchmark,
   runPerformanceBenchmark,
+  runStudyBenchmark,
   writeAccuracyReport,
   writePerformanceReport,
   writeReportWithSnapshot,
@@ -45,13 +46,20 @@ interface CliOptions {
   readonly labels: readonly ('qr-pos' | 'qr-neg')[];
   readonly maxAssets?: number;
   readonly seed?: string;
+  readonly studyId?: string;
 }
 
 export const parseArgs = (
   argv: readonly string[],
 ): { readonly mode: string | undefined; readonly options: CliOptions } => {
   const mode = argv[0]?.startsWith('-') ? undefined : argv[0];
-  const rest = mode === undefined ? argv : argv.slice(1);
+  const rawRest = mode === undefined ? argv : argv.slice(1);
+  let studyId: string | undefined;
+  let rest = rawRest;
+  if (mode === 'study' && rawRest[0] && !rawRest[0].startsWith('-')) {
+    studyId = rawRest[0];
+    rest = rawRest.slice(1);
+  }
   let help = false;
   let failuresOnly = false;
   let reportFile: string | undefined;
@@ -219,6 +227,7 @@ export const parseArgs = (
       labels,
       ...(maxAssets === undefined ? {} : { maxAssets }),
       ...(seed === undefined ? {} : { seed }),
+      ...(studyId === undefined ? {} : { studyId }),
       ...(reportFile === undefined ? {} : { reportFile }),
       ...(cacheFile === undefined ? {} : { cacheFile }),
     },
@@ -232,6 +241,7 @@ const printUsage = (): void => {
   console.log('  "bun run bench"');
   console.log('  "bun run bench accuracy"');
   console.log('  "bun run bench performance"');
+  console.log('  "bun run bench study view-order"');
   console.log('  "bun run bench engines"');
   console.log('  "bun run bench accuracy --refresh-cache"');
   console.log('  "bun run bench performance --iterations 8"');
@@ -300,6 +310,23 @@ const runPerformance = async (repoRoot: string, options: CliOptions): Promise<vo
   });
   printPerformanceSummary(result);
   await writePerformanceReport(result);
+};
+
+const runStudy = async (repoRoot: string, options: CliOptions): Promise<void> => {
+  if (!options.studyId)
+    throw new Error('bench study requires a study id, e.g. bench study view-order');
+  const reportFile = options.reportFile ? path.resolve(repoRoot, options.reportFile) : undefined;
+  const cacheFile = options.cacheFile ? path.resolve(repoRoot, options.cacheFile) : undefined;
+  const result = await runStudyBenchmark(repoRoot, options.studyId, {
+    ...(reportFile === undefined ? {} : { reportFile }),
+    ...(cacheFile === undefined ? {} : { cacheFile }),
+    progressEnabled: options.progressEnabled,
+    assetIds: options.assetIds,
+    labels: options.labels,
+    ...(options.maxAssets === undefined ? {} : { maxAssets: options.maxAssets }),
+    ...(options.seed === undefined ? {} : { seed: options.seed }),
+  });
+  console.log(`studyReport: ${JSON.stringify(result.reportFile)}`);
 };
 
 const runSuite = async (repoRoot: string, options: CliOptions): Promise<void> => {
@@ -492,6 +519,9 @@ const main = async (): Promise<void> => {
       return;
     case 'performance':
       await runPerformance(repoRoot, options);
+      return;
+    case 'study':
+      await runStudy(repoRoot, options);
       return;
     case 'engines':
       printAccuracyHome(process.argv[1] ?? 'bun run bench', repoRoot, inspectAccuracyEngines());
