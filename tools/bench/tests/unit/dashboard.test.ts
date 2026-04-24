@@ -161,7 +161,13 @@ describe('bench dashboard model', () => {
     });
 
     const ironqr = model.engines.get('ironqr');
-    expect(ironqr?.timing['positive-pass']).toEqual({ count: 1, totalMs: 2000, maxMs: 2000 });
+    expect(ironqr?.timing['positive-pass']).toEqual({
+      count: 2,
+      freshCount: 1,
+      cachedCount: 1,
+      totalMs: 2000,
+      maxMs: 2000,
+    });
     expect(ironqr?.completed).toBe(2);
     expect(ironqr?.cacheHits).toBe(1);
   });
@@ -400,7 +406,41 @@ describe('timing chart widget', () => {
     expect(output).toContain(' P    F    N    X ');
     expect(output).toContain('2.3s 12s  1.7s  - ');
     expect(output).toContain('1    1    1    0');
+    expect(output).toContain('c         0    0    0    0');
     expect(output).toContain('···');
+  });
+
+  it('tracks cached timing buckets without including cached durations in fresh averages', () => {
+    const model = createBenchDashboardModel();
+    onDashboardBenchmarkStarted(model, 10, ['ironqr'], 2);
+    onDashboardScanStarted(model, {
+      engineId: 'ironqr',
+      assetId: 'asset-cached',
+      relativePath: 'assets/asset-cached.webp',
+      cached: true,
+      cacheable: true,
+    });
+    onDashboardScanFinished(model, {
+      engineId: 'ironqr',
+      assetId: 'asset-cached',
+      relativePath: 'assets/asset-cached.webp',
+      result: result({
+        engineId: 'ironqr',
+        label: 'qr-positive',
+        outcome: 'pass',
+        durationMs: 50,
+        cached: true,
+      }),
+      wroteToCache: false,
+      nowMs: 1,
+    });
+
+    const output = renderTimingChart(model, { width: 80, barHeight: 4 }).join('\n');
+    expect(output).toContain('c=cache hits');
+    expect(output).toContain('▒▒▒');
+    expect(output).toContain('n         1    0    0    0');
+    expect(output).toContain('c         1    0    0    0');
+    expect(output).toContain('avg        -    -    -    -');
   });
 
   it('supports horizontal engine offsets', () => {
