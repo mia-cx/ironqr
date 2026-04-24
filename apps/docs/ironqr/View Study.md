@@ -1,6 +1,6 @@
 # View Study
 
-Related: [[Proposal Clusters]], [[Ranked Proposal Pipeline]], [[Pipeline Stage Contracts]], [[Diagnostics and Benchmark Boundary]]
+Related: [[Proposal Clusters]], [[Ranked Proposal Pipeline]], [[Pipeline Stage Contracts]], [[Diagnostics and Benchmark Boundary]], [[Thresholding Research Notes]]
 
 ## Scope
 This note documents how `packages/ironqr` uses corpus evidence to choose proposal-view policy.
