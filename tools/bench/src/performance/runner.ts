@@ -66,7 +66,10 @@ export interface PerformanceIterationResult {
   readonly engineId: string;
   readonly outcome: EngineAssetResult['outcome'];
   readonly bucket: BenchOutcomeBucket;
+  readonly imageLoadDurationMs: number | null;
+  readonly warmupDurationMs: number | null;
   readonly engineScanDurationMs: number;
+  readonly totalJobDurationMs: number;
   readonly cached: boolean;
 }
 
@@ -110,8 +113,19 @@ export interface PerformanceReportSummary {
   };
 }
 
+export interface PerformanceWarmupResult {
+  readonly assetId: string;
+  readonly label: AccuracyAssetResult['label'];
+  readonly engineId: string;
+  readonly outcome: EngineAssetResult['outcome'];
+  readonly warmupDurationMs: number;
+  readonly imageLoadDurationMs: number | null;
+  readonly totalJobDurationMs: number;
+}
+
 export interface PerformanceReportDetails {
   readonly engines: readonly PerformanceEngineSummary[];
+  readonly warmups: readonly PerformanceWarmupResult[];
   readonly assets: readonly PerformanceIterationResult[];
   readonly ironqrProfile: IronqrPerformanceProfile | null;
 }
@@ -173,6 +187,13 @@ export const runPerformanceBenchmark = async (
 
   const selection = resolvePerformanceSelection(options.selection);
   const engines = resolveAccuracyEngines();
+  const warmupResults = await runPerformanceWarmup(
+    repoRoot,
+    reportFile,
+    engines,
+    selection,
+    options,
+  );
   const iterationResults: PerformanceIterationResult[] = [];
   let lastAssets: readonly AccuracyAssetResult[] = [];
   let cacheSummary = {
@@ -212,7 +233,10 @@ export const runPerformanceBenchmark = async (
           engineId: result.engineId,
           outcome: result.outcome,
           bucket: bucketForOutcome(asset.label, result.outcome),
+          imageLoadDurationMs: result.imageLoadDurationMs,
+          warmupDurationMs: null,
           engineScanDurationMs: result.durationMs,
+          totalJobDurationMs: result.totalJobDurationMs,
           cached: result.cached,
         });
       }
@@ -253,7 +277,7 @@ export const runPerformanceBenchmark = async (
       packageName: engine.id,
       runtimeVersion: describeAccuracyEngine(engine).capabilities.runtime,
     })),
-    options: { iterations, workers: options.workers ?? null },
+    options: { iterations, workers: options.workers ?? null, warmup: { assetCount: 1 } },
     summary: {
       ironqr,
       baselines,
@@ -280,10 +304,47 @@ export const runPerformanceBenchmark = async (
       regression,
       cache: cacheSummary,
     },
-    details: { engines: summaries, assets: iterationResults, ironqrProfile },
+    details: {
+      engines: summaries,
+      warmups: warmupResults,
+      assets: iterationResults,
+      ironqrProfile,
+    },
   };
 
   return { reportFile, report };
+};
+
+const runPerformanceWarmup = async (
+  repoRoot: string,
+  reportFile: string,
+  engines: ReturnType<typeof resolveAccuracyEngines>,
+  selection: ReturnType<typeof resolvePerformanceSelection>,
+  options: PerformanceBenchmarkOptions,
+): Promise<readonly PerformanceWarmupResult[]> => {
+  const warmupSeed = `${selection.seed ?? crypto.randomUUID()}:warmup`;
+  const warmup = await runAccuracyBenchmark(repoRoot, engines, reportFile, {
+    cache: { enabled: false, refresh: true },
+    progress: { enabled: false },
+    execution: options.workers === undefined ? {} : { workers: options.workers },
+    selection: {
+      assetIds: selection.assetIds,
+      labels: selection.labels,
+      maxAssets: 1,
+      seed: warmupSeed,
+    },
+  });
+  return warmup.assets.flatMap((asset) =>
+    asset.results.map((result) => ({
+      assetId: asset.assetId,
+      label: asset.label,
+      engineId: result.engineId,
+      outcome: result.outcome,
+      warmupDurationMs: result.durationMs,
+      imageLoadDurationMs: result.imageLoadDurationMs,
+      totalJobDurationMs: result.totalJobDurationMs,
+    })),
+  );
 };
 
 const buildIronqrProfile = async (

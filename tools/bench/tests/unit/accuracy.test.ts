@@ -96,6 +96,8 @@ describe('accuracy scoring', () => {
         failureReason: 'failed_to_decode',
         error: null,
         durationMs: 12.5,
+        imageLoadDurationMs: null,
+        totalJobDurationMs: 12.5,
         cached: false,
       }),
     ).toBe('no-decode');
@@ -147,6 +149,8 @@ describe('accuracy cacheability policy', () => {
     failureReason: null,
     error: null,
     durationMs: 1,
+    imageLoadDurationMs: null,
+    totalJobDurationMs: 1,
     cached: false,
   });
 

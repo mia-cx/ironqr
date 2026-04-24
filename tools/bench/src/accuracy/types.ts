@@ -173,6 +173,8 @@ export interface EngineAssetResult {
   readonly failureReason: EngineFailureReason | null;
   readonly error: string | null;
   readonly durationMs: number;
+  readonly imageLoadDurationMs: number | null;
+  readonly totalJobDurationMs: number;
   readonly cached: boolean;
   readonly diagnostics?: AccuracyScanDiagnostics | null;
 }

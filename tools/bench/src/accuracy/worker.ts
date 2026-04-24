@@ -23,7 +23,10 @@ const failureScan = (error: unknown): AccuracyScanResult => ({
   error: asMessage(error),
 });
 
-const toBenchAsset = (message: AccuracyWorkerRunMessage): CorpusBenchAsset => {
+const toBenchAsset = (
+  message: AccuracyWorkerRunMessage,
+  onImageLoadDuration: (durationMs: number) => void,
+): CorpusBenchAsset => {
   return {
     id: message.asset.id,
     label: message.asset.label,
@@ -42,7 +45,9 @@ const toBenchAsset = (message: AccuracyWorkerRunMessage): CorpusBenchAsset => {
       };
       postMessage(started);
       try {
+        const loadStartedAt = performance.now();
         const image = await readBenchImage(message.asset.imagePath);
+        onImageLoadDuration(roundDurationMs(performance.now() - loadStartedAt));
         const finished: AccuracyWorkerImageLoadFinishedMessage = {
           type: 'image-load-finished',
           jobId: message.jobId,
@@ -85,22 +90,31 @@ addEventListener('message', async (event: MessageEvent<AccuracyWorkerRequest>) =
   postMessage(started);
 
   const startedAt = performance.now();
+  let imageLoadDurationMs: number | null = null;
   const scan = await (async (): Promise<AccuracyScanResult> => {
     try {
       const engine = getAccuracyEngineById(message.engineId);
-      return await engine.scan(toBenchAsset(message), message.runOptions);
+      return await engine.scan(
+        toBenchAsset(message, (durationMs) => {
+          imageLoadDurationMs = durationMs;
+        }),
+        message.runOptions,
+      );
     } catch (error) {
       return failureScan(error);
     }
   })();
 
+  const totalJobDurationMs = roundDurationMs(performance.now() - startedAt);
   const result: AccuracyWorkerResultMessage = {
     type: 'result',
     jobId: message.jobId,
     engineId: message.engineId,
     assetId: message.asset.id,
     scan,
-    durationMs: roundDurationMs(performance.now() - startedAt),
+    durationMs: roundDurationMs(totalJobDurationMs - (imageLoadDurationMs ?? 0)),
+    imageLoadDurationMs,
+    totalJobDurationMs,
   };
   postMessage(result);
 });

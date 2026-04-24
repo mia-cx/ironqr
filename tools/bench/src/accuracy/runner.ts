@@ -264,6 +264,8 @@ const toEngineAssetResult = (
   scan: AccuracyScanResult,
   durationMs: number,
   cached: boolean,
+  imageLoadDurationMs: number | null = null,
+  totalJobDurationMs = durationMs,
 ): EngineAssetResult => {
   if (label === 'qr-pos') {
     const scored = scorePositiveScan(expectedTexts, scan);
@@ -276,6 +278,8 @@ const toEngineAssetResult = (
       failureReason: scored.failureReason,
       error: scored.error,
       durationMs,
+      imageLoadDurationMs,
+      totalJobDurationMs,
       cached,
       diagnostics: scan.diagnostics ?? null,
     };
@@ -291,6 +295,8 @@ const toEngineAssetResult = (
     failureReason: scored.failureReason,
     error: scored.error,
     durationMs,
+    imageLoadDurationMs,
+    totalJobDurationMs,
     cached,
     diagnostics: scan.diagnostics ?? null,
   };
@@ -338,6 +344,8 @@ const scoreAssetForEngine = async (
       cached.scan,
       cached.durationMs,
       true,
+      null,
+      cached.durationMs,
     );
     progress.onScanFinished({
       engineId: engine.id,
@@ -366,6 +374,8 @@ const scoreAssetForEngine = async (
     .catch((error) => ({
       scan: unexpectedFailureScan(error),
       durationMs: 0,
+      imageLoadDurationMs: null,
+      totalJobDurationMs: 0,
     }));
 
   const result = toEngineAssetResult(
@@ -375,6 +385,8 @@ const scoreAssetForEngine = async (
     execution.scan,
     execution.durationMs,
     false,
+    execution.imageLoadDurationMs,
+    execution.totalJobDurationMs,
   );
   const wroteToCache = isCacheableEngineResult(engine, cache, result);
   if (wroteToCache) {

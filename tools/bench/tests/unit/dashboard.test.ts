@@ -34,6 +34,8 @@ const result = (
   matchedTexts: [],
   failureReason: null,
   error: null,
+  imageLoadDurationMs: null,
+  totalJobDurationMs: overrides.durationMs,
   cached: false,
   ...overrides,
 });
