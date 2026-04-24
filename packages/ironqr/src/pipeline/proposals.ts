@@ -1,4 +1,5 @@
 import type { CornerSet, Point } from '../contracts/geometry.js';
+import { validateImageDimensions } from './frame.js';
 import {
   candidateVersionsFromFinders,
   createGeometryCandidates,
@@ -8,7 +9,7 @@ import {
 import type { TraceSink } from './trace.js';
 import type { BinaryView, BinaryViewId, ViewBank } from './views.js';
 
-const MAX_FINDER_EVIDENCE_PER_SOURCE = 12;
+const MAX_FINDER_EVIDENCE_TOTAL = 12;
 const DEFAULT_MAX_PROPOSALS_PER_VIEW = 12;
 const MAX_TRIPLE_COMBINATIONS = 120;
 const FINDER_RATIO_TOLERANCE = 0.9;
@@ -17,17 +18,12 @@ const QUIET_ZONE_DISTANCE_MODULES = 5.25;
 /**
  * Geometry seed carried by a proposal.
  */
-export type ProposalGeometrySeed =
-  | {
-      /** Use the proposal's finder evidence to build finder/center homographies. */
-      readonly kind: 'finder-triple';
-    }
-  | {
-      /** Use inferred boundary corners derived from the same finder evidence. */
-      readonly kind: 'inferred-quad';
-      /** Inferred QR boundary corners. */
-      readonly corners: CornerSet;
-    };
+export interface ProposalGeometrySeed {
+  /** Use inferred boundary corners derived from the same finder evidence. */
+  readonly kind: 'inferred-quad';
+  /** Inferred QR boundary corners. */
+  readonly corners: CornerSet;
+}
 
 /**
  * Proposal detector source identifiers.
@@ -148,11 +144,11 @@ interface FinderTripleCandidate {
  * Counts and policy decisions from the finder-evidence detection sub-stage.
  */
 export interface FinderEvidenceSummary {
-  /** Finder-like evidence emitted by the row-scan detector before dedupe. */
+  /** Finder-like evidence emitted by the row-scan detector after detector-local dedupe/capping. */
   readonly rowScanCount: number;
-  /** Finder-like evidence emitted by flood-fill detection before dedupe. */
+  /** Finder-like evidence emitted by flood-fill detection after detector-local dedupe/capping. */
   readonly floodCount: number;
-  /** Finder-like evidence emitted by template matching before dedupe. */
+  /** Finder-like evidence emitted by template matching after detector-local dedupe/capping. */
   readonly matcherCount: number;
   /** Finder-like evidence retained after cross-detector dedupe and caps. */
   readonly dedupedCount: number;
@@ -375,6 +371,7 @@ export const detectBestFinderEvidence = (
   width: number,
   height: number,
 ): FinderEvidence[] => {
+  validateBinaryPlane(binary, width, height, 'detectBestFinderEvidence');
   const matcher = detectMatcherFinders(binary, width, height);
   const matcherTriple = assembleFinderTriples(matcher, 1)[0];
   if (matcherTriple) return [...matcherTriple.finders];
@@ -468,7 +465,7 @@ const detectFinderEvidenceWithSummary = (binaryView: BinaryView): FinderEvidence
     : [];
   const evidence = dedupeFinderEvidence([...rowScan, ...flood, ...matcher]).slice(
     0,
-    MAX_FINDER_EVIDENCE_PER_SOURCE,
+    MAX_FINDER_EVIDENCE_TOTAL,
   );
   return {
     evidence,
@@ -505,9 +502,7 @@ const proposalsFromFinderTriples = (
       kind: 'finder-triple',
       binaryViewId: binaryView.id,
       finders: triple.finders,
-      geometrySeeds: inferredCorners
-        ? [{ kind: 'finder-triple' }, { kind: 'inferred-quad', corners: inferredCorners }]
-        : [{ kind: 'finder-triple' }],
+      geometrySeeds: inferredCorners ? [{ kind: 'inferred-quad', corners: inferredCorners }] : [],
       estimatedVersions,
       proposalScore: 0,
       scoreBreakdown: emptyScoreBreakdown(),
@@ -560,6 +555,7 @@ const scoreProposal = (binaryView: BinaryView, proposal: ScanProposal): RankedPr
 const computeDetectorScore = (proposal: ScanProposal): number => {
   const evidence =
     proposal.kind === 'finder-triple' ? proposal.finders : proposal.finderLikeEvidence;
+  if (evidence.length === 0) return 0;
   const sourcePrior =
     evidence.reduce((sum, entry) => sum + sourceBonus(entry.source), 0) / evidence.length;
   const evidenceScore =
@@ -763,26 +759,8 @@ const detectRowScanFinders = (
       if (value === current) continue;
       runs[phase] = col - start;
       if (phase === 4) {
-        const ratioScore = finderRatioScore(runs);
-        if (ratioScore > 0) {
-          const centerX = col - runs[4] - runs[3] - runs[2] / 2;
-          const vertical = crossCheck(binary, width, height, centerX, row, 0, 1);
-          if (vertical) {
-            const horizontal = crossCheck(binary, width, height, centerX, vertical.centerY, 1, 0);
-            if (horizontal) {
-              const moduleSize = (vertical.moduleSize + horizontal.moduleSize) / 2;
-              evidence.push({
-                source: 'row-scan',
-                centerX: horizontal.centerX,
-                centerY: vertical.centerY,
-                moduleSize,
-                hModuleSize: horizontal.moduleSize,
-                vModuleSize: vertical.moduleSize,
-                score: ratioScore + vertical.score + horizontal.score,
-              });
-            }
-          }
-        }
+        const candidate = createRowScanEvidence(binary, width, height, runs, col, row);
+        if (candidate) evidence.push(candidate);
         runs[0] = runs[2];
         runs[1] = runs[3];
         runs[2] = runs[4];
@@ -799,7 +777,34 @@ const detectRowScanFinders = (
 
   return clusterFinderEvidence(evidence)
     .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-    .slice(0, MAX_FINDER_EVIDENCE_PER_SOURCE);
+    .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
+};
+
+const createRowScanEvidence = (
+  binary: Uint8Array,
+  width: number,
+  height: number,
+  runs: readonly [number, number, number, number, number],
+  col: number,
+  row: number,
+): FinderEvidence | null => {
+  const ratioScore = finderRatioScore(runs);
+  if (ratioScore <= 0) return null;
+  const centerX = col - runs[4] - runs[3] - runs[2] / 2;
+  const vertical = crossCheck(binary, width, height, centerX, row, 0, 1);
+  if (!vertical) return null;
+  const horizontal = crossCheck(binary, width, height, centerX, vertical.centerY, 1, 0);
+  if (!horizontal) return null;
+  const moduleSize = (vertical.moduleSize + horizontal.moduleSize) / 2;
+  return {
+    source: 'row-scan',
+    centerX: horizontal.centerX,
+    centerY: vertical.centerY,
+    moduleSize,
+    hModuleSize: horizontal.moduleSize,
+    vModuleSize: vertical.moduleSize,
+    score: ratioScore + vertical.score + horizontal.score,
+  };
 };
 
 const detectMatcherFinders = (
@@ -831,7 +836,7 @@ const detectMatcherFinders = (
 
   return clusterFinderEvidence(evidence)
     .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-    .slice(0, MAX_FINDER_EVIDENCE_PER_SOURCE);
+    .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
 };
 
 const detectFloodFinders = (
@@ -890,7 +895,7 @@ const detectFloodFinders = (
 
   return dedupeFinderEvidence(evidence)
     .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-    .slice(0, MAX_FINDER_EVIDENCE_PER_SOURCE);
+    .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
 };
 
 const crossCheck = (
@@ -1052,10 +1057,27 @@ const sampleTimingLine = (
 
 const nowMs = (): number => performance.now();
 
-const sampleBinary = (binaryView: BinaryView, x: number, y: number): number => {
-  const px = Math.max(0, Math.min(binaryView.width - 1, Math.round(x)));
-  const py = Math.max(0, Math.min(binaryView.height - 1, Math.round(y)));
-  return binaryView.binary[py * binaryView.width + px] ?? 255;
+const validateBinaryPlane = (
+  binary: Uint8Array,
+  width: number,
+  height: number,
+  caller: string,
+): void => {
+  validateImageDimensions(width, height);
+  const expected = width * height;
+  if (binary.length < expected) {
+    throw new RangeError(
+      `${caller}: expected at least ${expected} binary pixels, got ${binary.length}.`,
+    );
+  }
+};
+
+const sampleBinary = (binaryView: BinaryView, x: number, y: number): number | undefined => {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  const px = Math.round(x);
+  const py = Math.round(y);
+  if (px < 0 || py < 0 || px >= binaryView.width || py >= binaryView.height) return undefined;
+  return binaryView.binary[py * binaryView.width + px];
 };
 
 const dedupeRankedProposalCandidates = (

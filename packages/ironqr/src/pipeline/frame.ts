@@ -5,6 +5,11 @@ import { ScannerError } from '../qr/errors.js';
 const RGBA_CHANNELS = 4;
 const WHITE = 255;
 
+/** Maximum supported image side length accepted at the public scan boundary. */
+export const MAX_IMAGE_DIMENSION = 8192;
+/** Maximum supported image area accepted before allocation-heavy scan work. */
+export const MAX_IMAGE_PIXELS = 24_000_000;
+
 /**
  * Cached derived views attached to a normalized image.
  *
@@ -145,12 +150,7 @@ export const getOklabPlanes = (image: NormalizedImage): OklabPlanes => {
  * @param value - Candidate image data.
  */
 export const validateImageDataLike = (value: ImageDataLike): void => {
-  if (!Number.isInteger(value.width) || !Number.isInteger(value.height)) {
-    throw new ScannerError('invalid_input', 'Image width and height must be integers.');
-  }
-  if (value.width <= 0 || value.height <= 0) {
-    throw new ScannerError('invalid_input', 'Image width and height must be greater than zero.');
-  }
+  validateImageDimensions(value.width, value.height);
   if (!(value.data instanceof Uint8ClampedArray)) {
     throw new ScannerError('invalid_input', 'Image data must be a Uint8ClampedArray.');
   }
@@ -159,6 +159,33 @@ export const validateImageDataLike = (value: ImageDataLike): void => {
     throw new ScannerError(
       'invalid_input',
       `Image data length mismatch: got ${value.data.length}, expected ${expected}.`,
+    );
+  }
+};
+
+/**
+ * Validates image dimensions before any allocation-heavy work.
+ *
+ * @param width - Candidate width in pixels.
+ * @param height - Candidate height in pixels.
+ */
+export const validateImageDimensions = (width: number, height: number): void => {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
+    throw new ScannerError('invalid_input', 'Image width and height must be safe integers.');
+  }
+  if (width <= 0 || height <= 0) {
+    throw new ScannerError('invalid_input', 'Image width and height must be greater than zero.');
+  }
+  if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+    throw new ScannerError(
+      'invalid_input',
+      `Image dimensions must not exceed ${MAX_IMAGE_DIMENSION}px per side.`,
+    );
+  }
+  if (width * height > MAX_IMAGE_PIXELS) {
+    throw new ScannerError(
+      'invalid_input',
+      `Image area must not exceed ${MAX_IMAGE_PIXELS} pixels.`,
     );
   }
 };
@@ -177,17 +204,19 @@ const toImageData = async (input: BrowserImageSource): Promise<ImageDataLike> =>
   if (isImageDataLike(input)) return input;
 
   const bitmap = await createImageBitmap(input);
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-  const context = canvas.getContext('2d');
-  if (context === null) {
-    bitmap.close();
-    throw new ScannerError('invalid_input', 'Failed to create a 2D canvas context.');
-  }
+  try {
+    validateImageDimensions(bitmap.width, bitmap.height);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext('2d');
+    if (context === null) {
+      throw new ScannerError('invalid_input', 'Failed to create a 2D canvas context.');
+    }
 
-  context.drawImage(bitmap, 0, 0);
-  const imageData = context.getImageData(0, 0, bitmap.width, bitmap.height);
-  bitmap.close();
-  return imageData;
+    context.drawImage(bitmap, 0, 0);
+    return context.getImageData(0, 0, bitmap.width, bitmap.height);
+  } finally {
+    bitmap.close();
+  }
 };
 
 const srgbToLinear = (value: number): number => {

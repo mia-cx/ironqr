@@ -91,11 +91,15 @@ const runEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => {
 /**
  * Decodes a pre-sampled logical QR grid into a structured scan result.
  *
- * @param input - Square boolean grid and decode options.
+ * @param input - Square boolean grid to decode.
  * @returns A decoded payload and QR metadata.
  */
 export const decodeGrid = async (input: DecodeGridInput): Promise<DecodeGridResult> => {
   return runEffect(decodeGridLogical({ grid: input.grid }));
+};
+
+type ScanRuntimeOptionsWithoutObservability = Omit<ScanRuntimeOptions, 'observability'> & {
+  readonly observability?: undefined;
 };
 
 export function scanFrame(
@@ -106,7 +110,7 @@ export function scanFrame(
 ): Promise<ScanReport>;
 export function scanFrame(
   input: ScanFrameInput,
-  options?: ScanRuntimeOptions,
+  options?: ScanRuntimeOptionsWithoutObservability,
 ): Promise<readonly ScanResult[]>;
 /**
  * Scans a single still image or video frame for QR symbols.
@@ -153,7 +157,7 @@ export function scanImage(
 ): Promise<ScanReport>;
 export function scanImage(
   input: ScanImageInput,
-  options?: ScanRuntimeOptions,
+  options?: ScanRuntimeOptionsWithoutObservability,
 ): Promise<readonly ScanResult[]>;
 /**
  * Scans an image-like source by delegating to `scanFrame`.
@@ -166,7 +170,7 @@ export async function scanImage(
   input: ScanImageInput,
   options?: ScanRuntimeOptions,
 ): Promise<readonly ScanResult[] | ScanReport> {
-  return scanFrame(input, options as never);
+  return runEffect(scanFrameEffect(input, options));
 }
 
 /**

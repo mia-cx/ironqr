@@ -25,9 +25,9 @@ export interface TraceCollector extends TraceSink {
  */
 export interface TraceCounter extends TraceSink {
   /** Event counts keyed by trace event type. */
-  readonly counts: Partial<Record<IronqrTraceEvent['type'], number>>;
+  readonly counts: Readonly<Partial<Record<IronqrTraceEvent['type'], number>>>;
   /** Decode-attempt failures keyed by failure subtype. */
-  readonly attemptFailures: Partial<Record<DecodeAttemptFailedEvent['failure'], number>>;
+  readonly attemptFailures: Readonly<Partial<Record<DecodeAttemptFailedEvent['failure'], number>>>;
   /** Latest proposal-clustering summary, if emitted. */
   readonly clustering: ProposalClustersBuiltEvent | null;
   /** Per-cluster completion summaries, in scan order. */
@@ -288,7 +288,7 @@ export const createTraceCollector = (): TraceCollector => {
 };
 
 /**
- * Creates a low-overhead trace sink that only counts events by type.
+ * Creates a low-overhead trace sink that counts events and retains compact scan summaries.
  *
  * @returns A mutable counting sink suitable for benchmarks.
  */
@@ -300,16 +300,16 @@ export const createTraceCounter = (): TraceCounter => {
   let scanFinished: ScanFinishedEvent | null = null;
   return {
     get counts() {
-      return counts;
+      return Object.freeze({ ...counts });
     },
     get attemptFailures() {
-      return attemptFailures;
+      return Object.freeze({ ...attemptFailures });
     },
     get clustering() {
       return clustering;
     },
     get clusterOutcomes() {
-      return clusterOutcomes;
+      return [...clusterOutcomes];
     },
     get scanFinished() {
       return scanFinished;

@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import type { ScanObservabilityOptions, ScanOptions, ScanResult } from '../contracts/scan.js';
-import type { ScannerError } from '../qr/errors.js';
+import { ScannerError } from '../qr/errors.js';
 import { clusterRankedProposals } from './clusters.js';
 import {
   type DecodeAttempt,
@@ -325,11 +325,11 @@ interface ClusterProcessingState {
   readonly attemptRecords: ScanAttemptRecord[];
   processedRepresentativeCount: number;
   killedClusterCount: number;
+  readonly structuralFailuresByClusterId: Map<string, number>;
 }
 
 interface ClusterProcessingResult {
   readonly stopScanning: boolean;
-  readonly processedRepresentativeCount: number;
 }
 
 interface ProposalBatchSource {
@@ -340,6 +340,8 @@ interface ProposalBatchSource {
 const MAX_CLUSTER_REPRESENTATIVES = 3;
 const MAX_CLUSTER_STRUCTURAL_FAILURES = 3;
 const MAX_EARLY_FRONTIER_PASSES = 4;
+const DEFAULT_MAX_PROPOSALS = 24;
+const MAX_SCAN_BUDGET = 10_000;
 
 /**
  * Runs the full ranked proposal pipeline and returns either plain results or an
@@ -353,7 +355,7 @@ export const scanFrameEffect = (
   input: Parameters<typeof normalizeImageInput>[0],
   options: ScanRuntimeOptions = {},
 ): Effect.Effect<ScanFrameOutput, ScannerError> => {
-  return scanFrameExecutionEffect(input, options).pipe(
+  return scanFrameExecutionOnce(input, options).pipe(
     Effect.map((execution) =>
       options.observability === undefined
         ? execution.rankedResults.map((entry) => entry.result)
@@ -374,16 +376,9 @@ export const scanFrameRankedEffect = (
   input: Parameters<typeof normalizeImageInput>[0],
   options: ScanRuntimeOptions = {},
 ): Effect.Effect<readonly RankedScanResult[], ScannerError> => {
-  return scanFrameExecutionEffect(input, options).pipe(
+  return scanFrameExecutionOnce(input, options).pipe(
     Effect.map((execution) => execution.rankedResults),
   );
-};
-
-const scanFrameExecutionEffect = (
-  input: Parameters<typeof normalizeImageInput>[0],
-  options: ScanRuntimeOptions,
-): Effect.Effect<ScanExecution, ScannerError> => {
-  return scanFrameExecutionOnce(input, options);
 };
 
 const scanFrameExecutionOnce = (
@@ -415,6 +410,7 @@ const scanFrameExecutionOnce = (
       attemptRecords,
       processedRepresentativeCount: 0,
       killedClusterCount: 0,
+      structuralFailuresByClusterId: new Map(),
     };
     let proposalGenerationMs = 0;
     let rankingMs = 0;
@@ -669,7 +665,7 @@ const processFrontierClusters = (
         bestProposalScore: bestProposal.proposalScore,
       });
 
-      let structuralFailures = 0;
+      let structuralFailures = state.structuralFailuresByClusterId.get(cluster.id) ?? 0;
       let clusterOutcome: 'decoded' | 'duplicate' | 'killed' | 'exhausted' = 'exhausted';
       let winningProposalId: string | undefined;
       let clusterProcessedRepresentatives = 0;
@@ -711,6 +707,7 @@ const processFrontierClusters = (
         });
         if (!structure.passed) {
           structuralFailures += 1;
+          state.structuralFailuresByClusterId.set(cluster.id, structuralFailures);
           if (structuralFailures >= MAX_CLUSTER_STRUCTURAL_FAILURES) {
             clusterOutcome = 'killed';
             state.killedClusterCount += 1;
@@ -758,7 +755,7 @@ const processFrontierClusters = (
             clusterOutcome,
             winningProposalId,
           );
-          return { stopScanning: true, processedRepresentativeCount: processedThisPass };
+          return { stopScanning: true };
         }
         break;
       }
@@ -774,7 +771,7 @@ const processFrontierClusters = (
       );
     }
 
-    return { stopScanning: false, processedRepresentativeCount: processedThisPass };
+    return { stopScanning: false };
   });
 };
 
@@ -1024,16 +1021,23 @@ const pushUniqueRankedResult = (
 };
 
 const resolveMaxProposals = (options: ScanRuntimeOptions): number | undefined => {
+  if (options.maxCandidates !== undefined && options.maxProposals !== undefined) {
+    throw new ScannerError(
+      'invalid_input',
+      'Use maxProposals or deprecated maxCandidates, not both.',
+    );
+  }
   return options.maxProposals ?? options.maxCandidates;
 };
 
 const resolveMaxProposalsPerView = (options: ScanRuntimeOptions): number | undefined => {
-  return options.maxProposalsPerView ?? options.maxCandidates;
+  const value = options.maxProposalsPerView ?? options.maxCandidates;
+  return value === undefined ? undefined : normalizeProposalBudget(value);
 };
 
 const normalizeProposalBudget = (value: number | undefined): number => {
-  if (value === undefined || !Number.isFinite(value)) return 24;
-  return Math.max(1, Math.trunc(value));
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_PROPOSALS;
+  return Math.max(1, Math.min(MAX_SCAN_BUDGET, Math.trunc(value)));
 };
 
 const aggregateAttemptFailures = (

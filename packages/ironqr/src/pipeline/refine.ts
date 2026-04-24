@@ -7,11 +7,6 @@ import {
 import type { FinderTripleProposal } from './proposals.js';
 
 /**
- * Geometry refinement transform identifier.
- */
-export type GeometryRefinement = 'fitness' | 'alignment-refit' | 'corner-nudge';
-
-/**
  * Locates alignment-pattern correspondences suggested by a geometry candidate.
  *
  * The search stays intentionally local and cheap: once a proposal has earned a
@@ -61,6 +56,7 @@ export const locateAlignmentPatternCorrespondences = (
         readonly pixelX: number;
         readonly pixelY: number;
         readonly score: number;
+        readonly distanceSquared: number;
       }
     | undefined;
 
@@ -69,8 +65,13 @@ export const locateAlignmentPatternCorrespondences = (
       const pixelX = predicted.x + offsetX;
       const pixelY = predicted.y + offsetY;
       const score = scoreAlignmentPattern(binary, width, height, pixelX, pixelY, moduleRadius);
-      if (!best || score > best.score) {
-        best = { pixelX, pixelY, score };
+      const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+      if (
+        !best ||
+        score > best.score ||
+        (score === best.score && distanceSquared < best.distanceSquared)
+      ) {
+        best = { pixelX, pixelY, score, distanceSquared };
       }
     }
   }
@@ -105,7 +106,7 @@ export const refineGeometryByFitness = (
   width: number,
   height: number,
 ): GridResolution => {
-  const candidates = [geometry, ...generateCornerNudges(geometry)];
+  const candidates = generateCornerNudges(geometry);
   let best = geometry;
   let bestScore = structuralFitness(geometry, binary, width, height);
   for (const candidate of candidates) {
@@ -174,7 +175,7 @@ export const refineGeometryWithAlignment = (
  * @param geometry - Base geometry candidate.
  * @returns Corner-nudged alternatives.
  */
-export const generateCornerNudges = (geometry: GridResolution): readonly GridResolution[] => {
+const generateCornerNudges = (geometry: GridResolution): readonly GridResolution[] => {
   const top = edgeStep(geometry.corners.topLeft, geometry.corners.topRight, geometry.size);
   const left = edgeStep(geometry.corners.topLeft, geometry.corners.bottomLeft, geometry.size);
   const right = edgeStep(geometry.corners.topRight, geometry.corners.bottomRight, geometry.size);
@@ -298,6 +299,18 @@ const structuralFitness = (
   return score;
 };
 
+const ALIGNMENT_PATTERN_PROBES = [
+  { x: 0, y: 0, dark: true, weight: 3 },
+  { x: -2, y: -2, dark: true, weight: 1 },
+  { x: 2, y: -2, dark: true, weight: 1 },
+  { x: -2, y: 2, dark: true, weight: 1 },
+  { x: 2, y: 2, dark: true, weight: 1 },
+  { x: -1, y: 0, dark: false, weight: 1 },
+  { x: 1, y: 0, dark: false, weight: 1 },
+  { x: 0, y: -1, dark: false, weight: 1 },
+  { x: 0, y: 1, dark: false, weight: 1 },
+] as const;
+
 const scoreAlignmentPattern = (
   binary: Uint8Array,
   width: number,
@@ -306,19 +319,8 @@ const scoreAlignmentPattern = (
   centerY: number,
   radius: number,
 ): number => {
-  const probes = [
-    { x: 0, y: 0, dark: true, weight: 3 },
-    { x: -2, y: -2, dark: true, weight: 1 },
-    { x: 2, y: -2, dark: true, weight: 1 },
-    { x: -2, y: 2, dark: true, weight: 1 },
-    { x: 2, y: 2, dark: true, weight: 1 },
-    { x: -1, y: 0, dark: false, weight: 1 },
-    { x: 1, y: 0, dark: false, weight: 1 },
-    { x: 0, y: -1, dark: false, weight: 1 },
-    { x: 0, y: 1, dark: false, weight: 1 },
-  ];
   let score = 0;
-  for (const probe of probes) {
+  for (const probe of ALIGNMENT_PATTERN_PROBES) {
     const dark = sample(
       binary,
       width,
@@ -381,7 +383,9 @@ const sample = (
   x: number,
   y: number,
 ): boolean => {
-  const px = Math.max(0, Math.min(width - 1, Math.round(x)));
-  const py = Math.max(0, Math.min(height - 1, Math.round(y)));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const px = Math.round(x);
+  const py = Math.round(y);
+  if (px < 0 || py < 0 || px >= width || py >= height) return false;
   return (binary[py * width + px] ?? 255) === 0;
 };

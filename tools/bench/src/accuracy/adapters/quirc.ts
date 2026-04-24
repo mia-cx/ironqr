@@ -59,13 +59,11 @@ const scanWithQuirc = serializeAsync(
       const decoder = await createQuircDecoder();
       const image = await asset.loadImage();
       const results = decoder.decode(buildLuminanceBuffer(image), image.width, image.height);
-      return successResult(
-        results.flatMap((result) => {
-          const text = result.data.text ? normalizeDecodedText(result.data.text) : '';
-          return text.length > 0 ? [{ text }] : [];
-        }),
-        results.length === 0 ? 'no_decode' : null,
-      );
+      const decoded = results.flatMap((result) => {
+        const text = result.data.text ? normalizeDecodedText(result.data.text) : '';
+        return text.length > 0 ? [{ text }] : [];
+      });
+      return successResult(decoded, decoded.length === 0 ? 'no_decode' : null);
     } catch (error) {
       return failureResult(error);
     }

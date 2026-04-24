@@ -61,7 +61,7 @@ export interface DecodeCascadeSuccess {
   readonly proposalId: string;
   /** Winning geometry candidate id. */
   readonly geometryCandidateId: string;
-  /** Proposal-local rank of the successful attempt. */
+  /** Metadata for the decode attempt that succeeded. */
   readonly attempt: DecodeAttempt;
 }
 
@@ -86,6 +86,20 @@ export interface DecodeCascadeOptions {
   readonly initialGeometryCandidates?: readonly GeometryCandidate[];
 }
 
+const MAX_DECODE_NEIGHBORHOOD = 12;
+const MAX_PRIORITY_RESCUE_DECODE_NEIGHBORHOOD = 4;
+const MAX_REDUCED_RESCUE_DECODE_NEIGHBORHOOD = 2;
+const MAX_PRIORITY_CORNER_NUDGE_ATTEMPTS = 12;
+const MAX_REDUCED_CORNER_NUDGE_ATTEMPTS = 4;
+const MAX_PRIORITY_RESCUE_GEOMETRIES = 3;
+const MAX_REDUCED_RESCUE_GEOMETRIES = 2;
+const MAX_PRIORITY_RESCUE_PROPOSAL_RANK = 5;
+const MAX_ANY_RESCUE_SCORE_GAP = 0.9;
+const MIN_QR_MODULES = 21;
+const TIMING_PATTERN_AXIS = 6;
+const TIMING_PATTERN_MARGIN = 7;
+const TIMING_PATTERN_END_MARGIN = 8;
+
 /**
  * Runs the proposal-local decode cascade.
  *
@@ -102,16 +116,6 @@ export interface DecodeCascadeOptions {
  * @param options - Optional trace configuration.
  * @returns The first successful decode for the proposal, or `null`.
  */
-const MAX_DECODE_NEIGHBORHOOD = 12;
-const MAX_PRIORITY_RESCUE_DECODE_NEIGHBORHOOD = 4;
-const MAX_REDUCED_RESCUE_DECODE_NEIGHBORHOOD = 2;
-const MAX_PRIORITY_CORNER_NUDGE_ATTEMPTS = 12;
-const MAX_REDUCED_CORNER_NUDGE_ATTEMPTS = 4;
-const MAX_PRIORITY_RESCUE_GEOMETRIES = 3;
-const MAX_REDUCED_RESCUE_GEOMETRIES = 2;
-const MAX_PRIORITY_RESCUE_PROPOSAL_RANK = 5;
-const MAX_ANY_RESCUE_SCORE_GAP = 0.9;
-
 export const runDecodeCascade = (
   proposal: ScanProposal,
   viewBank: ViewBank,
@@ -309,7 +313,7 @@ const tryGeometryAcrossViews = (
     for (const decodeBinaryViewId of decodeNeighborhood) {
       const binaryView = viewBank.getBinaryView(decodeBinaryViewId);
       for (const sampler of samplers) {
-        const geometryCandidateId = geometry.id ?? `${proposal.id}:refined`;
+        const geometryCandidateId = `${geometry.id ?? proposal.id}:${refinement}:${decodeBinaryViewId}:${sampler}`;
         const attempt = {
           proposalId: proposal.id,
           geometryCandidateId,
@@ -336,20 +340,7 @@ const tryGeometryAcrossViews = (
         );
         const timingScore = scoreTimingPattern(grid);
         if (timingScore < minimumTimingScore(attempt.refinement, attempt.sampler)) {
-          traceSink?.emit({
-            type: 'decode-attempt-failed',
-            proposalId: attempt.proposalId,
-            geometryCandidateId: attempt.geometryCandidateId,
-            decodeBinaryViewId: attempt.decodeBinaryViewId,
-            sampler: attempt.sampler,
-            refinement: attempt.refinement,
-            failure: 'timing-check',
-          });
-          onAttemptMeasured?.({
-            ...attempt,
-            outcome: 'timing-check',
-            durationMs: nowMs() - startedAt,
-          });
+          recordAttemptFailure(attempt, 'timing-check', startedAt, traceSink, onAttemptMeasured);
           continue;
         }
 
@@ -363,39 +354,19 @@ const tryGeometryAcrossViews = (
             (error: unknown): error is ScannerError =>
               error instanceof ScannerError && error.code === 'internal_error',
             (error) => {
-              traceSink?.emit({
-                type: 'decode-attempt-failed',
-                proposalId: attempt.proposalId,
-                geometryCandidateId: attempt.geometryCandidateId,
-                decodeBinaryViewId: attempt.decodeBinaryViewId,
-                sampler: attempt.sampler,
-                refinement: attempt.refinement,
-                failure: 'internal_error',
-              });
-              onAttemptMeasured?.({
-                ...attempt,
-                outcome: 'internal_error',
-                durationMs: nowMs() - startedAt,
-              });
+              recordAttemptFailure(
+                attempt,
+                'internal_error',
+                startedAt,
+                traceSink,
+                onAttemptMeasured,
+              );
               return Effect.fail(error);
             },
           ),
         );
         if (decoded === null) {
-          traceSink?.emit({
-            type: 'decode-attempt-failed',
-            proposalId: attempt.proposalId,
-            geometryCandidateId: attempt.geometryCandidateId,
-            decodeBinaryViewId: attempt.decodeBinaryViewId,
-            sampler: attempt.sampler,
-            refinement: attempt.refinement,
-            failure: 'decode_failed',
-          });
-          onAttemptMeasured?.({
-            ...attempt,
-            outcome: 'decode_failed',
-            durationMs: nowMs() - startedAt,
-          });
+          recordAttemptFailure(attempt, 'decode_failed', startedAt, traceSink, onAttemptMeasured);
           continue;
         }
 
@@ -518,6 +489,29 @@ const decodeGridVariants = (grid: boolean[][]): Effect.Effect<ScanResult, Scanne
   });
 };
 
+const recordAttemptFailure = (
+  attempt: DecodeAttempt,
+  outcome: Exclude<DecodeAttemptOutcome, 'success'>,
+  startedAt: number,
+  traceSink?: TraceSink,
+  onAttemptMeasured?: DecodeCascadeOptions['onAttemptMeasured'],
+): void => {
+  traceSink?.emit({
+    type: 'decode-attempt-failed',
+    proposalId: attempt.proposalId,
+    geometryCandidateId: attempt.geometryCandidateId,
+    decodeBinaryViewId: attempt.decodeBinaryViewId,
+    sampler: attempt.sampler,
+    refinement: attempt.refinement,
+    failure: outcome,
+  });
+  onAttemptMeasured?.({
+    ...attempt,
+    outcome,
+    durationMs: nowMs() - startedAt,
+  });
+};
+
 const buildMirroredDecodeVariants = (grid: boolean[][]): ReadonlyArray<() => boolean[][]> => {
   let transpose: boolean[][] | null = null;
   const getTranspose = (): boolean[][] => {
@@ -550,19 +544,19 @@ const minimumTimingScore = (
 };
 
 const scoreTimingPattern = (grid: readonly (readonly boolean[])[]): number => {
-  if (grid.length < 21) return 0;
+  if (grid.length < MIN_QR_MODULES) return 0;
   let rowMatches = 0;
   let rowTotal = 0;
-  for (let col = 7; col <= grid.length - 8; col += 1) {
-    const value = grid[6]?.[col];
+  for (let col = TIMING_PATTERN_MARGIN; col <= grid.length - TIMING_PATTERN_END_MARGIN; col += 1) {
+    const value = grid[TIMING_PATTERN_AXIS]?.[col];
     if (value === undefined) return 0;
     rowMatches += value === (col % 2 === 0) ? 1 : 0;
     rowTotal += 1;
   }
   let colMatches = 0;
   let colTotal = 0;
-  for (let row = 7; row <= grid.length - 8; row += 1) {
-    const value = grid[row]?.[6];
+  for (let row = TIMING_PATTERN_MARGIN; row <= grid.length - TIMING_PATTERN_END_MARGIN; row += 1) {
+    const value = grid[row]?.[TIMING_PATTERN_AXIS];
     if (value === undefined) return 0;
     colMatches += value === (row % 2 === 0) ? 1 : 0;
     colTotal += 1;
@@ -583,5 +577,5 @@ const reverseRows = (grid: readonly (readonly boolean[])[]): boolean[][] => {
 };
 
 const reverseColumns = (grid: readonly (readonly boolean[])[]): boolean[][] => {
-  return [...grid].reverse().map((row) => row as boolean[]);
+  return [...grid].reverse().map((row) => [...row]);
 };

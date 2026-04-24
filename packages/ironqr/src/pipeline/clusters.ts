@@ -1,3 +1,4 @@
+import type { Point } from '../contracts/geometry.js';
 import type { ScanProposal } from './proposals.js';
 import type { BinaryViewId } from './views.js';
 
@@ -38,7 +39,7 @@ export const clusterRankedProposals = (
   proposals: readonly ScanProposal[],
   options: ProposalClusterOptions = {},
 ): readonly ProposalCluster[] => {
-  const maxRepresentatives = options.maxRepresentatives ?? DEFAULT_MAX_CLUSTER_REPRESENTATIVES;
+  const maxRepresentatives = normalizeRepresentativeBudget(options.maxRepresentatives);
   const grouped = new Map<string, ScanProposal[]>();
 
   for (const proposal of proposals) {
@@ -70,9 +71,10 @@ export const clusterRankedProposals = (
 };
 
 const proposalClusterKey = (proposal: ScanProposal): string => {
-  const points = proposal.kind === 'finder-triple' ? proposal.finders : proposal.finderLikeEvidence;
-  const xs = points.map((finder) => finder.centerX);
-  const ys = points.map((finder) => finder.centerY);
+  const points = proposalClusterPoints(proposal);
+  if (points.length === 0) return `${proposal.id}:empty`;
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
   const centroidX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
   const centroidY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
   const width = Math.max(...xs) - Math.min(...xs);
@@ -90,7 +92,7 @@ const selectClusterRepresentatives = (
   proposals: readonly ScanProposal[],
   maxRepresentatives: number,
 ): readonly ScanProposal[] => {
-  const budget = Math.max(1, maxRepresentatives);
+  const budget = normalizeRepresentativeBudget(maxRepresentatives);
   const selected: ScanProposal[] = [];
   const seenIds = new Set<string>();
   const seenFamilies = new Set<string>();
@@ -135,7 +137,7 @@ const selectClusterRepresentatives = (
 };
 
 const viewFamilyKey = (binaryViewId: BinaryViewId): string => {
-  const [scalarViewId] = binaryViewId.split(':') as [string, string, string];
+  const { scalarViewId } = parseBinaryViewId(binaryViewId);
   if (scalarViewId === 'gray') return 'gray';
   if (scalarViewId === 'oklab-l') return 'oklab-l';
   if (scalarViewId.startsWith('oklab')) return 'oklab-chroma';
@@ -143,6 +145,34 @@ const viewFamilyKey = (binaryViewId: BinaryViewId): string => {
 };
 
 const viewProfileKey = (binaryViewId: BinaryViewId): string => {
-  const [scalarViewId, threshold, polarity] = binaryViewId.split(':') as [string, string, string];
+  const { scalarViewId, threshold, polarity } = parseBinaryViewId(binaryViewId);
   return `${viewFamilyKey(binaryViewId)}:${threshold}:${polarity}:${scalarViewId}`;
+};
+
+const proposalClusterPoints = (proposal: ScanProposal): readonly Point[] => {
+  if (proposal.kind === 'finder-triple') {
+    return proposal.finders.map((finder) => ({ x: finder.centerX, y: finder.centerY }));
+  }
+  if (proposal.corners) {
+    return [
+      proposal.corners.topLeft,
+      proposal.corners.topRight,
+      proposal.corners.bottomRight,
+      proposal.corners.bottomLeft,
+    ];
+  }
+  return proposal.finderLikeEvidence.map((finder) => ({ x: finder.centerX, y: finder.centerY }));
+};
+
+const normalizeRepresentativeBudget = (value: number | undefined): number => {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_CLUSTER_REPRESENTATIVES;
+  return Math.max(1, Math.trunc(value));
+};
+
+const parseBinaryViewId = (
+  binaryViewId: BinaryViewId,
+): { readonly scalarViewId: string; readonly threshold: string; readonly polarity: string } => {
+  const parts = binaryViewId.split(':');
+  if (parts.length !== 3) throw new RangeError(`Invalid binary view id: ${binaryViewId}.`);
+  return { scalarViewId: parts[0]!, threshold: parts[1]!, polarity: parts[2]! };
 };

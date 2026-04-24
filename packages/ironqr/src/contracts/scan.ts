@@ -79,24 +79,49 @@ export const ScanObservabilityOptionsSchema = S.Struct({
 });
 export type ScanObservabilityOptions = S.Schema.Type<typeof ScanObservabilityOptionsSchema>;
 
+const ScanBudgetLimitSchema = S.Number.check(
+  S.isFinite(),
+  S.isInt(),
+  S.isBetween({ minimum: 1, maximum: 10_000 }),
+);
+const QrVersionSchema = S.Number.check(
+  S.isFinite(),
+  S.isInt(),
+  S.isBetween({ minimum: 1, maximum: 40 }),
+);
+const ConfidenceSchema = S.Number.check(S.isFinite(), S.isBetween({ minimum: 0, maximum: 1 }));
+const DecodeGridSchema = S.Array(S.Array(S.Boolean)).check(
+  S.makeFilter<readonly (readonly boolean[])[]>(
+    (grid) => {
+      const size = grid.length;
+      return (
+        size > 0 && size <= 177 && grid.every((row) => row.length === size) && (size - 17) % 4 === 0
+      );
+    },
+    { expected: 'a non-empty square QR grid whose size maps to QR version 1..40' },
+  ),
+);
+
 export const ScanOptionsSchema = S.Struct({
   allowMultiple: S.optional(S.Boolean),
   /** @deprecated Prefer `maxProposals`. Kept as a compatibility alias during migration. */
-  maxCandidates: S.optional(S.Number),
-  maxProposals: S.optional(S.Number),
-  maxProposalsPerView: S.optional(S.Number),
+  maxCandidates: S.optional(ScanBudgetLimitSchema),
+  maxProposals: S.optional(ScanBudgetLimitSchema),
+  maxProposalsPerView: S.optional(ScanBudgetLimitSchema),
   observability: S.optional(ScanObservabilityOptionsSchema),
-});
+}).check(
+  S.makeFilter(
+    (options: {
+      readonly maxCandidates?: number | undefined;
+      readonly maxProposals?: number | undefined;
+    }) => options.maxCandidates === undefined || options.maxProposals === undefined,
+    { expected: 'maxCandidates and maxProposals must not both be provided' },
+  ),
+);
 export type ScanOptions = S.Schema.Type<typeof ScanOptionsSchema>;
 
-export const DecodeGridOptionsSchema = S.Struct({
-  debug: S.optional(S.Boolean),
-});
-export type DecodeGridOptions = S.Schema.Type<typeof DecodeGridOptionsSchema>;
-
 export const DecodeGridInputSchema = S.Struct({
-  grid: S.Array(S.Array(S.Boolean)),
-  options: S.optional(DecodeGridOptionsSchema),
+  grid: DecodeGridSchema,
 });
 export type DecodeGridInput = S.Schema.Type<typeof DecodeGridInputSchema>;
 
@@ -127,8 +152,8 @@ export type DecodedSegment = S.Schema.Type<typeof DecodedSegmentSchema>;
 
 export const ScanResultSchema = S.Struct({
   payload: DecodedPayloadSchema,
-  confidence: S.Number,
-  version: S.Number,
+  confidence: ConfidenceSchema,
+  version: QrVersionSchema,
   errorCorrectionLevel: ErrorCorrectionLevelSchema,
   bounds: BoundsSchema,
   corners: CornerSetSchema,
@@ -151,7 +176,7 @@ export interface ImageDataLike {
   readonly width: number;
   readonly height: number;
   readonly data: Uint8ClampedArray;
-  readonly colorSpace?: string;
+  readonly colorSpace?: PredefinedColorSpace;
 }
 
 export type BrowserImageSource =

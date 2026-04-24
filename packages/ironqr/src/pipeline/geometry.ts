@@ -2,7 +2,6 @@ import type { Bounds, CornerSet, Point } from '../contracts/geometry.js';
 import type {
   FinderEvidence,
   FinderTripleProposal,
-  ProposalGeometrySeed,
   QuadProposal,
   ScanProposal,
 } from './proposals.js';
@@ -102,7 +101,9 @@ export const createGeometryCandidates = (
       ? proposal
       : ({
           ...proposal,
-          estimatedVersions: options.versionOverrides,
+          estimatedVersions: options.versionOverrides
+            .filter(isValidQrVersion)
+            .map((version) => Math.trunc(version)),
         } satisfies ScanProposal);
   const candidates =
     candidateProposal.kind === 'finder-triple'
@@ -302,6 +303,17 @@ export const fitHomography = (
   correspondences: readonly (readonly [Point, Point])[],
 ): Homography | null => {
   if (correspondences.length < 4) return null;
+  if (
+    correspondences.some(
+      ([grid, image]) =>
+        !Number.isFinite(grid.x) ||
+        !Number.isFinite(grid.y) ||
+        !Number.isFinite(image.x) ||
+        !Number.isFinite(image.y),
+    )
+  ) {
+    return null;
+  }
   const normalMatrix = Array.from({ length: 8 }, () => new Array<number>(8).fill(0));
   const normalVector = new Array<number>(8).fill(0);
 
@@ -369,7 +381,7 @@ export const buildGridResolutionFromHomography = (
     bottomRight: applyHomography(homography, size - 0.5, size - 0.5),
     bottomLeft: applyHomography(homography, -0.5, size - 0.5),
   } satisfies CornerSet;
-  if (!areFiniteCorners(corners)) return null;
+  if (!areFiniteCorners(corners) || polygonArea(corners) < 1e-6) return null;
 
   const xs = [corners.topLeft.x, corners.topRight.x, corners.bottomRight.x, corners.bottomLeft.x];
   const ys = [corners.topLeft.y, corners.topRight.y, corners.bottomRight.y, corners.bottomLeft.y];
@@ -397,18 +409,18 @@ export const buildGridResolutionFromHomography = (
   } satisfies GeometryCandidate;
 };
 
-/**
- * Returns plausible versions for a finder triple in best-first order.
- *
- * @param finders - Finder triple.
- * @param span - Symmetric retry span around the nearest estimate.
- * @returns Unique candidate versions.
- */
 const PRIMARY_VERSION_SCALE_FACTORS = [1] as const;
 const RESCUE_VERSION_SCALE_FACTORS = [1, 1.25, 1.5, 2, 2.5, 3, 4] as const;
 const MAX_PRIMARY_VERSION_CANDIDATES = 8;
 const MAX_RESCUE_VERSION_CANDIDATES = 24;
 
+/**
+ * Returns plausible primary QR versions for a finder triple in best-first order.
+ *
+ * @param finders - Finder triple.
+ * @param span - Symmetric retry span around the nearest estimate.
+ * @returns Unique candidate versions.
+ */
 export const candidateVersionsFromFinders = (
   finders: readonly [FinderEvidence, FinderEvidence, FinderEvidence],
   span = 2,
@@ -422,6 +434,13 @@ export const candidateVersionsFromFinders = (
   });
 };
 
+/**
+ * Returns a wider QR-version rescue neighborhood for hard decode attempts.
+ *
+ * @param finders - Finder triple.
+ * @param current - Current primary version candidates.
+ * @returns Unique rescue candidates in retry order.
+ */
 export const rescueVersionsFromFinders = (
   finders: readonly [FinderEvidence, FinderEvidence, FinderEvidence],
   current: readonly number[] = [],
@@ -439,11 +458,20 @@ export const rescueVersionsFromFinders = (
   );
 };
 
+/**
+ * Expands a version list with nearby and scale-adjusted rescue candidates.
+ *
+ * @param current - Current primary version candidates.
+ * @param maxCandidates - Maximum returned candidate count.
+ * @returns Unique rescue candidates in retry order.
+ */
 export const expandVersionNeighborhood = (
   current: readonly number[],
   maxCandidates = MAX_RESCUE_VERSION_CANDIDATES,
 ): readonly number[] => {
-  if (current.length === 0) return [1, 2, 3, 5, 7, 10, 14, 19, 25, 32, 40];
+  if (current.length === 0) {
+    return [1, 2, 3, 5, 7, 10, 14, 19, 25, 32, 40].slice(0, maxCandidates);
+  }
 
   const ordered: number[] = [];
   const seen = new Set<number>();
@@ -605,6 +633,10 @@ const versionToModulesAcross = (version: number): number => {
   return clampQrVersion(version) * 4 + 10;
 };
 
+const isValidQrVersion = (version: number): boolean => {
+  return Number.isInteger(version) && version >= 1 && version <= 40;
+};
+
 const clampQrVersion = (version: number): number => {
   return Math.max(1, Math.min(40, Math.round(version)));
 };
@@ -616,9 +648,7 @@ const createFinderGeometryCandidates = (
   if (oriented === null) return [];
 
   const candidates: GeometryCandidate[] = [];
-  const geometrySeeds = proposal.geometrySeeds ?? [
-    { kind: 'finder-triple' } satisfies ProposalGeometrySeed,
-  ];
+  const geometrySeeds = proposal.geometrySeeds ?? [];
   let index = 0;
   for (const version of proposal.estimatedVersions) {
     const size = version * 4 + 17;
@@ -658,7 +688,7 @@ const createFinderGeometryCandidates = (
     ];
     const homography = fitHomography(correspondences);
     if (homography !== null) {
-      const geometryScore = scoreGeometryCandidate(homography, size, proposal.proposalScore + 1);
+      const geometryScore = scoreGeometryCandidate(homography, size, 1);
       const candidate = buildGridResolutionFromHomography(
         version,
         size,
@@ -695,7 +725,7 @@ const createFinderGeometryCandidates = (
       ],
     ]);
     if (centerHomography !== null) {
-      const geometryScore = scoreGeometryCandidate(centerHomography, size, proposal.proposalScore);
+      const geometryScore = scoreGeometryCandidate(centerHomography, size, 0);
       const candidate = buildGridResolutionFromHomography(
         version,
         size,
@@ -718,7 +748,7 @@ const createFinderGeometryCandidates = (
         seed.corners,
         version,
         index,
-        proposal.proposalScore + 0.5,
+        0.5,
       );
       if (candidate) candidates.push(candidate);
       index += 1;
@@ -739,7 +769,7 @@ const createQuadGeometryCandidates = (proposal: QuadProposal): readonly Geometry
       proposal.corners,
       version,
       index,
-      proposal.proposalScore + 0.5,
+      0.5,
     );
     if (candidate) candidates.push(candidate);
     index += 1;
@@ -975,6 +1005,17 @@ const areFiniteCorners = (corners: CornerSet): boolean => {
   return [corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft].every(
     (corner) => Number.isFinite(corner.x) && Number.isFinite(corner.y),
   );
+};
+
+const polygonArea = (corners: CornerSet): number => {
+  const points = [corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft];
+  let twiceArea = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]!;
+    const next = points[(index + 1) % points.length]!;
+    twiceArea += current.x * next.y - next.x * current.y;
+  }
+  return Math.abs(twiceArea) / 2;
 };
 
 const emptyScoreBreakdown = () => ({

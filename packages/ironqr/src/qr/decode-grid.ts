@@ -24,7 +24,7 @@ const SHIFT_JIS_DECODER = new TextDecoder('shift_jis', { fatal: false });
 const ASCII_DECODER = new TextDecoder('us-ascii', { fatal: false });
 const UTF16BE_DECODER = new TextDecoder('utf-16be', { fatal: false });
 const BIG5_DECODER = new TextDecoder('big5', { fatal: false });
-const GBK_DECODER = new TextDecoder('gbk', { fatal: false });
+const GB18030_DECODER = new TextDecoder('gb18030', { fatal: false });
 const EUC_KR_DECODER = new TextDecoder('euc-kr', { fatal: false });
 
 const FORMAT_INFO_BITS = 15;
@@ -50,7 +50,7 @@ const MAX_FORMAT_INFO_RESCUE_CANDIDATES = 4;
 const MAX_VERSION_INFO_RESCUE_DISTANCE = 8;
 const MAX_VERSION_INFO_RESCUE_CANDIDATES = 4;
 
-const decodeLayoutCache = new Map<number, CachedDecodeLayout>();
+const decodeLayoutCache = new Map<string, CachedDecodeLayout>();
 const blockInfoCache = new Map<string, QrVersionBlockInfo>();
 
 /**
@@ -112,7 +112,7 @@ const prepareDecodeGridPreludes = (
   }
 
   const version = getVersionFromSize(size);
-  const matrix = grid as boolean[][];
+  const matrix = grid.map((row) => [...row]);
   const formatCandidates = buildFormatPreludeCandidates(matrix);
   const versionCandidates = buildVersionPreludeCandidates(matrix, version);
   const preludes: DecodedGridPrelude[] = [];
@@ -165,22 +165,14 @@ const buildVersionPreludeCandidates = (
   }
 
   const strict = decodeVersionInfoCandidates(matrix, { maxDistance: 3, limit: 1 });
-  if (strict[0]?.version === sizeImpliedVersion) {
-    return strict;
-  }
+  if (strict[0]?.version === sizeImpliedVersion) return strict;
 
   const rescue = decodeVersionInfoCandidates(matrix, {
     maxDistance: MAX_VERSION_INFO_RESCUE_DISTANCE,
     limit: MAX_VERSION_INFO_RESCUE_CANDIDATES,
   });
-  const ordered: DecodedVersionInfoCandidate[] = [
-    { version: sizeImpliedVersion, hammingDistance: 0 },
-  ];
-  for (const candidate of [...strict, ...rescue]) {
-    if (candidate.version === sizeImpliedVersion) continue;
-    ordered.push(candidate);
-  }
-  return ordered;
+  const sizeMatched = rescue.find((candidate) => candidate.version === sizeImpliedVersion);
+  return [sizeMatched ?? { version: sizeImpliedVersion, hammingDistance: 0 }];
 };
 
 const decodePreparedGrid = (
@@ -243,7 +235,8 @@ const decodePreparedGrid = (
 };
 
 const getCachedDecodeLayout = (size: number, version: number): CachedDecodeLayout => {
-  const cached = decodeLayoutCache.get(size);
+  const key = `${size}:${version}`;
+  const cached = decodeLayoutCache.get(key);
   if (cached) return cached;
 
   const reserved = buildFunctionModuleMask(size, version);
@@ -253,7 +246,7 @@ const getCachedDecodeLayout = (size: number, version: number): CachedDecodeLayou
     dataPositions: buildDataModulePositions(size, reserved),
     remainderBits: getRemainderBits(version),
   } satisfies CachedDecodeLayout;
-  decodeLayoutCache.set(size, layout);
+  decodeLayoutCache.set(key, layout);
   return layout;
 };
 
@@ -373,8 +366,8 @@ const decodeText = (bytes: Uint8Array, encoding: string): string => {
       return UTF16BE_DECODER.decode(bytes);
     case 'big5':
       return BIG5_DECODER.decode(bytes);
-    case 'gbk':
-      return GBK_DECODER.decode(bytes);
+    case 'gb18030':
+      return GB18030_DECODER.decode(bytes);
     case 'euc-kr':
       return EUC_KR_DECODER.decode(bytes);
     default:
@@ -430,14 +423,20 @@ const decodeNumeric = (reader: BitReader, count: number): string => {
   let remaining = count;
 
   while (remaining >= 3) {
-    text += reader.read(10).toString().padStart(3, '0');
+    const value = reader.read(10);
+    if (value > 999) throw new ScannerError('decode_failed', 'Invalid numeric segment group.');
+    text += value.toString().padStart(3, '0');
     remaining -= 3;
   }
 
   if (remaining === 2) {
-    text += reader.read(7).toString().padStart(2, '0');
+    const value = reader.read(7);
+    if (value > 99) throw new ScannerError('decode_failed', 'Invalid numeric segment group.');
+    text += value.toString().padStart(2, '0');
   } else if (remaining === 1) {
-    text += reader.read(4).toString();
+    const value = reader.read(4);
+    if (value > 9) throw new ScannerError('decode_failed', 'Invalid numeric segment digit.');
+    text += value.toString();
   }
 
   return text;
@@ -526,7 +525,7 @@ const getEciEncodingLabel = (assignmentNumber: number): string => {
     case 28:
       return 'big5';
     case 29:
-      return 'gbk';
+      return 'gb18030';
     case 30:
       return 'euc-kr';
     default:
@@ -796,10 +795,7 @@ const correctAndReinterleaveDataCodewords = (blocks: RawBlock[]): number[] => {
         block.ecCodewords.length,
       );
 
-      return {
-        dataCodewords: Array.from(corrected.slice(0, block.dataCodewords.length)),
-        ecCodewords: Array.from(corrected.slice(block.dataCodewords.length)),
-      };
+      return Array.from(corrected.slice(0, block.dataCodewords.length));
     } catch (error) {
       if (error instanceof ReedSolomonError) {
         throw new ScannerError('decode_failed', error.message);
@@ -814,7 +810,7 @@ const correctAndReinterleaveDataCodewords = (blocks: RawBlock[]): number[] => {
   // Assemble corrected blocks in sequential (logical) order: all of block 0, then block 1, etc.
   // Do NOT re-interleave — the segment parser expects the raw logical codeword sequence.
   for (const block of correctedBlocks) {
-    result.push(...block.dataCodewords);
+    result.push(...block);
   }
 
   return result;

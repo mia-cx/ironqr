@@ -30,7 +30,7 @@ const scanWithZxing = async (
     for (const candidate of [luminance, invertLuminanceBuffer(luminance)]) {
       try {
         const text = decodeCandidate(candidate, image.width, image.height);
-        if (text) return successResult([{ text }]);
+        if (text !== null) return successResult([{ text }]);
       } catch {
         // try next polarity candidate
       }

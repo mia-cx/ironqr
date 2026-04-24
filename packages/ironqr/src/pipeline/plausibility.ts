@@ -8,6 +8,16 @@ const TIMING_PASS_THRESHOLD = 0.38;
 const FINDER_PASS_THRESHOLD = 0.4;
 const PITCH_PASS_THRESHOLD = 0.08;
 const STRUCTURE_PASS_THRESHOLD = 2.2;
+const TIMING_SCORE_WEIGHT = 2.5;
+const FINDER_SCORE_WEIGHT = 1.5;
+const MIN_QR_SIZE = 21;
+const TIMING_AXIS_INDEX = 6;
+const TIMING_PATTERN_MARGIN = 7;
+const TIMING_PATTERN_END_MARGIN = 8;
+const FINDER_CENTER_OFFSET = 3;
+const FINDER_EDGE_OFFSET = 4;
+const SEPARATOR_NEAR_OFFSET = 7;
+const SEPARATOR_FAR_OFFSET = 8;
 
 /**
  * Cheap structural assessment for one proposal before full decode work.
@@ -76,7 +86,11 @@ export const assessProposalStructure = (
     const finderScore = measureFinderSupport(grid);
     const separatorScore = measureSeparatorSupport(grid);
     const pitchScore = measurePitchSmoothness(geometry);
-    const score = timingScore * 2.5 + finderScore * 1.5 + separatorScore + pitchScore;
+    const score =
+      timingScore * TIMING_SCORE_WEIGHT +
+      finderScore * FINDER_SCORE_WEIGHT +
+      separatorScore +
+      pitchScore;
 
     if (score > best.score) {
       best = {
@@ -106,15 +120,20 @@ export const assessProposalStructure = (
 };
 
 const measureTimingSupport = (grid: readonly (readonly boolean[])[]): number => {
-  if (grid.length < 21) return 0;
+  if (grid.length < MIN_QR_SIZE) return 0;
   return Math.min(measureTimingLine(grid, 'row'), measureTimingLine(grid, 'col'));
 };
 
 const measureTimingLine = (grid: readonly (readonly boolean[])[], axis: 'row' | 'col'): number => {
   let matches = 0;
   let total = 0;
-  for (let index = 7; index <= grid.length - 8; index += 1) {
-    const value = axis === 'row' ? grid[6]?.[index] : grid[index]?.[6];
+  for (
+    let index = TIMING_PATTERN_MARGIN;
+    index <= grid.length - TIMING_PATTERN_END_MARGIN;
+    index += 1
+  ) {
+    const value =
+      axis === 'row' ? grid[TIMING_AXIS_INDEX]?.[index] : grid[index]?.[TIMING_AXIS_INDEX];
     if (value === undefined) return 0;
     const expectedDark = index % 2 === 0;
     matches += value === expectedDark ? 1 : 0;
@@ -124,12 +143,12 @@ const measureTimingLine = (grid: readonly (readonly boolean[])[], axis: 'row' | 
 };
 
 const measureFinderSupport = (grid: readonly (readonly boolean[])[]): number => {
-  if (grid.length < 21) return 0;
+  if (grid.length < MIN_QR_SIZE) return 0;
   const size = grid.length;
   const centers = [
-    { row: 3, col: 3 },
-    { row: 3, col: size - 4 },
-    { row: size - 4, col: 3 },
+    { row: FINDER_CENTER_OFFSET, col: FINDER_CENTER_OFFSET },
+    { row: FINDER_CENTER_OFFSET, col: size - FINDER_EDGE_OFFSET },
+    { row: size - FINDER_EDGE_OFFSET, col: FINDER_CENTER_OFFSET },
   ] as const;
   const probes = [
     { deltaRow: 0, deltaCol: 0, dark: true, weight: 3 },
@@ -164,18 +183,18 @@ const measureFinderSupport = (grid: readonly (readonly boolean[])[]): number => 
 };
 
 const measureSeparatorSupport = (grid: readonly (readonly boolean[])[]): number => {
-  if (grid.length < 21) return 0;
+  if (grid.length < MIN_QR_SIZE) return 0;
   const size = grid.length;
   const probes = [
-    [7, 3],
-    [3, 7],
-    [7, 7],
-    [7, size - 4],
-    [3, size - 8],
-    [7, size - 8],
-    [size - 8, 3],
-    [size - 4, 7],
-    [size - 8, 7],
+    [SEPARATOR_NEAR_OFFSET, FINDER_CENTER_OFFSET],
+    [FINDER_CENTER_OFFSET, SEPARATOR_NEAR_OFFSET],
+    [SEPARATOR_NEAR_OFFSET, SEPARATOR_NEAR_OFFSET],
+    [SEPARATOR_NEAR_OFFSET, size - FINDER_EDGE_OFFSET],
+    [FINDER_CENTER_OFFSET, size - SEPARATOR_FAR_OFFSET],
+    [SEPARATOR_NEAR_OFFSET, size - SEPARATOR_FAR_OFFSET],
+    [size - SEPARATOR_FAR_OFFSET, FINDER_CENTER_OFFSET],
+    [size - FINDER_EDGE_OFFSET, SEPARATOR_NEAR_OFFSET],
+    [size - SEPARATOR_FAR_OFFSET, SEPARATOR_NEAR_OFFSET],
   ] as const;
   let light = 0;
   for (const [row, col] of probes) {
@@ -194,8 +213,16 @@ const measurePitchSmoothness = (geometry: GridResolution): number => {
 
 const sampleLinePoints = (geometry: GridResolution, axis: 'row' | 'col') => {
   const points = [] as Array<{ readonly x: number; readonly y: number }>;
-  for (let index = 7; index <= geometry.size - 8; index += 1) {
-    points.push(axis === 'row' ? geometry.samplePoint(6, index) : geometry.samplePoint(index, 6));
+  for (
+    let index = TIMING_PATTERN_MARGIN;
+    index <= geometry.size - TIMING_PATTERN_END_MARGIN;
+    index += 1
+  ) {
+    points.push(
+      axis === 'row'
+        ? geometry.samplePoint(TIMING_AXIS_INDEX, index)
+        : geometry.samplePoint(index, TIMING_AXIS_INDEX),
+    );
   }
   return points;
 };

@@ -232,7 +232,12 @@ const emptyCache = (): ViewStudyCacheFile => ({
 const isValidCache = (value: unknown): value is ViewStudyCacheFile => {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<ViewStudyCacheFile>;
-  return candidate.version === CACHE_VERSION && !!candidate.assets;
+  return (
+    candidate.version === CACHE_VERSION &&
+    Array.isArray(candidate.viewIds) &&
+    Array.isArray(candidate.prioritizedViewIds) &&
+    !!candidate.assets
+  );
 };
 
 const loadCache = async (file: string, refreshCache: boolean): Promise<ViewStudyCacheFile> => {

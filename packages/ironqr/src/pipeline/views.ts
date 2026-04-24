@@ -1,10 +1,21 @@
-import { getOklabPlanes, type NormalizedImage, type OklabPlanes } from './frame.js';
+import {
+  getOklabPlanes,
+  type NormalizedImage,
+  type OklabPlanes,
+  validateImageDimensions,
+} from './frame.js';
 import type { TraceSink } from './trace.js';
 
 const WHITE = 255;
 const SIGNED_OKLAB_SCALE = 180;
 const DEFAULT_SAUVOLA_RADIUS_DIVISOR = 8;
 const DEFAULT_HYBRID_RADIUS_DIVISOR = 10;
+const OTSU_INITIAL_THRESHOLD = 128;
+const SAUVOLA_K = 0.34;
+const SAUVOLA_DYNAMIC_RANGE = 128;
+const HYBRID_DEVIATION_WEIGHT = 0.08;
+const HYBRID_GLOBAL_WEIGHT = 0.45;
+const HYBRID_ADAPTIVE_WEIGHT = 0.55;
 
 /**
  * Stable identifiers for scalar proposal views.
@@ -121,13 +132,13 @@ export const createViewBank = (image: NormalizedImage, options: ViewBankOptions 
       return getOrBuildBinaryView(image, id, options.traceSink);
     },
     listScalarViewIds() {
-      return scalarIds;
+      return [...scalarIds];
     },
     listBinaryViewIds() {
-      return binaryIds;
+      return [...binaryIds];
     },
     listProposalViewIds() {
-      return proposalIds;
+      return [...proposalIds];
     },
     getDecodeNeighborhood(id) {
       return orderDecodeNeighborhood(id, binaryIds);
@@ -208,41 +219,7 @@ export const toOklabPlanes = (image: NormalizedImage): OklabPlanes => {
  */
 export const otsuBinarize = (values: Uint8Array, width: number, height: number): Uint8Array => {
   assertPlaneLength(values.length, width, height, 'otsuBinarize');
-  const histogram = new Array<number>(256).fill(0);
-  for (let index = 0; index < values.length; index += 1) {
-    const bucket = values[index] ?? 0;
-    histogram[bucket] = (histogram[bucket] ?? 0) + 1;
-  }
-
-  let totalWeighted = 0;
-  for (let value = 0; value < 256; value += 1) {
-    totalWeighted += value * (histogram[value] ?? 0);
-  }
-
-  let bestThreshold = 128;
-  let bestVariance = -1;
-  let backgroundWeight = 0;
-  let backgroundWeighted = 0;
-
-  for (let threshold = 0; threshold < 256; threshold += 1) {
-    backgroundWeight += histogram[threshold] ?? 0;
-    if (backgroundWeight === 0) continue;
-    const foregroundWeight = values.length - backgroundWeight;
-    if (foregroundWeight === 0) break;
-
-    backgroundWeighted += threshold * (histogram[threshold] ?? 0);
-    const meanBackground = backgroundWeighted / backgroundWeight;
-    const meanForeground = (totalWeighted - backgroundWeighted) / foregroundWeight;
-    const betweenClassVariance =
-      backgroundWeight * foregroundWeight * (meanBackground - meanForeground) ** 2;
-
-    if (betweenClassVariance > bestVariance) {
-      bestVariance = betweenClassVariance;
-      bestThreshold = threshold;
-    }
-  }
-
-  return thresholdPlane(values, bestThreshold);
+  return thresholdPlane(values, otsuThreshold(values));
 };
 
 /**
@@ -276,7 +253,7 @@ export const sauvolaBinarize = (
       const mean = localSum / area;
       const variance = Math.max(0, localSumSq / area - mean * mean);
       const deviation = Math.sqrt(variance);
-      const threshold = mean * (1 + 0.34 * (deviation / 128 - 1));
+      const threshold = mean * (1 + SAUVOLA_K * (deviation / SAUVOLA_DYNAMIC_RANGE - 1));
       out[y * width + x] = (values[y * width + x] ?? 0) > threshold ? WHITE : 0;
     }
   }
@@ -319,8 +296,8 @@ export const hybridBinarize = (
       const mean = localSum / area;
       const variance = Math.max(0, localSumSq / area - mean * mean);
       const deviation = Math.sqrt(variance);
-      const adaptive = mean - deviation * 0.08;
-      const threshold = global * 0.45 + adaptive * 0.55;
+      const adaptive = mean - deviation * HYBRID_DEVIATION_WEIGHT;
+      const threshold = global * HYBRID_GLOBAL_WEIGHT + adaptive * HYBRID_ADAPTIVE_WEIGHT;
       out[y * width + x] = (values[y * width + x] ?? 0) > threshold ? WHITE : 0;
     }
   }
@@ -329,7 +306,7 @@ export const hybridBinarize = (
 };
 
 /**
- * Inverts a binary image in-place into a new buffer.
+ * Returns an inverted copy of a binary image.
  *
  * @param binary - Thresholded binary pixels.
  * @returns Inverted binary pixels.
@@ -386,7 +363,7 @@ const getOrBuildScalarView = (
   traceSink?: TraceSink,
 ): ScalarView => {
   const cached = image.derivedViews.scalarViews.get(id);
-  if (cached) return cached as ScalarView;
+  if (isScalarView(cached, id)) return cached;
 
   const view = buildScalarView(image, id);
   image.derivedViews.scalarViews.set(id, view);
@@ -406,7 +383,7 @@ const getOrBuildBinaryView = (
   traceSink?: TraceSink,
 ): BinaryView => {
   const cached = image.derivedViews.binaryViews.get(id);
-  if (cached) return cached as BinaryView;
+  if (isBinaryView(cached, id)) return cached;
 
   const [scalarViewId, threshold, polarity] = parseBinaryViewId(id);
   const scalarView = getOrBuildScalarView(image, scalarViewId, traceSink);
@@ -499,6 +476,9 @@ const encodeOklabValue = (id: ScalarViewId, planes: OklabPlanes, index: number):
 
 const parseBinaryViewId = (id: BinaryViewId): [ScalarViewId, ThresholdMethod, BinaryPolarity] => {
   const parts = id.split(':');
+  if (parts.length !== 3) {
+    throw new RangeError(`Invalid binary view id: ${id}.`);
+  }
   const scalarViewId = parts[0]!;
   const threshold = parts[1]!;
   const polarity = parts[2]!;
@@ -568,7 +548,7 @@ const otsuThreshold = (values: Uint8Array): number => {
     totalWeighted += value * (histogram[value] ?? 0);
   }
 
-  let bestThreshold = 128;
+  let bestThreshold = OTSU_INITIAL_THRESHOLD;
   let bestVariance = -1;
   let backgroundWeight = 0;
   let backgroundWeighted = 0;
@@ -628,6 +608,18 @@ const clampByte = (value: number): number => {
   return Math.max(0, Math.min(255, Math.round(value)));
 };
 
+const isScalarView = (value: unknown, id: ScalarViewId): value is ScalarView => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<ScalarView>;
+  return candidate.id === id && candidate.values instanceof Uint8Array;
+};
+
+const isBinaryView = (value: unknown, id: BinaryViewId): value is BinaryView => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<BinaryView>;
+  return candidate.id === id && candidate.binary instanceof Uint8Array;
+};
+
 const isScalarViewId = (value: string): value is ScalarViewId => {
   return (SCALAR_VIEW_IDS as readonly string[]).includes(value);
 };
@@ -641,6 +633,7 @@ const isPolarity = (value: string): value is BinaryPolarity => {
 };
 
 const assertPlaneLength = (actual: number, width: number, height: number, caller: string): void => {
+  validateImageDimensions(width, height);
   const expected = width * height;
   if (actual !== expected) {
     throw new RangeError(`${caller}: expected plane length ${expected}, got ${actual}.`);

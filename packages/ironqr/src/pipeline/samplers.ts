@@ -5,6 +5,12 @@ import type { GridResolution } from './geometry.js';
  */
 export type DecodeSampler = 'cross-vote' | 'dense-vote' | 'nearest';
 
+const CROSS_STEP_RATIO = 0.12;
+const CENTER_VOTE_WEIGHT = 3;
+const CROSS_DARK_THRESHOLD = 4;
+const DENSE_STEP_RATIO = 0.16;
+const DENSE_SAMPLE_OFFSETS = [-1, 0, 1] as const;
+
 /**
  * Samples a logical QR grid using the requested sampler.
  *
@@ -22,9 +28,16 @@ export const sampleGrid = (
   binary: Uint8Array,
   sampler: DecodeSampler = 'cross-vote',
 ): boolean[][] => {
-  if (sampler === 'nearest') return sampleNearest(width, height, geometry, binary);
-  if (sampler === 'dense-vote') return sampleDenseVote(width, height, geometry, binary);
-  return sampleCrossVote(width, height, geometry, binary);
+  switch (sampler) {
+    case 'nearest':
+      return sampleNearest(width, height, geometry, binary);
+    case 'dense-vote':
+      return sampleDenseVote(width, height, geometry, binary);
+    case 'cross-vote':
+      return sampleCrossVote(width, height, geometry, binary);
+    default:
+      throw new RangeError(`Unknown decode sampler: ${sampler satisfies never}.`);
+  }
 };
 
 /**
@@ -53,25 +66,31 @@ export const sampleCrossVote = (
       const right = geometry.samplePoint(row, Math.min(size - 1, col + 1));
       const up = geometry.samplePoint(Math.max(0, row - 1), col);
       const down = geometry.samplePoint(Math.min(size - 1, row + 1), col);
-      const stepX = { x: (right.x - left.x) * 0.12, y: (right.y - left.y) * 0.12 };
-      const stepY = { x: (down.x - up.x) * 0.12, y: (down.y - up.y) * 0.12 };
+      const stepX = {
+        x: (right.x - left.x) * CROSS_STEP_RATIO,
+        y: (right.y - left.y) * CROSS_STEP_RATIO,
+      };
+      const stepY = {
+        x: (down.x - up.x) * CROSS_STEP_RATIO,
+        y: (down.y - up.y) * CROSS_STEP_RATIO,
+      };
 
       let darkVotes = 0;
-      if (isDark(binary, width, height, center.x, center.y)) darkVotes += 3;
+      if (isDark(binary, width, height, center.x, center.y)) darkVotes += CENTER_VOTE_WEIGHT;
       if (isDark(binary, width, height, center.x - stepX.x, center.y - stepX.y)) darkVotes += 1;
       if (isDark(binary, width, height, center.x + stepX.x, center.y + stepX.y)) darkVotes += 1;
       if (isDark(binary, width, height, center.x - stepY.x, center.y - stepY.y)) darkVotes += 1;
       if (isDark(binary, width, height, center.x + stepY.x, center.y + stepY.y)) darkVotes += 1;
-      return darkVotes >= 4;
+      return darkVotes >= CROSS_DARK_THRESHOLD;
     }),
   );
 };
 
 /**
- * Single-sample nearest-neighbor sampler.
+ * Dense 3×3 vote sampler.
  *
- * This is useful as a rescue path when the cross sampler over-smooths tiny or
- * sharply thresholded modules.
+ * This is useful as a rescue path when one center probe is too fragile and the
+ * module still has enough local support around its expected center.
  *
  * @param width - Binary image width.
  * @param height - Binary image height.
@@ -93,12 +112,18 @@ export const sampleDenseVote = (
       const right = geometry.samplePoint(row, Math.min(size - 1, col + 1));
       const up = geometry.samplePoint(Math.max(0, row - 1), col);
       const down = geometry.samplePoint(Math.min(size - 1, row + 1), col);
-      const stepX = { x: (right.x - left.x) * 0.16, y: (right.y - left.y) * 0.16 };
-      const stepY = { x: (down.x - up.x) * 0.16, y: (down.y - up.y) * 0.16 };
+      const stepX = {
+        x: (right.x - left.x) * DENSE_STEP_RATIO,
+        y: (right.y - left.y) * DENSE_STEP_RATIO,
+      };
+      const stepY = {
+        x: (down.x - up.x) * DENSE_STEP_RATIO,
+        y: (down.y - up.y) * DENSE_STEP_RATIO,
+      };
       let dark = 0;
       let total = 0;
-      for (const xMul of [-1, 0, 1] as const) {
-        for (const yMul of [-1, 0, 1] as const) {
+      for (const xMul of DENSE_SAMPLE_OFFSETS) {
+        for (const yMul of DENSE_SAMPLE_OFFSETS) {
           if (
             isDark(
               binary,
@@ -118,6 +143,18 @@ export const sampleDenseVote = (
   );
 };
 
+/**
+ * Single-sample nearest-neighbor sampler.
+ *
+ * This is useful as a sharp rescue path when vote samplers blur tiny or hard-
+ * thresholded modules.
+ *
+ * @param width - Binary image width.
+ * @param height - Binary image height.
+ * @param geometry - Resolved QR geometry.
+ * @param binary - Thresholded binary pixels.
+ * @returns A sampled logical grid.
+ */
 export const sampleNearest = (
   width: number,
   height: number,

@@ -159,6 +159,23 @@ const dedupeDecodedFormatInfoCandidates = (
   );
 };
 
+const validateQrVersion = (version: number): void => {
+  if (!Number.isInteger(version) || version < 1 || version > 40) {
+    throw new ScannerError('invalid_input', `Invalid QR version: ${version}`);
+  }
+};
+
+const validateQrSizeForVersion = (size: number, version: number): void => {
+  validateQrVersion(version);
+  const expectedSize = 17 + 4 * version;
+  if (!Number.isInteger(size) || size !== expectedSize) {
+    throw new ScannerError(
+      'invalid_input',
+      `QR matrix size ${size} does not match version ${version} (expected ${expectedSize}).`,
+    );
+  }
+};
+
 const dedupeDecodedVersionInfoCandidates = (
   candidates: readonly DecodedVersionInfoCandidate[],
 ): readonly DecodedVersionInfoCandidate[] => {
@@ -185,7 +202,14 @@ export const buildFormatInfoCodeword = (
   ecl: QrErrorCorrectionLevel,
   maskPattern: number,
 ): number => {
-  const data = ((FORMAT_INFO_ECL_BITS[ecl] ?? 0) << 3) | maskPattern;
+  const eclBits = FORMAT_INFO_ECL_BITS[ecl];
+  if (eclBits === undefined) {
+    throw new ScannerError('invalid_input', `Invalid QR error correction level: ${ecl}.`);
+  }
+  if (!Number.isInteger(maskPattern) || maskPattern < 0 || maskPattern > 7) {
+    throw new ScannerError('invalid_input', `Invalid QR mask pattern: ${maskPattern}.`);
+  }
+  const data = (eclBits << 3) | maskPattern;
   let value = data << 10;
   const generator = 0x537;
 
@@ -371,11 +395,8 @@ const markAlignmentPattern = (mask: boolean[][], centerRow: number, centerCol: n
  * @throws {ScannerError} Thrown when the version is invalid or the matrix cannot be constructed.
  */
 export const buildFunctionModuleMask = (size: number, version: number): boolean[][] => {
+  validateQrSizeForVersion(size, version);
   const mask = createMatrix(size, false);
-
-  if (version < 1 || version > 40) {
-    throw new ScannerError('invalid_input', `Invalid QR version: ${version}`);
-  }
 
   // Reserve finder patterns, timing patterns, alignment patterns, format info, version info,
   // and the dark module so data extraction can skip them later.
@@ -437,19 +458,20 @@ export const buildFunctionModuleMask = (size: number, version: number): boolean[
   return mask;
 };
 
-/**
- * Decodes the QR format information from either embedded copy.
- *
- * @param matrix - QR module matrix including function modules.
- * @returns The decoded error correction level, mask pattern, and winning Hamming distance.
- * @throws {ScannerError} Thrown when neither copy can be decoded within QR tolerance.
- */
+/** One candidate interpretation of the QR format information bits. */
 export interface DecodedFormatInfoCandidate {
   readonly errorCorrectionLevel: QrErrorCorrectionLevel;
   readonly maskPattern: number;
   readonly hammingDistance: number;
 }
 
+/**
+ * Returns ranked QR format-information candidates from the embedded copies.
+ *
+ * @param matrix - QR module matrix including function modules.
+ * @param options - Optional Hamming-distance and result-count limits.
+ * @returns Ranked format-information candidates within the requested tolerance.
+ */
 export const decodeFormatInfoCandidates = (
   matrix: boolean[][],
   options: {
@@ -500,18 +522,19 @@ export const decodeFormatInfo = (
   return best;
 };
 
-/**
- * Decodes the QR version information from the matrix.
- *
- * @param matrix - QR module matrix including function modules.
- * @returns The decoded QR version.
- * @throws {ScannerError} Thrown when the version information cannot be decoded within tolerance.
- */
+/** One candidate interpretation of the QR version information bits. */
 export interface DecodedVersionInfoCandidate {
   readonly version: number;
   readonly hammingDistance: number;
 }
 
+/**
+ * Returns ranked QR version-information candidates from the embedded copies.
+ *
+ * @param matrix - QR module matrix including function modules.
+ * @param options - Optional Hamming-distance and result-count limits.
+ * @returns Ranked version candidates within the requested tolerance.
+ */
 export const decodeVersionInfoCandidates = (
   matrix: boolean[][],
   options: {
@@ -563,6 +586,12 @@ export const decodeVersionInfo = (matrix: boolean[][]): number => {
   if (!best) {
     throw new ScannerError('decode_failed', 'Could not decode QR version information.');
   }
+  if (best.version !== version) {
+    throw new ScannerError(
+      'decode_failed',
+      `Decoded QR version ${best.version} does not match size-implied version ${version}.`,
+    );
+  }
 
   return best.version;
 };
@@ -579,9 +608,7 @@ export const getVersionBlockInfo = (
   version: number,
   errorCorrectionLevel: QrErrorCorrectionLevel,
 ): QrVersionBlockInfo => {
-  if (version < 1 || version > 40) {
-    throw new ScannerError('invalid_input', `Invalid QR version: ${version}`);
-  }
+  validateQrVersion(version);
 
   const levelIndex = { L: 0, M: 1, Q: 2, H: 3 }[errorCorrectionLevel];
   const table = RS_BLOCK_TABLE[(version - 1) * 4 + levelIndex];
@@ -650,6 +677,7 @@ export const getVersion1BlockInfo = (
  * @returns The number of remainder bits for that version.
  */
 export const getRemainderBits = (version: number): number => {
+  validateQrVersion(version);
   if (version === 1) {
     return 0;
   }
