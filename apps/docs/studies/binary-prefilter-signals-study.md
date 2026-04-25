@@ -357,9 +357,15 @@ The run measured `scanline-squared` as the fixed flood control, `run-map` as the
 | --- | --- | --- | --- |
 | `scanline-squared` | Flood | — | Canonical flood lead: `0` mismatches, `18.80%` faster than `dense-stats`, lower detector p98 and queued p98, and faster than `scanline-stats`. |
 | `run-map` | Matcher | — | Canonical matcher control; current production-equivalent baseline. |
-| `run-map-u16` | Matcher | `run-map` | Lead processing-only matcher candidate: `0` mismatches, p98 `86.25 ms` vs `93.80 ms`, and `15.69%` faster overall. Active for narrowed confirmation. |
+| `run-map-u16` | Matcher | `run-map` | Confirmed processing-only matcher candidate: incremental run had `0` mismatches, p98 `85.97 ms`, and `18.09%` faster overall with cached controls. Kept active as baseline candidate for the next processing bake-off. |
+| `run-map-u16-fill-horizontal` | Matcher | `run-map` | Active processing-only candidate: compact axis maps plus typed-array fill for horizontal run-map construction. |
+| `run-map-scalar-score` | Matcher | `run-map` | Active processing-only candidate: scalar ratio-score arithmetic over the same full matcher path. |
+| `run-map-u16-scalar-score` | Matcher | `run-map` | Active processing-only hybrid: compact maps plus scalar score arithmetic. |
+| `run-map-packed-u16` | Matcher | `run-map` | Active processing-only candidate: pack start/end into one 32-bit word per axis. |
+| `run-map-packed-u16-fill-horizontal` | Matcher | `run-map` | Active processing-only hybrid: packed maps plus horizontal typed-array fill. |
+| `run-map-packed-u16-scalar-score` | Matcher | `run-map` | Active processing-only hybrid: packed maps plus scalar score arithmetic. |
 
-The narrowed confirmation phase keeps only `run-map` and `run-map-u16` active. Horizontal-failure gating/staging variants are deferred to a later early-abandon study.
+The next processing-only bake-off keeps the whole matcher path active and compares compact, packed, fill, and scalar-arithmetic representations. Horizontal-failure gating/staging variants are deferred to a later early-abandon study.
 
 ## Inactive and binned variants
 
@@ -397,7 +403,10 @@ Disabled means implemented/cache-retained but not currently queued. Binned means
 | Dense squared-distance geometry tests | Flood | Removes `Math.hypot` from ring/gap/stone center checks while preserving thresholds. | Binned after losing to `scanline-squared`. |
 | Scanline component labeling | Flood | Processes horizontal spans in bulk while keeping dense-compatible component stats and finder semantics. | Binned after losing to `scanline-squared`. |
 | Scanline + indexed/squared hybrids | Flood | Tests span labeling with containment and geometry optimizations. | `scanline-squared` is canonical; indexed variants are binned until mismatches are fixed. |
-| Compact run-map arrays | Matcher | Current run maps use four `Uint32Array`s; most images fit axis coordinates in `Uint16Array`, reducing memory bandwidth and allocation size without changing whole-view processing. | Active processing-only candidate `run-map-u16`. |
+| Compact run-map arrays | Matcher | Current run maps use four `Uint32Array`s; most images fit axis coordinates in `Uint16Array`, reducing memory bandwidth and allocation size without changing whole-view processing. | Active processing-only candidate `run-map-u16`; latest incremental run showed `18.09%` improvement with `0` mismatches. |
+| Horizontal run-map fill | Matcher | Horizontal run-map construction writes contiguous row spans; `TypedArray.fill` can replace per-pixel JS writes without changing work performed. | Active processing-only candidate `run-map-u16-fill-horizontal`. |
+| Scalar ratio scoring | Matcher | Cross-check scoring currently uses tuple reduction and expected-array lookup; scalar arithmetic removes generic array operations while preserving the same formula. | Active processing-only candidates `run-map-scalar-score` and `run-map-u16-scalar-score`. |
+| Packed run-map representation | Matcher | Pack 16-bit start/end coordinates into one `Uint32Array` per axis, reducing four map streams to two while preserving full run-map processing. | Active processing-only candidates `run-map-packed-u16`, `run-map-packed-u16-fill-horizontal`, and `run-map-packed-u16-scalar-score`. |
 | Horizontal-failure gating | Matcher | Skipping vertical checks after horizontal failure was faster in the mixed bake-off, but it is an early-abandon pattern rather than whole-processing optimization. | Deferred to a later early-exit study. |
 | Horizontal-first staging | Matcher | Building vertical maps only after horizontal survivors was faster in the mixed bake-off, but it changes processing order/gating semantics. | Deferred to a later early-exit/staging study. |
 | Run-pattern center matcher | Matcher | Enumerates centers from horizontal `1:1:3:1:1` run patterns instead of arbitrary grid probes. | Binned as a replacement after `8,760` mismatches; may return only with fallback/recall accounting. |
@@ -451,6 +460,6 @@ Use `--refresh-cache` only when intentionally invalidating all detector-pattern 
 ## Next work
 
 1. Promote `scanline-squared` behind the production flood control abstraction.
-2. Run a narrowed processing-only matcher confirmation with only `run-map` and `run-map-u16` active.
-3. If confirmation holds, promote compact run-map arrays behind the production matcher control abstraction.
+2. Run a fresh processing-only matcher bake-off with compact, packed, fill, and scalar-score variants active.
+3. If a packed/compact processing variant preserves signatures and wins p98, narrow to that candidate for confirmation before production promotion.
 4. Sweep flood scheduler limits (`4`, `6`, `8`, `10`, `12`) only after matcher profiling, because flood algorithm ranking is settled.

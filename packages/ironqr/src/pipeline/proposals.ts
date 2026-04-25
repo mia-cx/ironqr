@@ -837,7 +837,14 @@ export const detectMatcherFinders = (
   height: number,
 ): FinderEvidence[] => detectMatcherFindersWithRunMaps(binary, width, height);
 
-export type MatcherRunMapVariant = 'run-map-u16';
+export type MatcherRunMapVariant =
+  | 'run-map-u16'
+  | 'run-map-u16-fill-horizontal'
+  | 'run-map-scalar-score'
+  | 'run-map-u16-scalar-score'
+  | 'run-map-packed-u16'
+  | 'run-map-packed-u16-fill-horizontal'
+  | 'run-map-packed-u16-scalar-score';
 
 export const detectMatcherFindersWithRunMapVariant = (
   binary: Uint8Array | BinaryView,
@@ -845,13 +852,47 @@ export const detectMatcherFindersWithRunMapVariant = (
   height: number,
   variant: MatcherRunMapVariant,
 ): FinderEvidence[] => {
-  const runs = buildAxisRuns(binary, width, height, { compactRuns: variant === 'run-map-u16' });
+  const compactRuns = variant.includes('u16');
+  const fillHorizontal = variant.includes('fill-horizontal');
+  const scalarScore = variant.includes('scalar-score');
+  if (variant.includes('packed') && width <= 0xffff && height <= 0xffff) {
+    const runs = buildPackedAxisRuns(binary, width, height, { fillHorizontal });
+    return detectMatcherFindersWithCrossCheck(
+      binary,
+      width,
+      height,
+      (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+        runMapPackedCrossCheck(
+          source,
+          sourceWidth,
+          sourceHeight,
+          runs,
+          centerX,
+          centerY,
+          dx,
+          dy,
+          scalarScore,
+        ),
+    );
+  }
+
+  const runs = buildAxisRuns(binary, width, height, { compactRuns, fillHorizontal });
   return detectMatcherFindersWithCrossCheck(
     binary,
     width,
     height,
     (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+      runMapCrossCheck(
+        source,
+        sourceWidth,
+        sourceHeight,
+        runs,
+        centerX,
+        centerY,
+        dx,
+        dy,
+        scalarScore,
+      ),
   );
 };
 
@@ -860,7 +901,7 @@ const detectMatcherFindersWithRunMaps = (
   width: number,
   height: number,
 ): FinderEvidence[] => {
-  const runs = buildAxisRuns(binary, width, height, { compactRuns: false });
+  const runs = buildAxisRuns(binary, width, height, { compactRuns: false, fillHorizontal: false });
   return detectMatcherFindersWithCrossCheck(
     binary,
     width,
@@ -1102,6 +1143,7 @@ interface AxisRuns {
 
 interface AxisRunOptions {
   readonly compactRuns: boolean;
+  readonly fillHorizontal: boolean;
 }
 
 const axisRunArray = (
@@ -1130,10 +1172,16 @@ const buildAxisRuns = (
       const bit = pixel(binary, width, x, y);
       while (x + 1 < width && pixel(binary, width, x + 1, y) === bit) x += 1;
       const end = x;
-      for (let runX = start; runX <= end; runX += 1) {
-        const index = y * width + runX;
-        horizontalStart[index] = start;
-        horizontalEnd[index] = end;
+      const rowStart = y * width;
+      if (options.fillHorizontal) {
+        horizontalStart.fill(start, rowStart + start, rowStart + end + 1);
+        horizontalEnd.fill(end, rowStart + start, rowStart + end + 1);
+      } else {
+        for (let runX = start; runX <= end; runX += 1) {
+          const index = rowStart + runX;
+          horizontalStart[index] = start;
+          horizontalEnd[index] = end;
+        }
       }
       x += 1;
     }
@@ -1158,6 +1206,176 @@ const buildAxisRuns = (
   return { horizontalStart, horizontalEnd, verticalStart, verticalEnd };
 };
 
+interface PackedAxisRuns {
+  readonly horizontal: Uint32Array;
+  readonly vertical: Uint32Array;
+}
+
+const packRun = (start: number, end: number): number => start | (end << 16);
+const packedStart = (value: number): number => value & 0xffff;
+const packedEnd = (value: number): number => value >>> 16;
+
+const buildPackedAxisRuns = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  options: Pick<AxisRunOptions, 'fillHorizontal'>,
+): PackedAxisRuns => {
+  const pixelCount = width * height;
+  const horizontal = new Uint32Array(pixelCount);
+  const vertical = new Uint32Array(pixelCount);
+
+  for (let y = 0; y < height; y += 1) {
+    let x = 0;
+    while (x < width) {
+      const start = x;
+      const bit = pixel(binary, width, x, y);
+      while (x + 1 < width && pixel(binary, width, x + 1, y) === bit) x += 1;
+      const end = x;
+      const packed = packRun(start, end);
+      const rowStart = y * width;
+      if (options.fillHorizontal) horizontal.fill(packed, rowStart + start, rowStart + end + 1);
+      else for (let runX = start; runX <= end; runX += 1) horizontal[rowStart + runX] = packed;
+      x += 1;
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    let y = 0;
+    while (y < height) {
+      const start = y;
+      const bit = pixel(binary, width, x, y);
+      while (y + 1 < height && pixel(binary, width, x, y + 1) === bit) y += 1;
+      const end = y;
+      const packed = packRun(start, end);
+      for (let runY = start; runY <= end; runY += 1) vertical[runY * width + x] = packed;
+      y += 1;
+    }
+  }
+
+  return { horizontal, vertical };
+};
+
+const runMapPackedCrossCheck = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  runs: PackedAxisRuns,
+  centerX: number,
+  centerY: number,
+  dx: number,
+  dy: number,
+  scalarScore = false,
+): ReturnType<typeof crossCheck> => {
+  const x = Math.round(centerX);
+  const y = Math.round(centerY);
+  if (pixel(binary, width, x, y) !== 0) return null;
+  const horizontal = dx !== 0;
+  const index = y * width + x;
+  const centerRun = horizontal ? runs.horizontal[index] : runs.vertical[index];
+  const centerStart = packedStart(centerRun ?? 0);
+  const centerEnd = packedEnd(centerRun ?? 0);
+  const count2 = centerEnd - centerStart + 1;
+  const count1 = packedRunLengthBefore(
+    binary,
+    width,
+    height,
+    runs,
+    x,
+    y,
+    horizontal,
+    centerStart,
+    255,
+  );
+  const count0 = packedRunLengthBefore(
+    binary,
+    width,
+    height,
+    runs,
+    x,
+    y,
+    horizontal,
+    centerStart - count1,
+    0,
+  );
+  const count3 = packedRunLengthAfter(
+    binary,
+    width,
+    height,
+    runs,
+    x,
+    y,
+    horizontal,
+    centerEnd,
+    255,
+  );
+  const count4 = packedRunLengthAfter(
+    binary,
+    width,
+    height,
+    runs,
+    x,
+    y,
+    horizontal,
+    centerEnd + count3,
+    0,
+  );
+
+  const ratioScore = scalarScore
+    ? finderRatioScoreScalar(count0, count1, count2, count3, count4)
+    : finderRatioScore([count0, count1, count2, count3, count4]);
+  if (ratioScore <= 0) return null;
+  const before = count0 + count1 + count2 / 2;
+  const after = count4 + count3 + count2 / 2;
+  return {
+    centerX: centerX + dx * ((after - before) / 2),
+    centerY: centerY + dy * ((after - before) / 2),
+    moduleSize: (count0 + count1 + count2 + count3 + count4) / 7,
+    score: ratioScore,
+  };
+};
+
+const packedRunLengthBefore = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  runs: PackedAxisRuns,
+  x: number,
+  y: number,
+  horizontal: boolean,
+  beforeCoordinate: number,
+  expected: 0 | 255,
+): number => {
+  const coordinate = beforeCoordinate - 1;
+  if (coordinate < 0) return 0;
+  if (horizontal) {
+    if (pixel(binary, width, coordinate, y) !== expected) return 0;
+    return coordinate - packedStart(runs.horizontal[y * width + coordinate] ?? 0) + 1;
+  }
+  if (coordinate >= height || pixel(binary, width, x, coordinate) !== expected) return 0;
+  return coordinate - packedStart(runs.vertical[coordinate * width + x] ?? 0) + 1;
+};
+
+const packedRunLengthAfter = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  runs: PackedAxisRuns,
+  x: number,
+  y: number,
+  horizontal: boolean,
+  afterCoordinate: number,
+  expected: 0 | 255,
+): number => {
+  const coordinate = afterCoordinate + 1;
+  if (horizontal) {
+    if (coordinate >= width || pixel(binary, width, coordinate, y) !== expected) return 0;
+    return packedEnd(runs.horizontal[y * width + coordinate] ?? 0) - coordinate + 1;
+  }
+  if (coordinate >= height || pixel(binary, width, x, coordinate) !== expected) return 0;
+  return packedEnd(runs.vertical[coordinate * width + x] ?? 0) - coordinate + 1;
+};
+
 const runMapCrossCheck = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -1167,6 +1385,7 @@ const runMapCrossCheck = (
   centerY: number,
   dx: number,
   dy: number,
+  scalarScore = false,
 ): ReturnType<typeof crossCheck> => {
   const x = Math.round(centerX);
   const y = Math.round(centerY);
@@ -1208,7 +1427,9 @@ const runMapCrossCheck = (
     0,
   );
 
-  const ratioScore = finderRatioScore(counts);
+  const ratioScore = scalarScore
+    ? finderRatioScoreScalar(counts[0], counts[1], counts[2], counts[3], counts[4])
+    : finderRatioScore(counts);
   if (ratioScore <= 0) return null;
   const before = counts[0] + counts[1] + counts[2] / 2;
   const after = counts[4] + counts[3] + counts[2] / 2;
@@ -1274,6 +1495,25 @@ const finderRatioScore = (counts: readonly number[]): number => {
   for (let index = 0; index < 5; index += 1) {
     error += Math.abs((counts[index] ?? 0) - expected[index]! * moduleSize) / moduleSize;
   }
+  return error > FINDER_RATIO_TOLERANCE * 5 ? 0 : Math.max(0, 2.5 - error * 0.5);
+};
+
+const finderRatioScoreScalar = (
+  count0: number,
+  count1: number,
+  count2: number,
+  count3: number,
+  count4: number,
+): number => {
+  const total = count0 + count1 + count2 + count3 + count4;
+  if (total < 7) return 0;
+  const moduleSize = total / 7;
+  const error =
+    Math.abs(count0 - moduleSize) / moduleSize +
+    Math.abs(count1 - moduleSize) / moduleSize +
+    Math.abs(count2 - 3 * moduleSize) / moduleSize +
+    Math.abs(count3 - moduleSize) / moduleSize +
+    Math.abs(count4 - moduleSize) / moduleSize;
   return error > FINDER_RATIO_TOLERANCE * 5 ? 0 : Math.max(0, 2.5 - error * 0.5);
 };
 

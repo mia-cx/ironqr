@@ -1155,6 +1155,30 @@ const MATCHER_CANDIDATES = [
     id: 'run-map-u16',
     note: 'Run-map matcher with 16-bit axis maps when image dimensions fit.',
   },
+  {
+    id: 'run-map-u16-fill-horizontal',
+    note: 'Run-map matcher with compact axis maps and typed-array fill for horizontal runs.',
+  },
+  {
+    id: 'run-map-scalar-score',
+    note: 'Run-map matcher with scalar ratio-score arithmetic instead of tuple reduction.',
+  },
+  {
+    id: 'run-map-u16-scalar-score',
+    note: 'Run-map matcher combining compact axis maps with scalar ratio-score arithmetic.',
+  },
+  {
+    id: 'run-map-packed-u16',
+    note: 'Run-map matcher with start/end packed into one 32-bit word per axis.',
+  },
+  {
+    id: 'run-map-packed-u16-fill-horizontal',
+    note: 'Packed run-map matcher plus typed-array fill for horizontal runs.',
+  },
+  {
+    id: 'run-map-packed-u16-scalar-score',
+    note: 'Packed run-map matcher plus scalar ratio-score arithmetic.',
+  },
 ] as const satisfies readonly { id: MatcherRunMapVariant; note: string }[];
 
 const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] =
@@ -2242,6 +2266,12 @@ const VARIANT_ID_ALIASES: Record<string, string> = {
   'axis-intersect': 'axis-x',
   'shared-runs': 'shared-runs',
   'run-map-u16': 'run-map-u16',
+  'run-map-u16-fill-horizontal': 'run-map-u16-fill-h',
+  'run-map-scalar-score': 'run-map-scalar',
+  'run-map-u16-scalar-score': 'run-map-u16-scalar',
+  'run-map-packed-u16': 'run-map-pack-u16',
+  'run-map-packed-u16-fill-horizontal': 'run-map-pack-u16-fill-h',
+  'run-map-packed-u16-scalar-score': 'run-map-pack-u16-scalar',
 };
 
 const LEGACY_VARIANT_IDS: Record<string, readonly string[]> = {
