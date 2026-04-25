@@ -622,12 +622,12 @@ const createStudyChartFilters = (): StudyChartFilters => ({
 });
 
 const FILTER_ROWS: readonly { readonly group: StudyFilterGroup; readonly value: string }[] = [
-  ...['row', 'flood', 'matcher', 'dedupe'].map((value) => ({ group: 'families' as const, value })),
+  ...['r', 'f', 'm', 'd'].map((value) => ({ group: 'families' as const, value })),
   ...['gray', 'oklab-l', 'oklab+a', 'oklab-a', 'oklab+b', 'oklab-b', 'r', 'g', 'b'].map(
     (value) => ({ group: 'scalars' as const, value }),
   ),
-  ...['otsu', 'sauvola', 'hybrid'].map((value) => ({ group: 'thresholds' as const, value })),
-  ...['normal', 'inverted'].map((value) => ({ group: 'polarities' as const, value })),
+  ...['o', 's', 'h'].map((value) => ({ group: 'thresholds' as const, value })),
+  ...['n', 'i'].map((value) => ({ group: 'polarities' as const, value })),
   ...['fresh', 'cached', 'mixed'].map((value) => ({ group: 'cache' as const, value })),
 ];
 

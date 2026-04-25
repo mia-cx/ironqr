@@ -691,12 +691,12 @@ const studyTimingId = (
   polarityOverride?: string,
 ): string => {
   const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
-  return `${variant}:${scalar}:${threshold}:${polarityOverride ?? polarity}`;
+  return `${shortVariantId(variant)}:${shortBinaryViewPart(scalar)}:${shortBinaryViewPart(threshold)}:${shortBinaryViewPart(polarityOverride ?? polarity)}`;
 };
 
 const detectorTimingId = (viewId: BinaryViewId, variant: string, detector: string): string => {
   const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
-  return `${variant}:${detector}:${scalar}:${threshold}:${polarity}`;
+  return `${shortVariantId(variant)}:${shortDetectorFamily(detector)}:${shortBinaryViewPart(scalar)}:${shortBinaryViewPart(threshold)}:${shortBinaryViewPart(polarity)}`;
 };
 
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
@@ -1414,7 +1414,7 @@ const measureFloodCandidateVariants = async (
         measured.cached,
       );
       log(
-        `${assetId}: flood ${candidate.id} ${viewId} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
+        `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
       );
       await yieldToDashboard();
     }
@@ -1493,7 +1493,7 @@ const measureMatcherCandidateVariants = async (
         measured.cached,
       );
       log(
-        `${assetId}: matcher ${candidate.id} ${viewId} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
+        `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
       );
       await yieldToDashboard();
     }
@@ -1538,26 +1538,81 @@ const measureMatcherCandidateVariants = async (
 const detectorVariantCacheKey = (variantId: string, viewId: BinaryViewId): string =>
   JSON.stringify({
     kind: 'detector-pattern',
-    version: 1,
+    version: 2,
     patternId: detectorPatternId(variantId, viewId),
   });
 
 const detectorVariantCacheKeys = (variantId: string, viewId: BinaryViewId): readonly string[] => [
   detectorVariantCacheKey(variantId, viewId),
+  JSON.stringify({
+    kind: 'detector-pattern',
+    version: 1,
+    patternId: legacyDetectorPatternId(variantId, viewId),
+  }),
   JSON.stringify({ kind: 'detector-variant', version: 1, variantId, viewId }),
 ];
 
 const detectorPatternId = (variantId: string, viewId: BinaryViewId): string =>
-  `${detectorPatternPrefix(variantId)}${viewId}`;
+  `${detectorPatternPrefix(variantId)}${shortBinaryViewId(viewId)}`;
 
-const detectorPatternPrefix = (variantId: string): string => {
-  const area = variantId.includes('flood') || variantId.includes('component') ? 'flood' : 'matcher';
+const detectorPatternPrefix = (variantId: string): string =>
+  `${shortVariantId(variantId)}:${detectorAreaId(variantId)}:`;
+
+const legacyDetectorPatternId = (variantId: string, viewId: BinaryViewId): string => {
+  const area = detectorAreaId(variantId) === 'f' ? 'flood' : 'matcher';
   const shortId = variantId
     .replace(/-control$/, '')
     .replace(/-candidate$/, '')
     .replace(/-components?/, '')
     .replace(/-connected-/, '-ccl-');
-  return `${shortId}:${area}:`;
+  return `${shortId}:${area}:${viewId}`;
+};
+
+const detectorAreaId = (variantId: string): 'f' | 'm' =>
+  variantId.includes('flood') || variantId.includes('component') ? 'f' : 'm';
+
+const shortVariantId = (variantId: string): string =>
+  VARIANT_ID_ALIASES[variantId] ??
+  variantId
+    .replace(/-control$/, '')
+    .replace(/-matcher$/, '')
+    .replace(/-components?/, '')
+    .replace(/-connected-/, '-ccl-');
+
+const shortDetectorFamily = (detector: string): string =>
+  DETECTOR_FAMILY_ALIASES[detector] ?? detector;
+
+const shortBinaryViewId = (viewId: BinaryViewId): string => {
+  const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
+  return `${shortBinaryViewPart(scalar)}:${shortBinaryViewPart(threshold)}:${shortBinaryViewPart(polarity)}`;
+};
+
+const shortBinaryViewPart = (part: string): string => BINARY_VIEW_PART_ALIASES[part] ?? part;
+
+const VARIANT_ID_ALIASES: Record<string, string> = {
+  'inline-flood-control': 'in',
+  'run-map-matcher-control': 'rm',
+  'dense-typed-array-component-stats': 'dta',
+  'spatial-binned-component-lookup': 'sb',
+  'run-length-connected-components': 'rlc',
+  'run-pattern-center-matcher': 'rpc',
+  'axis-run-intersection-matcher': 'ari',
+  'shared-run-length-detector-artifacts': 'srla',
+};
+
+const DETECTOR_FAMILY_ALIASES: Record<string, string> = {
+  flood: 'f',
+  matcher: 'm',
+  row: 'r',
+  dedupe: 'd',
+};
+
+const BINARY_VIEW_PART_ALIASES: Record<string, string> = {
+  otsu: 'o',
+  sauvola: 's',
+  hybrid: 'h',
+  normal: 'n',
+  inverted: 'i',
 };
 
 const measureBinaryReadVariants = async (
