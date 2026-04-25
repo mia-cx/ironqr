@@ -45,6 +45,7 @@ interface ImageProcessingAssetResult {
   readonly matchedTexts: readonly string[];
   readonly falsePositiveTexts: readonly string[];
   readonly success: boolean;
+  readonly scanDurationMs: number;
   readonly proposalGenerationMs: number;
   readonly proposalSummaries: readonly ProposalViewGenerationSummary[];
   readonly timing: ImageProcessingTimingSummary;
@@ -347,6 +348,7 @@ function makeImageProcessingStudyPlugin(input: {
       log(
         `${asset.id}: profiling ${viewIds.length} binary view identities over ${sharedPlaneCount(viewIds)} shared threshold planes (${config.focus})`,
       );
+      const studyStartedAt = performance.now();
       const proposalStartedAt = performance.now();
       const proposalSummaries: ProposalViewGenerationSummary[] = [];
       let proposalViewIndex = 0;
@@ -423,6 +425,7 @@ function makeImageProcessingStudyPlugin(input: {
             ? decodedTexts.length === 0
             : matchedTexts.length > 0
           : true,
+        scanDurationMs: round(performance.now() - studyStartedAt),
         proposalGenerationMs,
         proposalSummaries,
         timing: summarizeTimingSpans(spans),
@@ -451,6 +454,7 @@ function makeImageProcessingStudyPlugin(input: {
         success: result.success,
         decodedTexts: result.decodedTexts,
         matchedTexts: result.matchedTexts,
+        scanDurationMs: result.scanDurationMs,
         falsePositiveTexts: result.falsePositiveTexts,
         proposalGenerationMs: result.proposalGenerationMs,
         timing: result.timing,
