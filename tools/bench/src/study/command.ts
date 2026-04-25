@@ -30,6 +30,7 @@ import {
 } from './image-processing.js';
 import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
+import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
 import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
 import { createStudyPluginRegistry } from './registry.js';
 import type {
@@ -97,6 +98,7 @@ export const createDefaultStudyRegistry = () =>
     { plugin: proposalDetectorPolicyStudyPlugin },
     { plugin: proposalGenerationVariantsStudyPlugin },
     { plugin: proposalGeometryViabilityStudyPlugin },
+    { plugin: proposalGeometryDecodeConfirmationStudyPlugin },
     { plugin: viewProposalsStudyPlugin },
     { plugin: viewOrderStudyPlugin },
   ]);

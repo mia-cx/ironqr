@@ -12,6 +12,7 @@ import {
 } from './image-processing.js';
 import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
+import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
 import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
 import type { StudyCacheHandle } from './types.js';
 import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
@@ -28,6 +29,7 @@ const plugins = new Map(
     proposalDetectorPolicyStudyPlugin,
     proposalGenerationVariantsStudyPlugin,
     proposalGeometryViabilityStudyPlugin,
+    proposalGeometryDecodeConfirmationStudyPlugin,
   ].map((plugin) => [plugin.id, plugin] as const),
 );
 

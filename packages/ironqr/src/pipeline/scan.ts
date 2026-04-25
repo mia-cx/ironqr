@@ -19,6 +19,7 @@ import {
   type FinderEvidenceDetectionPolicy,
   generateProposalBatchForView,
   type ProposalGenerationSummary,
+  type ProposalGeometryVariant,
   type ProposalScoreBreakdown,
   type ProposalViewBatch,
   type RankedProposalCandidate,
@@ -50,6 +51,8 @@ export interface ScanRuntimeOptions extends ScanOptions {
   readonly proposalViewIds?: readonly BinaryViewId[];
   /** Optional detector-family policy for proposal-generation studies. */
   readonly proposalDetectorPolicy?: FinderEvidenceDetectionPolicy;
+  /** Optional finder-triple geometry scoring/filtering variant for proposal/decode studies. */
+  readonly proposalGeometryVariant?: ProposalGeometryVariant;
   /** Optional low-overhead timing span sink for performance harnesses. */
   readonly metricsSink?: ScanMetricsSink;
   /** Maximum proposal representatives to try inside one cluster. */
@@ -463,6 +466,9 @@ const scanFrameExecutionOnce = (
       ...(options.proposalDetectorPolicy === undefined
         ? {}
         : { detectorPolicy: options.proposalDetectorPolicy }),
+      ...(options.proposalGeometryVariant === undefined
+        ? {}
+        : { geometryVariant: options.proposalGeometryVariant }),
       ...(traceSink === undefined ? {} : { traceSink }),
       ...(options.metricsSink === undefined ? {} : { metricsSink: options.metricsSink }),
       scheduler: options.scheduler ?? defaultScanScheduler,
@@ -598,6 +604,7 @@ const createSequentialProposalBatchSource = (options: {
   readonly viewIds: readonly BinaryViewId[];
   readonly maxProposalsPerView?: number;
   readonly detectorPolicy?: FinderEvidenceDetectionPolicy;
+  readonly geometryVariant?: ProposalGeometryVariant;
   readonly traceSink?: TraceSink;
   readonly metricsSink?: ScanMetricsSink;
   readonly scheduler: ScanScheduler;
@@ -623,6 +630,9 @@ const createSequentialProposalBatchSource = (options: {
           ...(options.detectorPolicy === undefined
             ? {}
             : { detectorPolicy: options.detectorPolicy }),
+          ...(options.geometryVariant === undefined
+            ? {}
+            : { geometryVariant: options.geometryVariant }),
           ...(options.traceSink === undefined ? {} : { traceSink: options.traceSink }),
         });
         recordTimingSpan(options.metricsSink, 'proposal-view', startedAtMs, {
