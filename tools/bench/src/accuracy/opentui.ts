@@ -865,11 +865,13 @@ type StudyFilterRow =
 
 const FILTER_ROWS: readonly StudyFilterRow[] = [
   { kind: 'heading', label: 'timing metric' },
-  ...['avg', 'p85', 'p95', 'p98', 'p99', 'max'].map((value) => ({
-    kind: 'option' as const,
-    group: 'metric' as const,
-    value,
-  })),
+  ...['min', 'avg', 'p1', 'p2', 'p5', 'p15', 'p50', 'p85', 'p95', 'p98', 'p99', 'max'].map(
+    (value) => ({
+      kind: 'option' as const,
+      group: 'metric' as const,
+      value,
+    }),
+  ),
   { kind: 'heading', label: 'detector families' },
   ...['r', 'f', 'm', 'd'].map((value) => ({
     kind: 'option' as const,
@@ -1244,6 +1246,7 @@ const studyTimingMetricMs = (
 ): number => {
   if (metric === 'avg') return row.totalMs / Math.max(1, row.count);
   if (row.samples.length === 0) return 0;
+  if (metric === 'min') return Math.min(...row.samples);
   if (metric === 'max') return Math.max(...row.samples);
   const percentile = Number(metric.slice(1)) / 100;
   const sorted = [...row.samples].sort((left, right) => left - right);

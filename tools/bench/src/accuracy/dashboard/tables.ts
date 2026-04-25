@@ -1,7 +1,19 @@
 import { formatCompactDuration, padLeft, padRight, truncate } from './format.js';
 import type { BenchDashboardModel, RecentScan, SlowScan } from './model.js';
 
-export type StudySlowestMetric = 'avg' | 'p85' | 'p95' | 'p98' | 'p99' | 'max';
+export type StudySlowestMetric =
+  | 'min'
+  | 'avg'
+  | 'p1'
+  | 'p2'
+  | 'p5'
+  | 'p15'
+  | 'p50'
+  | 'p85'
+  | 'p95'
+  | 'p98'
+  | 'p99'
+  | 'max';
 
 export interface StudyTimingFilters {
   readonly families: ReadonlySet<string>;
@@ -201,11 +213,9 @@ const studyTimingMetric = (
   metric: StudySlowestMetric,
 ): number => {
   if (metric === 'avg') return row.totalMs / Math.max(1, row.count);
+  if (metric === 'min') return row.samples.length === 0 ? 0 : Math.min(...row.samples);
   if (metric === 'max') return row.maxMs;
-  if (metric === 'p85') return percentile(row.samples, 0.85);
-  if (metric === 'p98') return percentile(row.samples, 0.98);
-  if (metric === 'p99') return percentile(row.samples, 0.99);
-  return percentile(row.samples, 0.95);
+  return percentile(row.samples, Number(metric.slice(1)) / 100);
 };
 
 const percentile = (values: readonly number[], quantile: number): number => {
