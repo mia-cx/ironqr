@@ -245,6 +245,7 @@ export const viewProposalsStudyPlugin: StudyPlugin<
         generatedViewCount += 1;
         generatedProposalCount += event.proposalCount;
         logStudyTiming(log, studyTimingId(event.binaryViewId, 'c'), event.detectorDurationMs);
+        logFinderDetectorTimings(log, event);
         log(
           `${asset.id}: view ${generatedViewCount} ${event.binaryViewId} proposals=${event.proposalCount} total=${generatedProposalCount}`,
         );
@@ -317,13 +318,53 @@ export const viewOrderStudyPlugin: StudyPlugin<
 
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 
-const logStudyTiming = (log: (message: string) => void, id: string, durationMs: number): void => {
-  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs })}`);
+const logStudyTiming = (
+  log: (message: string) => void,
+  id: string,
+  durationMs: number,
+  group: 'view' | 'detector' = 'view',
+): void => {
+  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs, group })}`);
+};
+
+const logFinderDetectorTimings = (
+  log: (message: string) => void,
+  event: ProposalViewGeneratedEvent,
+): void => {
+  logStudyTiming(
+    log,
+    detectorTimingId(event.binaryViewId, 'c', 'row'),
+    event.rowScanDurationMs,
+    'detector',
+  );
+  logStudyTiming(
+    log,
+    detectorTimingId(event.binaryViewId, 'c', 'flood'),
+    event.floodDurationMs,
+    'detector',
+  );
+  logStudyTiming(
+    log,
+    detectorTimingId(event.binaryViewId, 'c', 'matcher'),
+    event.matcherDurationMs,
+    'detector',
+  );
+  logStudyTiming(
+    log,
+    detectorTimingId(event.binaryViewId, 'c', 'dedupe'),
+    event.dedupeDurationMs,
+    'detector',
+  );
 };
 
 const studyTimingId = (viewId: string, variant: string): string => {
   const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
   return `${variant}:${scalar}:${threshold}:${polarity}`;
+};
+
+const detectorTimingId = (viewId: string, variant: string, detector: string): string => {
+  const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
+  return `${variant}:${detector}:${scalar}:${threshold}:${polarity}`;
 };
 
 const buildViewRows = (

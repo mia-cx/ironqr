@@ -467,32 +467,58 @@ const renderStudyProgress = (
       options.width,
     ),
   ];
-  lines.push(...renderStudyTimingBars(dashboard, options));
+  const chartRows = Math.max(4, options.maxRows - lines.length);
+  lines.push(...renderSideBySideStudyCharts(dashboard, { ...options, maxRows: chartRows }));
   return lines;
 };
 
-const renderStudyTimingBars = (
+const renderSideBySideStudyCharts = (
   dashboard: BenchDashboardModel,
   options: { readonly width: number; readonly maxRows: number; readonly offset: number },
 ): readonly string[] => {
-  const rows = [...dashboard.studyTimings.values()].sort(
+  const gap = 3;
+  const leftWidth = Math.floor((options.width - gap) / 2);
+  const rightWidth = options.width - gap - leftWidth;
+  const left = renderStudyTimingBars('views', [...dashboard.studyTimings.values()], {
+    width: leftWidth,
+    maxRows: options.maxRows,
+    offset: options.offset,
+  });
+  const right = renderStudyTimingBars('detectors', [...dashboard.studyDetectorTimings.values()], {
+    width: rightWidth,
+    maxRows: options.maxRows,
+    offset: options.offset,
+  });
+  const height = Math.max(left.length, right.length);
+  return Array.from({ length: height }, (_, index) => {
+    const leftLine = padStudyCell(left[index] ?? '', leftWidth);
+    const rightLine = right[index] ?? '';
+    return truncateLine(`${leftLine}${' '.repeat(gap)}${rightLine}`, options.width);
+  });
+};
+
+const renderStudyTimingBars = (
+  title: string,
+  inputRows: readonly { readonly id: string; readonly totalMs: number; readonly count: number }[],
+  options: { readonly width: number; readonly maxRows: number; readonly offset: number },
+): readonly string[] => {
+  const rows = [...inputRows].sort(
     (left, right) => averageStudyTimingMs(right) - averageStudyTimingMs(left),
   );
-  if (rows.length === 0)
-    return [truncateLine('views 0/0 — waiting for view timing samples…', options.width)];
-  const maxBars = Math.max(1, options.maxRows - 3);
+  if (rows.length === 0) return [truncateLine(`${title} 0/0 — waiting…`, options.width)];
+  const maxBars = Math.max(1, options.maxRows - 2);
   const maxOffset = Math.max(0, rows.length - maxBars);
   const offset = Math.min(Math.max(0, options.offset), maxOffset);
   const visibleRows = rows.slice(offset, offset + maxBars);
   const first = offset + 1;
   const last = Math.min(rows.length, offset + visibleRows.length);
-  const labelWidth = Math.min(26, Math.max(12, Math.floor(options.width * 0.34)));
-  const valueWidth = 20;
-  const barWidth = Math.max(8, options.width - labelWidth - valueWidth - 4);
+  const labelWidth = Math.min(18, Math.max(10, Math.floor(options.width * 0.38)));
+  const valueWidth = 14;
+  const barWidth = Math.max(5, options.width - labelWidth - valueWidth - 4);
   const maxAverage = Math.max(1, ...rows.map(averageStudyTimingMs));
   return [
     truncateLine(
-      `views ${first}-${last}/${rows.length}  scroll=${offset + 1}/${rows.length}  a/b=candidates c=control  ↑/↓ j/k`,
+      `${title} ${first}-${last}/${rows.length} pos=${offset + 1}/${rows.length}`,
       options.width,
     ),
     ...visibleRows.map((row) => {
@@ -500,7 +526,7 @@ const renderStudyTimingBars = (
       const filled = Math.max(1, Math.round((average / maxAverage) * barWidth));
       const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, barWidth - filled))}`;
       return truncateLine(
-        `${padStudyCell(row.id, labelWidth)} ${bar} ${formatStudyTiming(row.totalMs, average, row.count)}`,
+        `${padStudyCell(row.id, labelWidth)} ${bar} ${formatStudyTiming(average, row.count)}`,
         options.width,
       );
     }),
@@ -515,8 +541,8 @@ const padStudyCell = (value: string, width: number): string => {
 const averageStudyTimingMs = (row: { readonly totalMs: number; readonly count: number }): number =>
   row.totalMs / Math.max(1, row.count);
 
-const formatStudyTiming = (totalMs: number, averageMs: number, count: number): string =>
-  `avg=${formatCompactDuration(averageMs)} n=${count} total=${formatCompactDuration(totalMs)}`;
+const formatStudyTiming = (averageMs: number, count: number): string =>
+  `${formatCompactDuration(averageMs)} n=${count}`;
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,

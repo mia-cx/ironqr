@@ -175,7 +175,11 @@ export const createBenchProgressReporter = (options: {
 
 const parseStudyTimingMessage = (
   message: string,
-): { readonly id: string; readonly durationMs: number } | null => {
+): {
+  readonly id: string;
+  readonly durationMs: number;
+  readonly group?: 'view' | 'detector';
+} | null => {
   if (!message.startsWith(STUDY_TIMING_PREFIX)) return null;
   try {
     const payload = JSON.parse(message.slice(STUDY_TIMING_PREFIX.length)) as Record<
@@ -183,7 +187,13 @@ const parseStudyTimingMessage = (
       unknown
     >;
     if (typeof payload.id !== 'string' || typeof payload.durationMs !== 'number') return null;
-    return { id: payload.id, durationMs: payload.durationMs };
+    const group =
+      payload.group === 'detector' || payload.group === 'view' ? payload.group : undefined;
+    return {
+      id: payload.id,
+      durationMs: payload.durationMs,
+      ...(group === undefined ? {} : { group }),
+    };
   } catch {
     return null;
   }

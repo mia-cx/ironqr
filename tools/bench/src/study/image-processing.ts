@@ -373,6 +373,7 @@ function makeImageProcessingStudyPlugin(input: {
         }).summary;
         proposalSummaries.push(summary);
         logStudyTiming(log, studyTimingId(viewId, 'c'), summary.detectorDurationMs);
+        logFinderDetectorTimings(log, viewId, 'c', summary);
         log(`${asset.id}: proposal path ${proposalViewIndex}/${viewIds.length} ${viewId}`);
         await yieldToDashboard();
       }
@@ -507,8 +508,45 @@ function makeImageProcessingStudyPlugin(input: {
 
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 
-const logStudyTiming = (log: (message: string) => void, id: string, durationMs: number): void => {
-  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs })}`);
+const logStudyTiming = (
+  log: (message: string) => void,
+  id: string,
+  durationMs: number,
+  group: 'view' | 'detector' = 'view',
+): void => {
+  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs, group })}`);
+};
+
+const logFinderDetectorTimings = (
+  log: (message: string) => void,
+  viewId: BinaryViewId,
+  variant: string,
+  summary: ProposalViewGenerationSummary,
+): void => {
+  logStudyTiming(
+    log,
+    detectorTimingId(viewId, variant, 'row'),
+    summary.finderEvidence.rowScanDurationMs,
+    'detector',
+  );
+  logStudyTiming(
+    log,
+    detectorTimingId(viewId, variant, 'flood'),
+    summary.finderEvidence.floodDurationMs,
+    'detector',
+  );
+  logStudyTiming(
+    log,
+    detectorTimingId(viewId, variant, 'matcher'),
+    summary.finderEvidence.matcherDurationMs,
+    'detector',
+  );
+  logStudyTiming(
+    log,
+    detectorTimingId(viewId, variant, 'dedupe'),
+    summary.finderEvidence.dedupeDurationMs,
+    'detector',
+  );
 };
 
 const studyTimingId = (
@@ -518,6 +556,11 @@ const studyTimingId = (
 ): string => {
   const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
   return `${variant}:${scalar}:${threshold}:${polarityOverride ?? polarity}`;
+};
+
+const detectorTimingId = (viewId: BinaryViewId, variant: string, detector: string): string => {
+  const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
+  return `${variant}:${detector}:${scalar}:${threshold}:${polarity}`;
 };
 
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
@@ -543,6 +586,7 @@ const measureSharedRunArtifactVariant = async (
     horizontalRunCount += counts.horizontalRunCount;
     verticalRunCount += counts.verticalRunCount;
     logStudyTiming(log, studyTimingId(viewId, 'b', 'shared'), elapsed);
+    logStudyTiming(log, detectorTimingId(viewId, 'b', 'shared-run'), elapsed, 'detector');
     log(`${assetId}: shared run artifact candidate ${viewId}`);
     await yieldToDashboard();
   }
@@ -628,6 +672,7 @@ const measureMaterializedInvertedVariant = async (
         control.finderEvidence.floodCount === candidate.finderEvidence.floodCount;
     }
     logStudyTiming(log, studyTimingId(viewId, 'a'), candidate.detectorDurationMs);
+    logFinderDetectorTimings(log, viewId, 'a', candidate);
     log(`${assetId}: materialized inverted detector variant ${viewId}`);
     await yieldToDashboard();
   }
