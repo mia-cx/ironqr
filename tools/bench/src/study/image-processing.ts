@@ -3108,6 +3108,31 @@ const otsuThresholdFromHistogram = (histogram: Uint32Array, total: number): numb
   return bestThreshold;
 };
 
+export const warmImageProcessingStudyWorker = async (): Promise<void> => {
+  const width = 96;
+  const height = 96;
+  const binary = new Uint8Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      binary[y * width + x] = (x >> 3) % 2 === (y >> 3) % 2 ? 1 : 0;
+    }
+  }
+  const view: BinaryView = {
+    id: 'gray:otsu:normal',
+    scalarViewId: 'gray',
+    threshold: 'otsu',
+    polarity: 'normal',
+    width,
+    height,
+    plane: { scalarViewId: 'gray', threshold: 'otsu', width, height, data: binary },
+    binary,
+  };
+  await labelDenseComponents(view);
+  await labelScanlineComponents(view);
+  await floodCandidateOutput('dense-stats', view);
+  await floodCandidateOutput('scanline-stats', view);
+};
+
 const COOPERATIVE_YIELD_INTERVAL_MS = 25;
 
 const createCooperativeYield = (): (() => Promise<void>) | undefined => {

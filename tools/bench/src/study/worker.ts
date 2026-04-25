@@ -8,6 +8,7 @@ import {
   scalarMaterializationFusionStudyPlugin,
   sharedBinaryDetectorArtifactsStudyPlugin,
   thresholdStatsCacheStudyPlugin,
+  warmImageProcessingStudyWorker,
 } from './image-processing.js';
 import type { StudyCacheHandle } from './types.js';
 import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
@@ -34,7 +35,16 @@ const post = (message: StudyWorkerResponse): void => {
 
 Reflect.set(globalThis, '__BENCH_STUDY_WORKER__', true);
 
-post({ type: 'ready' });
+void warmImageProcessingStudyWorker().then(
+  () => post({ type: 'ready' }),
+  (error) =>
+    post({
+      type: 'error',
+      jobId: 'worker-startup',
+      message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+    }),
+);
 
 const run = async (request: StudyWorkerRequest): Promise<void> => {
   try {
