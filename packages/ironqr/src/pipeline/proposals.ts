@@ -935,7 +935,7 @@ const compareTripleCandidates = (
 ): number => right.seedScore - left.seedScore || left.order - right.order;
 
 const compareWorstFirst = (left: FinderTripleCandidate, right: FinderTripleCandidate): number =>
-  left.seedScore - right.seedScore || right.order - left.order;
+  right.seedScore - left.seedScore || left.order - right.order;
 
 const heapPushWorstFirst = (
   heap: FinderTripleCandidate[],
