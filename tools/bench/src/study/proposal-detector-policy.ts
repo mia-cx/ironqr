@@ -12,6 +12,7 @@ import type { StudyPlugin, StudySummaryInput } from './types.js';
 
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 const STUDY_VERSION = 'study-v1';
+const STUDY_TIMING_ROWS_PER_POLICY = 7;
 
 type PolicyId =
   | 'full-current'
@@ -290,7 +291,8 @@ export const proposalDetectorPolicyStudyPlugin: StudyPlugin<
     policies: config.policies,
     metrics: 'proposal,cluster,decode,detector-policy',
   }),
-  estimateUnits: (config, assets) => assets.length * config.policies.length,
+  estimateUnits: (config, assets) =>
+    assets.length * config.policies.length * STUDY_TIMING_ROWS_PER_POLICY,
   runAsset: async ({ asset, config, signal, log }) => {
     if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
     const image = await asset.loadImage();
@@ -640,13 +642,48 @@ const logPolicyMetrics = (
   policyId: string,
   result: PolicyAssetResult,
 ): void => {
-  logStudyTiming(log, `${policyId}:scan`, result.scanDurationMs, result.success ? 1 : 0);
-  logStudyTiming(log, `${policyId}:proposals`, result.timings.proposalViewMs, result.proposalCount);
+  logStudyTiming(log, `${policyId}:scan`, result.scanDurationMs, 'view', result.success ? 1 : 0);
+  logStudyTiming(
+    log,
+    `${policyId}:proposals`,
+    result.timings.proposalViewMs,
+    'view',
+    result.proposalCount,
+  );
   logStudyTiming(
     log,
     `${policyId}:decode-attempts`,
     result.timings.decodeAttemptMs,
+    'view',
     result.decodeAttemptCount,
+  );
+  logStudyTiming(
+    log,
+    `${policyId}:row-scan`,
+    result.timings.rowScanMs,
+    'detector',
+    result.rowScanFinderCount,
+  );
+  logStudyTiming(
+    log,
+    `${policyId}:flood`,
+    result.timings.floodMs,
+    'detector',
+    result.floodFinderCount,
+  );
+  logStudyTiming(
+    log,
+    `${policyId}:matcher`,
+    result.timings.matcherMs,
+    'detector',
+    result.matcherFinderCount,
+  );
+  logStudyTiming(
+    log,
+    `${policyId}:dedupe`,
+    result.timings.dedupeMs,
+    'detector',
+    result.dedupedFinderCount,
   );
 };
 
@@ -654,9 +691,10 @@ const logStudyTiming = (
   log: (message: string) => void,
   id: string,
   durationMs: number,
+  group: 'view' | 'detector',
   outputCount: number,
 ): void => {
-  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs, group: 'view', outputCount })}`);
+  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs, group, outputCount })}`);
 };
 
 const addTimings = (
