@@ -1,80 +1,87 @@
-# Legacy vs Run-Map Matcher Accuracy Study
+# Flood-Fill Finder Detection Study
 
 ## Problem / question
 
-The matcher cross-check implementation changed from repeated pixel walking to row/column run-map-backed cross-checks. The 25-asset smoke study showed a large matcher speedup with equal matcher finder signatures, but that sample is not enough to close regression risk for a default detector-path change.
+Run-map matcher cross-checks are now validated and canonical. The next detector hotspot is flood-fill finder detection. This study focuses only on flood-fill variants with the current legacy flood detector as control.
 
-> Does the run-map matcher produce the same matcher `FinderEvidence[]` as the legacy pixel-walk matcher across the full corpus and all binary view identities?
+> Which flood-fill implementation variants preserve legacy flood `FinderEvidence[]` while reducing detector time across all binary view identities?
 
-This study is now intentionally narrow. It is not a prefilter-gating study, not a decode-capability study, and not a broad detector-optimization shootout. Center pruning, row/flood-seeded rescue, and fused-polarity traversal are turned off until we intentionally return to those detector patterns.
+This is not a matcher study. It intentionally does not run matcher cross-check comparisons, center pruning, row/flood seeded matcher rescue, fused polarity traversal, proposal generation, clustering, or decode.
 
 ## Hypothesis / thesis
 
-Run-map-backed cross-checks should be output-equivalent to the legacy pixel-walk matcher because they answer the same horizontal/vertical dark-light run-length queries from precomputed axis runs. If output signatures match across every asset/view, the run-map matcher can remain the production matcher control and matcher work can be considered settled for this PR.
+The current flood detector does two expensive things that can likely be improved without changing output:
 
-Null hypothesis: run-map-backed cross-checks change matcher finder output on at least one corpus asset/view and need targeted investigation before the matcher promotion is treated as validated.
+1. labels connected components, then scans the whole image again to collect component stats;
+2. searches ring/gap/stone relationships with broad component lists.
+
+Candidate implementations should preserve legacy flood output first. Speed only matters for candidates with zero mismatched asset/view rows.
 
 ## Designed experiment / study
 
-Run `binary-prefilter-signals` over all 54 binary view identities. For each asset/view:
+Run `binary-prefilter-signals` over all selected binary view identities. For each asset/view:
 
-1. Materialize the selected `BinaryView`.
-2. Run only `detectMatcherFinders(...)`, the current run-map-backed matcher control.
-3. Independently run only `detectMatcherFindersLegacy(...)` on the same `BinaryView`.
-4. Compare sorted matcher finder signatures:
+1. materialize the selected `BinaryView`;
+2. run `detectFloodFinders(...)` as the legacy flood control;
+3. run candidate flood detectors against the same view;
+4. compare sorted finder signatures against legacy flood:
    - `source`
    - center x/y
    - module sizes
    - score
-5. Record timing for the run-map matcher control and the legacy matcher control.
-6. Report only the legacy-vs-run-map control comparison in the processed summary.
+5. record timing and output counts for each control/candidate.
 
-The study does not run proposal generation for this mode. It intentionally does not run row-scan, flood-fill, cross-detector dedupe, triple assembly, or proposal construction.
+Active variants:
 
-Detector variants intentionally disabled for this run:
+| Variant id | Purpose | Behavior requirement |
+| --- | --- | --- |
+| `legacy-flood-control` | Current flood-fill detector. | Control. |
+| `inline-component-stats-flood-prototype` | Combine connected-component labeling and stats collection in one pass instead of label pass + stats pass. | Must match legacy flood output exactly. |
+| `filtered-components-flood-prototype` | Prefilter possible rings/gaps/stones before nested containment checks. | Must match legacy flood output exactly. |
 
+Intentionally disabled until this run is analyzed:
+
+- run-map matcher cross-check study;
+- legacy matcher comparison;
 - center-pruned matcher;
 - row/flood-seeded matcher rescue;
-- fused normal+inverted polarity traversal;
-- production prefilter threshold sweeps.
-
-Those are optimization questions. This study is only an accuracy/equivalence validation for the matcher cross-check promotion.
+- fused normal+inverted matcher traversal;
+- proposal generation, clustering, structure, module sampling, and decode.
 
 ## Metrics table
 
 | Metric | Unit | Source | Decision use |
 | --- | --- | --- | --- |
-| Run-map matcher duration | ms | production proposal-view matcher timing | Confirms production matcher cost. |
-| Legacy matcher duration | ms | study-side legacy matcher timing | Measures old control cost. |
-| Legacy vs run-map output equality | boolean | finder signature comparison | Primary pass/fail criterion. |
-| Legacy vs run-map mismatch count | view rows | finder signature comparison | Must be zero for promotion validation. |
-| Matcher-only detector duration | ms | run-map matcher timing | Equals run-map matcher duration for this focused mode. |
-| Materialization duration | ms | scalar/binary timing spans | Context for study overhead. |
+| Legacy flood duration | ms | `detectFloodFinders` | Control cost. |
+| Inline-stats flood duration | ms | `detectFloodFindersWithInlineStats` | Candidate cost. |
+| Filtered-components flood duration | ms | `detectFloodFindersWithFilteredComponents` | Candidate cost. |
+| Candidate output equality | boolean | finder signature comparison | Primary safety criterion. |
+| Candidate mismatch count | asset/view rows | finder signature comparison | Must be zero before considering production. |
+| Candidate output count | count | live timing `p=` | Sanity check that speed is not from lost evidence. |
 
 ## Decision rule
 
-Treat the run-map matcher promotion as validated if a full-corpus run reports:
+A candidate is eligible for production implementation only if a full-corpus run reports:
 
-- `matcherMatrix.controlComparison.legacyVsRunMapOutputsEqual === true`
-- `matcherMatrix.controlComparison.legacyVsRunMapMismatchCount === 0`
+- output equality is `true`;
+- mismatch count is `0`;
+- measurable speedup over `legacy-flood-control`.
 
-If mismatches are nonzero:
+If multiple candidates are safe, prefer the smaller implementation unless the larger candidate has a clear additional win. If a candidate is faster but mismatches, keep it as design input only; do not ship it as a replacement.
 
-1. inspect the mismatched asset/view rows in the full report;
-2. classify whether differences are benign scoring/order noise or real finder geometry changes;
-3. add targeted unit/corpus coverage before relying on run-map as the production control.
-
-Do not make production decisions about decode accuracy, false positives, prefilter thresholds, center pruning, seeded rescue, or fused polarity from this study. Those need separate study designs.
+Do not make decode or false-positive claims from this study. This study validates flood finder evidence only.
 
 ## Implementation checklist
 
 - [x] Keep all 54 binary view identities available with `--view-set all`.
-- [x] Keep run-map matcher as the production control path.
-- [x] Re-run the legacy pixel-walk matcher per asset/view.
-- [x] Compare matcher finder signatures against the run-map control.
-- [x] Emit processed summary fields for the legacy-vs-run-map control comparison.
-- [x] Disable center-prune, row/flood-seeded, and fused-polarity matcher variants for this study direction.
+- [x] Turn off matcher/run-map comparison for this study direction.
+- [x] Turn off row-scan/flood/matcher proposal generation for this study direction.
+- [x] Add legacy flood control timing.
+- [x] Add inline component-stats candidate.
+- [x] Add filtered component-candidate candidate.
+- [x] Emit processed summary fields for flood control/candidate comparison.
 - [ ] Run the full 203-asset corpus.
+- [ ] Analyze candidate equality and speedup before production changes.
 
 ## Reports
 
@@ -92,48 +99,11 @@ tools/bench/reports/study/study-binary-prefilter-signals.summary.json
 
 The processed summary should be the first artifact to read. It includes:
 
-- `headline`: detector, flood, run-map matcher, legacy matcher, equality, mismatch count;
-- `variants`: only `legacy-matcher-control` and `run-map-matcher-control`;
-- `matcherMatrix.controlComparison`: run-map/legacy timings, equality, mismatch count, saved ms, improvement %;
-- `detectorBreakdown`: expected to be zeroed for row-scan/flood/dedupe in this matcher-only mode;
-- `questionCoverage`: states that matcher equivalence is answered and decode/false-positive questions are out of scope.
-
-## 25-asset smoke checkpoint
-
-Source processed report:
-
-```text
-tools/bench/reports/study/study-binary-prefilter-signals.summary.json
-```
-
-Run metadata:
-
-- generated: `2026-04-25T03:24:17.542Z`
-- commit: `519b62e02ab161891de6d2e40360a26903f7f06e`
-- command: `bench study binary-prefilter-signals --view-set all --refresh-cache --max-assets 25`
-- corpus sample: 25 assets, 8 positive, 17 negative
-- cache: 0 hits, 25 misses, 25 writes
-- config: `{ focus: "binary-prefilter-signals", viewSet: "all", decode: false }`
-
-Headline evidence:
-
-| Metric | Value |
-| --- | ---: |
-| Detector time | 75,698.18 ms |
-| Flood time | 44,299.29 ms (historical smoke only; disabled in current matcher-only code) |
-| Run-map matcher time | 22,477.26 ms |
-| Legacy matcher time | 239,995.51 ms |
-| Run-map saved time | 217,518.25 ms |
-| Run-map improvement vs legacy | 90.63% |
-| Legacy vs run-map output equality | `true` |
-| Legacy vs run-map mismatched views | 0 |
-
-Interpretation:
-
-- The smoke run strongly supports the run-map matcher promotion: `0` mismatched matcher view rows across `25 × 54 = 1,350` asset/view rows.
-- The legacy matcher is roughly an order of magnitude slower than the run-map matcher on this sample.
-- Flood-fill is now the main detector bottleneck, not matcher: `44.3s / 75.7s = 58.5%` of detector time.
-- This run does not validate decode accuracy or false-positive behavior because `decode=false`.
+- `headline`: detector/flood control timing plus candidate equality/mismatch counts;
+- `variants`: only the active flood control/candidates;
+- `floodMatrix`: compact control/candidate timing, saved ms, improvement %, output equality, and mismatch counts;
+- `matcherMatrix`: expected to be `null` for this flood-focused run;
+- `questionCoverage`: states flood evidence preservation and decode/false-positive scope.
 
 ## Full-run plan
 
@@ -145,21 +115,9 @@ bun run --cwd tools/bench bench study binary-prefilter-signals \
   --refresh-cache
 ```
 
-Expected full-run decision:
+Expected decision after the run:
 
-- If mismatch count is zero, keep run-map matcher as the production/default matcher and stop matcher work for this PR.
-- If mismatch count is nonzero, inspect mismatched assets/views before shipping the matcher promotion as validated.
-- Regardless of matcher result, treat flood/component labeling as the next detector-optimization area once matcher equivalence is settled.
-
-## Out of scope / future studies
-
-The following remain intentionally out of scope for the full-blast matcher-equivalence run:
-
-- center-pruned matcher gating or prioritization;
-- row/flood-seeded matcher rescue;
-- fused normal+inverted matcher traversal;
-- binary prefilter threshold sweeps;
-- decode success / false-positive proof;
-- component-label reuse and flood-fill optimization.
-
-When we return to detector optimization, create separate study designs for flood/component labeling and any matcher rescue strategy. Do not overload this equivalence run with those questions.
+- If `inline-component-stats-flood-prototype` has zero mismatches and meaningful speedup, promote the one-pass label+stats design.
+- If `filtered-components-flood-prototype` has zero mismatches and meaningful speedup, consider it as a smaller production cleanup.
+- If both mismatch, keep legacy flood and design a more conservative component-label reuse study.
+- After flood evidence is settled, run decode/proposal studies separately before claiming end-to-end accuracy or false-positive impact.

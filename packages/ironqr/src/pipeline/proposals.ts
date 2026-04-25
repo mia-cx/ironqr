@@ -1049,17 +1049,56 @@ export const detectFloodFinders = (
 ): FinderEvidence[] => {
   const labels = labelConnectedComponents(binary, width, height);
   const components = collectComponentStats(labels, binary, width, height);
+  return floodFindersFromComponents(components);
+};
+
+export const detectFloodFindersWithInlineStats = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): FinderEvidence[] =>
+  floodFindersFromComponents(labelConnectedComponentsWithStats(binary, width, height));
+
+export const detectFloodFindersWithFilteredComponents = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): FinderEvidence[] => {
+  const labels = labelConnectedComponents(binary, width, height);
+  const components = collectComponentStats(labels, binary, width, height);
+  return floodFindersFromFilteredComponents(components);
+};
+
+const floodFindersFromComponents = (components: readonly ComponentStats[]): FinderEvidence[] => {
   const dark = components.filter((component) => component.color === 0);
   const light = components.filter((component) => component.color === 255);
+  return floodFindersFromComponentSets(dark, light, dark);
+};
+
+const floodFindersFromFilteredComponents = (
+  components: readonly ComponentStats[],
+): FinderEvidence[] => {
+  const dark = components.filter((component) => component.color === 0);
+  const light = components.filter((component) => component.color === 255);
+  const rings = dark.filter(isPossibleFloodRing);
+  const gaps = light.filter((component) => component.pixelCount >= 4);
+  const stones = dark.filter((component) => component.pixelCount >= 1);
+  return floodFindersFromComponentSets(rings, gaps, stones);
+};
+
+const floodFindersFromComponentSets = (
+  rings: readonly ComponentStats[],
+  gaps: readonly ComponentStats[],
+  stones: readonly ComponentStats[],
+): FinderEvidence[] => {
   const evidence: FinderEvidence[] = [];
 
-  for (const ring of dark) {
+  for (const ring of rings) {
+    if (!isPossibleFloodRing(ring)) continue;
     const ringWidth = ring.maxX - ring.minX + 1;
     const ringHeight = ring.maxY - ring.minY + 1;
-    const aspect = Math.max(ringWidth, ringHeight) / Math.max(1, Math.min(ringWidth, ringHeight));
-    if (ring.pixelCount < 16 || aspect > 1.7) continue;
 
-    const gap = light.find(
+    const gap = gaps.find(
       (candidate) =>
         candidate.minX > ring.minX &&
         candidate.maxX < ring.maxX &&
@@ -1070,7 +1109,7 @@ export const detectFloodFinders = (
     );
     if (!gap) continue;
 
-    const stone = dark.find(
+    const stone = stones.find(
       (candidate) =>
         candidate !== ring &&
         candidate.minX > gap.minX &&
@@ -1099,6 +1138,13 @@ export const detectFloodFinders = (
   return dedupeFinderEvidence(evidence)
     .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
     .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
+};
+
+const isPossibleFloodRing = (component: ComponentStats): boolean => {
+  const ringWidth = component.maxX - component.minX + 1;
+  const ringHeight = component.maxY - component.minY + 1;
+  const aspect = Math.max(ringWidth, ringHeight) / Math.max(1, Math.min(ringWidth, ringHeight));
+  return component.pixelCount >= 16 && aspect <= 1.7;
 };
 
 const isDarkCenter = (
@@ -1694,6 +1740,86 @@ const labelConnectedComponents = (
   }
 
   return labels;
+};
+
+const labelConnectedComponentsWithStats = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): readonly ComponentStats[] => {
+  const labels = new Int32Array(width * height);
+  const components: ComponentStats[] = [];
+  let nextLabel = 1;
+  const queue = new Int32Array(width * height);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (labels[index] !== 0) continue;
+      const color = pixelAtIndex(binary, index);
+      let head = 0;
+      let tail = 0;
+      let pixelCount = 0;
+      let minX = x;
+      let minY = y;
+      let maxX = x;
+      let maxY = y;
+      let sumX = 0;
+      let sumY = 0;
+      queue[tail] = index;
+      tail += 1;
+      labels[index] = nextLabel;
+
+      while (head < tail) {
+        const currentIndex = queue[head] ?? 0;
+        head += 1;
+        const cx = currentIndex % width;
+        const cy = Math.floor(currentIndex / width);
+        pixelCount += 1;
+        minX = Math.min(minX, cx);
+        minY = Math.min(minY, cy);
+        maxX = Math.max(maxX, cx);
+        maxY = Math.max(maxY, cy);
+        sumX += cx;
+        sumY += cy;
+
+        const neighbors = [
+          currentIndex - 1,
+          currentIndex + 1,
+          currentIndex - width,
+          currentIndex + width,
+        ];
+        for (const neighborIndex of neighbors) {
+          if (neighborIndex < 0 || neighborIndex >= labels.length) continue;
+          if (
+            (neighborIndex === currentIndex - 1 && cx === 0) ||
+            (neighborIndex === currentIndex + 1 && cx === width - 1)
+          )
+            continue;
+          if (labels[neighborIndex] !== 0 || pixelAtIndex(binary, neighborIndex) !== color)
+            continue;
+          labels[neighborIndex] = nextLabel;
+          queue[tail] = neighborIndex;
+          tail += 1;
+        }
+      }
+
+      components.push({
+        id: nextLabel,
+        color,
+        pixelCount,
+        minX,
+        minY,
+        maxX,
+        maxY,
+        centroidX: sumX / pixelCount,
+        centroidY: sumY / pixelCount,
+      });
+      nextLabel += 1;
+    }
+  }
+
+  return components;
 };
 
 const collectComponentStats = (

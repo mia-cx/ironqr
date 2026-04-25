@@ -247,6 +247,7 @@ const buildProcessedStudyReport = (report: StudyReport): Record<string, unknown>
   const summary = report.summary as Record<string, unknown>;
   const detectorBreakdown = buildDetectorBreakdown(summary);
   const matcherMatrix = buildMatcherVariantMatrix(report.details.plugin.id, summary);
+  const floodMatrix = buildFloodVariantMatrix(report.details.plugin.id, summary);
   return {
     kind: 'processed-study-report',
     schemaVersion: 1,
@@ -269,6 +270,7 @@ const buildProcessedStudyReport = (report: StudyReport): Record<string, unknown>
     totals: summary.totals ?? null,
     detectorBreakdown,
     matcherMatrix,
+    floodMatrix,
     questionCoverage: buildQuestionCoverage(report.details.plugin.id, summary),
   };
 };
@@ -283,6 +285,14 @@ const buildStudyHeadline = (
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
   const detectorMs = numberField(totals, 'detectorMs');
   const floodMs = detectorBreakdown.floodMs ?? 0;
+  const floodControlMs = numberField(totals, 'floodControlMs');
+  if (floodControlMs > 0) {
+    const inlineEqual = Boolean(totals.floodInlineStatsOutputsEqual);
+    const inlineMismatches = numberField(totals, 'floodInlineStatsMismatchCount');
+    const filteredEqual = Boolean(totals.floodFilteredComponentsOutputsEqual);
+    const filteredMismatches = numberField(totals, 'floodFilteredComponentsMismatchCount');
+    return `Detector=${formatMs(detectorMs)}; flood control=${formatMs(floodControlMs)}; inlineStatsEqual=${inlineEqual} mismatches=${inlineMismatches}; filteredEqual=${filteredEqual} mismatches=${filteredMismatches}.`;
+  }
   const matcherMs = numberField(totals, 'matcherControlMs');
   const legacyMs = numberField(totals, 'matcherLegacyControlMs');
   const legacyEqual = Boolean(totals.matcherLegacyControlOutputsEqual);
@@ -311,6 +321,7 @@ const buildMatcherVariantMatrix = (
 ): Record<string, unknown> | null => {
   if (studyId !== 'binary-prefilter-signals') return null;
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
+  if (numberField(totals, 'matcherControlMs') === 0) return null;
   return {
     controlComparison: {
       runMapMs: numberField(totals, 'matcherControlMs'),
@@ -328,12 +339,78 @@ const buildMatcherVariantMatrix = (
   };
 };
 
+const buildFloodVariantMatrix = (
+  studyId: string,
+  summary: Record<string, unknown>,
+): Record<string, unknown> | null => {
+  if (studyId !== 'binary-prefilter-signals') return null;
+  const totals = (summary.totals ?? {}) as Record<string, unknown>;
+  const controlMs = numberField(totals, 'floodControlMs');
+  if (controlMs === 0) return null;
+  return {
+    control: { legacyFloodMs: controlMs },
+    variants: {
+      inlineStats: floodVariantFields(
+        totals,
+        'floodInlineStatsMs',
+        'floodInlineStatsOutputsEqual',
+        'floodInlineStatsMismatchCount',
+      ),
+      filteredComponents: floodVariantFields(
+        totals,
+        'floodFilteredComponentsMs',
+        'floodFilteredComponentsOutputsEqual',
+        'floodFilteredComponentsMismatchCount',
+      ),
+    },
+  };
+};
+
+const floodVariantFields = (
+  totals: Record<string, unknown>,
+  candidateMsKey: string,
+  outputsEqualKey: string,
+  mismatchCountKey: string,
+): Record<string, unknown> => {
+  const controlMs = numberField(totals, 'floodControlMs');
+  const candidateMs = numberField(totals, candidateMsKey);
+  const savedMs = roundReportNumber(controlMs - candidateMs);
+  return {
+    controlMs,
+    candidateMs,
+    savedMs,
+    improvementPct: percentReportNumber(savedMs, controlMs),
+    outputsEqual: Boolean(totals[outputsEqualKey]),
+    mismatchCount: numberField(totals, mismatchCountKey),
+  };
+};
+
 const buildQuestionCoverage = (
   studyId: string,
   summary: Record<string, unknown>,
 ): readonly Record<string, string>[] => {
   if (studyId !== 'binary-prefilter-signals') return [];
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
+  const floodControlMs = numberField(totals, 'floodControlMs');
+  if (floodControlMs > 0) {
+    return [
+      {
+        question: 'Which flood-fill implementation preserves legacy flood finder evidence?',
+        status: 'answered-for-candidates',
+        evidence: `inlineEqual=${String(totals.floodInlineStatsOutputsEqual)} inlineMismatchViews=${String(totals.floodInlineStatsMismatchCount)} filteredEqual=${String(totals.floodFilteredComponentsOutputsEqual)} filteredMismatchViews=${String(totals.floodFilteredComponentsMismatchCount)}`,
+      },
+      {
+        question: 'Which flood-fill implementation is faster than legacy flood?',
+        status: 'answered-for-candidates',
+        evidence: `legacyFlood=${formatMs(floodControlMs)} inlineStats=${formatMs(numberField(totals, 'floodInlineStatsMs'))} filteredComponents=${formatMs(numberField(totals, 'floodFilteredComponentsMs'))}`,
+      },
+      {
+        question: 'Do flood variants prove decode success or false positives?',
+        status: 'unanswered',
+        evidence: 'decode=false in this study run',
+      },
+    ];
+  }
   return [
     {
       question: 'Do cheap signals identify detector hotspots?',
