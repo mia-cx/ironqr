@@ -12,6 +12,7 @@ import {
   type BinaryView,
   type BinaryViewId,
   createViewBank,
+  readBinaryPixel,
 } from '../../../../packages/ironqr/src/pipeline/views.js';
 import { describeAccuracyEngine, getAccuracyEngineById } from '../core/engines.js';
 import { normalizeDecodedText } from '../shared/text.js';
@@ -50,6 +51,7 @@ interface ImageProcessingAssetResult {
   readonly scalarStats: readonly ScalarStatsMeasurement[];
   readonly scalarFusion: ScalarFusionMeasurement;
   readonly sharedArtifacts: SharedArtifactMeasurement;
+  readonly binaryRead: BinaryReadMeasurement | null;
   readonly decode: DecodeMeasurement | null;
 }
 
@@ -100,6 +102,15 @@ interface SharedArtifactMeasurement {
   readonly estimatedSavedMs: number;
 }
 
+interface BinaryReadMeasurement {
+  readonly byteReaderMs: number;
+  readonly directBitReaderMs: number;
+  readonly deltaMs: number;
+  readonly improvementPct: number;
+  readonly pixelReads: number;
+  readonly countsEqual: boolean;
+}
+
 interface DecodeMeasurement {
   readonly scanDurationMs: number;
   readonly moduleSamplingMs: number;
@@ -116,6 +127,7 @@ interface ImageProcessingSummary extends Record<string, unknown> {
   readonly falsePositiveAssetCount: number;
   readonly cache: StudySummaryInput<ImageProcessingConfig, ImageProcessingAssetResult>['cache'];
   readonly totals: ImageProcessingTotals;
+  readonly variants: readonly ImageProcessingVariantSummary[];
   readonly perView: readonly ImageProcessingViewSummary[];
   readonly perScalar: readonly ImageProcessingScalarSummary[];
   readonly recommendations: readonly string[];
@@ -143,6 +155,21 @@ interface ImageProcessingTotals {
   readonly sampledModuleCount: number;
   readonly decodeAttemptMs: number;
   readonly decodeCascadeMs: number;
+  readonly binaryReadByteMs: number;
+  readonly binaryReadDirectMs: number;
+  readonly binaryReadPixels: number;
+}
+
+interface ImageProcessingVariantSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly controlMetric: string;
+  readonly candidateMetric: string;
+  readonly controlMs: number;
+  readonly candidateMs: number;
+  readonly deltaMs: number;
+  readonly improvementPct: number;
+  readonly evidence: string;
 }
 
 interface ImageProcessingViewSummary {
@@ -337,6 +364,10 @@ function makeImageProcessingStudyPlugin(input: {
       }
       const scalarFusion = measureScalarFusion(image);
       const sharedArtifacts = summarizeSharedArtifacts(binarySignals);
+      const binaryRead =
+        config.focus === 'binary-bit-hot-path'
+          ? await measureBinaryReadVariants(viewBank, viewIds, asset.id, log)
+          : null;
       const decode = config.decode ? await runDecodeMeasurement(image, viewIds, asset, log) : null;
       const expectedTexts = uniqueTexts(
         asset.expectedTexts.map(normalizeDecodedText).filter(Boolean),
@@ -366,6 +397,7 @@ function makeImageProcessingStudyPlugin(input: {
         scalarStats,
         scalarFusion,
         sharedArtifacts,
+        binaryRead,
         decode: decode === null ? null : stripDecodedTexts(decode),
       };
     },
@@ -373,6 +405,7 @@ function makeImageProcessingStudyPlugin(input: {
     renderReport: ({ config, results, summary }) => ({
       config,
       totals: summary.totals,
+      variants: summary.variants,
       perView: summary.perView,
       perScalar: summary.perScalar,
       recommendations: summary.recommendations,
@@ -389,6 +422,7 @@ function makeImageProcessingStudyPlugin(input: {
         timing: result.timing,
         scalarFusion: result.scalarFusion,
         sharedArtifacts: result.sharedArtifacts,
+        binaryRead: result.binaryRead,
         decode: result.decode,
       })),
       rows: results.flatMap((result) =>
@@ -411,6 +445,48 @@ function makeImageProcessingStudyPlugin(input: {
     }),
   };
 }
+
+const measureBinaryReadVariants = async (
+  viewBank: ReturnType<typeof createViewBank>,
+  viewIds: readonly BinaryViewId[],
+  assetId: string,
+  log: (message: string) => void,
+): Promise<BinaryReadMeasurement> => {
+  let byteReaderMs = 0;
+  let directBitReaderMs = 0;
+  let byteDarkCount = 0;
+  let directDarkCount = 0;
+  let pixelReads = 0;
+
+  for (const viewId of viewIds) {
+    const view = viewBank.getBinaryView(viewId);
+    const byteStartedAt = performance.now();
+    for (let index = 0; index < view.plane.data.length; index += 1) {
+      if (readBinaryPixel(view, index) === 0) byteDarkCount += 1;
+    }
+    byteReaderMs += performance.now() - byteStartedAt;
+
+    const directStartedAt = performance.now();
+    const invert = view.polarity === 'inverted' ? 1 : 0;
+    for (let index = 0; index < view.plane.data.length; index += 1) {
+      directDarkCount += (view.plane.data[index] ?? 0) ^ invert;
+    }
+    directBitReaderMs += performance.now() - directStartedAt;
+    pixelReads += view.plane.data.length;
+    log(`${assetId}: binary read variant ${viewId}`);
+    await yieldToDashboard();
+  }
+
+  const deltaMs = byteReaderMs - directBitReaderMs;
+  return {
+    byteReaderMs: round(byteReaderMs),
+    directBitReaderMs: round(directBitReaderMs),
+    deltaMs: round(deltaMs),
+    improvementPct: percent(deltaMs, byteReaderMs),
+    pixelReads,
+    countsEqual: byteDarkCount === directDarkCount,
+  };
+};
 
 const runDecodeMeasurement = async (
   image: Parameters<typeof scanFrame>[0],
@@ -637,6 +713,7 @@ const summarizeSharedArtifacts = (
 };
 
 const summarizeImageProcessingStudy = ({
+  config,
   results,
   cache,
 }: StudySummaryInput<
@@ -662,6 +739,11 @@ const summarizeImageProcessingStudy = ({
     totals.shareableRunSignalMs += result.sharedArtifacts.shareableRunSignalMs;
     totals.perPolarityRunSignalMs += result.sharedArtifacts.perPolarityRunSignalMs;
     totals.estimatedSharedArtifactSavedMs += result.sharedArtifacts.estimatedSavedMs;
+    if (result.binaryRead) {
+      totals.binaryReadByteMs += result.binaryRead.byteReaderMs;
+      totals.binaryReadDirectMs += result.binaryRead.directBitReaderMs;
+      totals.binaryReadPixels += result.binaryRead.pixelReads;
+    }
     if (result.decode) {
       totals.scanDurationMs += result.decode.scanDurationMs;
       totals.moduleSamplingMs += result.decode.moduleSamplingMs;
@@ -706,6 +788,8 @@ const summarizeImageProcessingStudy = ({
   const perScalar = [...scalarRows.values()]
     .map(finalizeScalarRow)
     .sort((left, right) => right.integralMs - left.integralMs);
+  const finalizedTotals = finalizeTotals(totals);
+  const variants = buildVariantSummaries(config, finalizedTotals);
 
   return {
     assetCount: results.length,
@@ -715,10 +799,11 @@ const summarizeImageProcessingStudy = ({
     falsePositiveAssetCount: results.filter((result) => result.falsePositiveTexts.length > 0)
       .length,
     cache,
-    totals: finalizeTotals(totals),
+    totals: finalizedTotals,
+    variants,
     perView,
     perScalar,
-    recommendations: buildRecommendations(perView, perScalar, finalizeTotals(totals)),
+    recommendations: buildRecommendations(perView, perScalar, finalizedTotals),
   };
 };
 
@@ -759,6 +844,9 @@ const emptyTotals = (): MutableTotals => ({
   sampledModuleCount: 0,
   decodeAttemptMs: 0,
   decodeCascadeMs: 0,
+  binaryReadByteMs: 0,
+  binaryReadDirectMs: 0,
+  binaryReadPixels: 0,
 });
 
 const ensureViewRow = (
@@ -824,6 +912,9 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   sampledModuleCount: totals.sampledModuleCount,
   decodeAttemptMs: round(totals.decodeAttemptMs),
   decodeCascadeMs: round(totals.decodeCascadeMs),
+  binaryReadByteMs: round(totals.binaryReadByteMs),
+  binaryReadDirectMs: round(totals.binaryReadDirectMs),
+  binaryReadPixels: totals.binaryReadPixels,
 });
 
 const finalizeViewRow = (row: MutableViewSummary): ImageProcessingViewSummary => ({
@@ -850,6 +941,101 @@ const finalizeScalarRow = (row: MutableScalarSummary): ImageProcessingScalarSumm
   integralMs: round(row.integralMs),
   integralBytes: row.integralBytes,
 });
+
+const buildVariantSummaries = (
+  config: ImageProcessingConfig,
+  totals: ImageProcessingTotals,
+): readonly ImageProcessingVariantSummary[] => {
+  const variants: ImageProcessingVariantSummary[] = [];
+  if (config.focus === 'binary-bit-hot-path' && totals.binaryReadPixels > 0) {
+    variants.push({
+      id: 'direct-bit-reader',
+      title: 'Direct bit-plane reader vs public byte pixel helper',
+      controlMetric: 'readBinaryPixel(view, index) === 0 full-plane sweep',
+      candidateMetric: 'view.plane.data[index] ^ polarityMask full-plane sweep',
+      controlMs: totals.binaryReadByteMs,
+      candidateMs: totals.binaryReadDirectMs,
+      deltaMs: round(totals.binaryReadByteMs - totals.binaryReadDirectMs),
+      improvementPct: percent(
+        totals.binaryReadByteMs - totals.binaryReadDirectMs,
+        totals.binaryReadByteMs,
+      ),
+      evidence: `${totals.binaryReadPixels} polarity-aware pixel reads; dark counts must match per asset.`,
+    });
+  }
+  if (config.focus === 'scalar-materialization-fusion') {
+    const fusedMs = round(totals.rgbFusionMs + totals.oklabFusionMs);
+    variants.push({
+      id: 'fused-scalar-families',
+      title: 'Fused RGB/OKLab family materialization prototype',
+      controlMetric: 'current scalar-view materialization spans',
+      candidateMetric: 'study-side fused RGB plus OKLab family passes',
+      controlMs: totals.scalarViewMs,
+      candidateMs: fusedMs,
+      deltaMs: round(totals.scalarViewMs - fusedMs),
+      improvementPct: percent(totals.scalarViewMs - fusedMs, totals.scalarViewMs),
+      evidence:
+        'Prototype materializes equivalent scalar families in shared passes; byte equality still needs implementation tests before production adoption.',
+    });
+  }
+  if (config.focus === 'shared-binary-detector-artifacts') {
+    variants.push({
+      id: 'shared-polarity-run-artifacts',
+      title: 'Polarity-neutral run signal sharing estimate',
+      controlMetric: 'per-polarity run signal construction',
+      candidateMetric: 'one shareable threshold-plane run signal per scalar/threshold',
+      controlMs: totals.perPolarityRunSignalMs,
+      candidateMs: totals.shareableRunSignalMs,
+      deltaMs: totals.estimatedSharedArtifactSavedMs,
+      improvementPct: percent(totals.estimatedSharedArtifactSavedMs, totals.perPolarityRunSignalMs),
+      evidence:
+        'Uses measured signal construction time grouped by scalar/threshold plane; validates artifact-sharing upside before changing detector internals.',
+    });
+  }
+  if (config.focus === 'threshold-stats-cache') {
+    const candidateDependencyMs = round(totals.histogramMs + totals.otsuMs + totals.integralMs);
+    variants.push({
+      id: 'cached-threshold-dependencies',
+      title: 'Cached scalar threshold dependency measurement',
+      controlMetric: 'current binary-plane materialization spans',
+      candidateMetric: 'measured reusable histogram + Otsu + integral dependencies',
+      controlMs: totals.binaryPlaneMs,
+      candidateMs: candidateDependencyMs,
+      deltaMs: round(totals.binaryPlaneMs - candidateDependencyMs),
+      improvementPct: percent(totals.binaryPlaneMs - candidateDependencyMs, totals.binaryPlaneMs),
+      evidence:
+        'This is a dependency-cost study, not a production-equivalent optimized scanner yet; implementation must rerun with byte-identical binary planes.',
+    });
+  }
+  if (config.focus === 'module-sampling-hot-path' && totals.sampledModuleCount > 0) {
+    variants.push({
+      id: 'module-sampling-control',
+      title: 'Current module sampling control',
+      controlMetric: 'current module-sampling spans',
+      candidateMetric: 'candidate sampler not implemented in this study run',
+      controlMs: totals.moduleSamplingMs,
+      candidateMs: totals.moduleSamplingMs,
+      deltaMs: 0,
+      improvementPct: 0,
+      evidence: `${round((totals.moduleSamplingMs * 1_000_000) / totals.sampledModuleCount)}ns/module baseline for future sampler variants.`,
+    });
+  }
+  if (config.focus === 'finder-run-map') {
+    variants.push({
+      id: 'run-map-control',
+      title: 'Current finder detector control plus run-signal prototype cost',
+      controlMetric: 'current finder detector spans',
+      candidateMetric: 'passive row/column run signal construction',
+      controlMs: totals.detectorMs,
+      candidateMs: totals.signalMs,
+      deltaMs: round(totals.detectorMs - totals.signalMs),
+      improvementPct: percent(totals.detectorMs - totals.signalMs, totals.detectorMs),
+      evidence:
+        'Run-signal construction is not a behavior-equivalent detector replacement; it estimates headroom for a later run-map candidate implementation.',
+    });
+  }
+  return variants;
+};
 
 const buildRecommendations = (
   perView: readonly ImageProcessingViewSummary[],
@@ -928,6 +1114,8 @@ const yieldToDashboard = async (): Promise<void> => {
 
 const clampByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
 const round = (value: number): number => Math.round(value * 100) / 100;
+const percent = (delta: number, baseline: number): number =>
+  baseline <= 0 ? 0 : round((delta / baseline) * 100);
 const roundRatio = (value: number): number => Math.round(value * 1_000_000) / 1_000_000;
 const numberMetadata = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0;
