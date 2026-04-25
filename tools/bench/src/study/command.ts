@@ -560,11 +560,57 @@ const runPlugin = async (input: {
     const observability = input.plugin.observability?.(config) ?? {};
     input.progress.onBenchmarkStarted(input.assets.length, [input.plugin.id], input.workerCount);
 
+    const preloadedResults: unknown[] = [];
+    const assetsToRun: (typeof input.assets)[number][] = [];
+    const readCachedAsset = input.plugin.readCachedAsset;
+    if (readCachedAsset) {
+      input.progress.onMessage(`study cache preflight ${input.assets.length} assets`);
+      for (const [index, asset] of input.assets.entries()) {
+        input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
+        const cached = await readCachedAsset({
+          repoRoot: input.repoRoot,
+          asset,
+          config,
+          reports: input.reports,
+          cache: input.cache,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          log: input.log,
+        });
+        if (cached === null) {
+          assetsToRun.push(asset);
+          continue;
+        }
+        input.progress.onScanStarted({
+          engineId: input.plugin.id,
+          assetId: asset.id,
+          relativePath: asset.relativePath,
+          label: asset.label,
+          cached: true,
+          cacheable: true,
+        });
+        input.progress.onScanFinished({
+          engineId: input.plugin.id,
+          assetId: asset.id,
+          relativePath: asset.relativePath,
+          result: studyUnitResult(input.plugin.id, asset, cached, true),
+          wroteToCache: false,
+        });
+        input.progress.onMessage(`study cache hit ${asset.id}`);
+        preloadedResults.push(cached);
+      }
+      input.progress.onMessage(
+        `study cache preflight queued ${assetsToRun.length}/${input.assets.length} assets`,
+      );
+    } else {
+      assetsToRun.push(...input.assets);
+    }
+
     const run = await mapConcurrentPartial(
-      input.assets,
+      assetsToRun,
       input.workerCount,
       async (asset, index) => {
-        input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
+        if (!readCachedAsset)
+          input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
         const cacheKey = JSON.stringify({
           studyId: input.plugin.id,
           studyVersion: input.plugin.version,
@@ -635,7 +681,7 @@ const runPlugin = async (input: {
     if (run.error !== null) throw run.error;
     const interrupted = run.interrupted;
     if (interrupted) input.log('study interrupted; writing partial report from completed assets');
-    const assetResults = run.completed;
+    const assetResults = [...preloadedResults, ...run.completed];
 
     const summaryInput = {
       config,

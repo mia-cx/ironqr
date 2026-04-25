@@ -92,6 +92,7 @@ export interface StudyPlugin<
   /** Stable study-level cache dimension. Per-asset keys add id/hash/engine/observability. */
   cacheKey?(config: Config): string;
   /** Optional generic per-asset execution hook owned by the reusable study runner. */
+  readCachedAsset?(input: StudyAssetInput<Config>): Promise<AssetResult | null>;
   runAsset?(input: StudyAssetInput<Config>): Promise<AssetResult>;
   /** Summarize generic per-asset results after cache/resume completes. */
   summarize?(input: StudySummaryInput<Config, AssetResult>): Summary;

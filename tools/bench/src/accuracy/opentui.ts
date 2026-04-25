@@ -610,6 +610,7 @@ const renderStudyTimingBars = (
     readonly totalMs: number;
     readonly count: number;
     readonly outputCount: number;
+    readonly cachedCount: number;
   }[],
   options: {
     readonly width: number;
@@ -646,7 +647,7 @@ const renderStudyTimingBars = (
       const filled = Math.max(1, Math.round((average / maxAverage) * barWidth));
       const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, barWidth - filled))}`;
       return truncateLine(
-        `${padStudyCell(row.id, labelWidth)} ${bar} ${formatStudyTiming(average, row.count, row.outputCount)}`,
+        `${padStudyCell(row.id, labelWidth)} ${bar} ${formatStudyTiming(average, row.count, row.outputCount, row.cachedCount)}`,
         options.width,
       );
     }),
@@ -661,8 +662,12 @@ const padStudyCell = (value: string, width: number): string => {
 const averageStudyTimingMs = (row: { readonly totalMs: number; readonly count: number }): number =>
   row.totalMs / Math.max(1, row.count);
 
-const formatStudyTiming = (averageMs: number, count: number, outputCount: number): string =>
-  `${formatCompactDuration(averageMs)} p=${outputCount} n=${count}`;
+const formatStudyTiming = (
+  averageMs: number,
+  count: number,
+  outputCount: number,
+  cachedCount: number,
+): string => `${formatCompactDuration(averageMs)} p=${outputCount} n=${count} c=${cachedCount}`;
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,

@@ -67,6 +67,8 @@ export interface StudyTimingStats {
   readonly id: string;
   totalMs: number;
   count: number;
+  freshCount: number;
+  cachedCount: number;
   maxMs: number;
   lastMs: number;
   outputCount: number;
@@ -334,6 +336,7 @@ export const onDashboardStudyTiming = (
     readonly durationMs: number;
     readonly group?: 'view' | 'detector';
     readonly outputCount?: number;
+    readonly cached?: boolean;
   },
 ): void => {
   if (!event.id.trim() || !Number.isFinite(event.durationMs) || event.durationMs < 0) return;
@@ -346,6 +349,8 @@ export const onDashboardStudyTiming = (
   if (existing) {
     existing.totalMs += event.durationMs;
     existing.count += 1;
+    if (event.cached) existing.cachedCount += 1;
+    else existing.freshCount += 1;
     existing.maxMs = Math.max(existing.maxMs, event.durationMs);
     existing.lastMs = event.durationMs;
     existing.outputCount += outputCount;
@@ -355,6 +360,8 @@ export const onDashboardStudyTiming = (
     id: event.id,
     totalMs: event.durationMs,
     count: 1,
+    freshCount: event.cached ? 0 : 1,
+    cachedCount: event.cached ? 1 : 0,
     maxMs: event.durationMs,
     lastMs: event.durationMs,
     outputCount,

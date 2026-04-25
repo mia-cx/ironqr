@@ -438,6 +438,12 @@ function makeImageProcessingStudyPlugin(input: {
       decode: config.decode,
       metrics: 'materialization,proposal,signals,stats,fusion,decode',
     }),
+    readCachedAsset: async ({ asset, config, cache, signal, log }) => {
+      if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
+      return config.focus === 'binary-prefilter-signals'
+        ? readCachedDetectorAssetResult(asset, config, cache, log)
+        : null;
+    },
     runAsset: async ({ asset, config, cache, signal, log }) => {
       if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
       if (config.focus === 'binary-prefilter-signals') {
@@ -624,8 +630,9 @@ const logStudyTiming = (
   durationMs: number,
   group: 'view' | 'detector' = 'view',
   outputCount = 0,
+  cached = false,
 ): void => {
-  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs, group, outputCount })}`);
+  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs, group, outputCount, cached })}`);
 };
 
 const logFinderDetectorTimings = (
@@ -729,6 +736,22 @@ const readCachedDetectorAssetResult = async (
     if (!floodControl || !matcherControl) return null;
     floodControlMs += floodControl.durationMs;
     matcherControlMs += matcherControl.durationMs;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'inline', 'flood'),
+      floodControl.durationMs,
+      'detector',
+      floodControl.outputCount,
+      true,
+    );
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'run-map', 'matcher'),
+      matcherControl.durationMs,
+      'detector',
+      matcherControl.outputCount,
+      true,
+    );
 
     for (const candidate of FLOOD_CANDIDATES) {
       const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
@@ -736,6 +759,14 @@ const readCachedDetectorAssetResult = async (
       mergeDetectorVariant(
         floodVariants,
         compareVariant(candidate.id, 'flood', floodControl.signature, measured, candidate.note),
+      );
+      logStudyTiming(
+        log,
+        detectorTimingId(viewId, candidate.id, 'flood'),
+        measured.durationMs,
+        'detector',
+        measured.outputCount,
+        true,
       );
     }
     for (const candidate of MATCHER_CANDIDATES) {
@@ -750,6 +781,14 @@ const readCachedDetectorAssetResult = async (
           measured,
           candidate.note,
         ),
+      );
+      logStudyTiming(
+        log,
+        detectorTimingId(viewId, candidate.id, 'matcher'),
+        measured.durationMs,
+        'detector',
+        measured.outputCount,
+        true,
       );
     }
   }
