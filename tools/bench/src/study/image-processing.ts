@@ -448,7 +448,7 @@ function makeImageProcessingStudyPlugin(input: {
       if (config.focus !== 'binary-prefilter-signals') return null;
       if (!redundantDetectorCachePurged) {
         redundantDetectorCachePurged = true;
-        log('detector cache purge starting: scanning inactive pattern rows');
+        log('detector cache purge starting: scanning binned pattern rows');
         await purgeRedundantDetectorCacheRows(cache, log);
       }
       return readCachedDetectorAssetResult(asset, config, cache, log);
@@ -458,7 +458,7 @@ function makeImageProcessingStudyPlugin(input: {
       if (config.focus === 'binary-prefilter-signals') {
         if (!redundantDetectorCachePurged) {
           redundantDetectorCachePurged = true;
-          log('detector cache purge starting: scanning inactive pattern rows');
+          log('detector cache purge starting: scanning binned pattern rows');
           await purgeRedundantDetectorCacheRows(cache, log);
         }
         const cached = await readCachedDetectorAssetResult(asset, config, cache, log);
@@ -708,6 +708,13 @@ const detectorStudyViewIds = (config: ImageProcessingConfig): readonly BinaryVie
 const activeDetectorPatternIds = (): readonly string[] => [
   'inline-flood',
   'run-map',
+  ...ACTIVE_FLOOD_CANDIDATES.map((candidate) => candidate.id),
+  ...ACTIVE_MATCHER_CANDIDATES.map((candidate) => candidate.id),
+];
+
+const retainedDetectorPatternIds = (): readonly string[] => [
+  'inline-flood',
+  'run-map',
   ...FLOOD_CANDIDATES.map((candidate) => candidate.id),
   ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
 ];
@@ -764,7 +771,7 @@ const readCachedDetectorAssetResult = async (
       true,
     );
 
-    for (const candidate of FLOOD_CANDIDATES) {
+    for (const candidate of ACTIVE_FLOOD_CANDIDATES) {
       const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
       if (!measured) return null;
       mergeDetectorVariant(
@@ -780,7 +787,7 @@ const readCachedDetectorAssetResult = async (
         true,
       );
     }
-    for (const candidate of MATCHER_CANDIDATES) {
+    for (const candidate of ACTIVE_MATCHER_CANDIDATES) {
       const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
       if (!measured) return null;
       mergeDetectorVariant(
@@ -838,7 +845,7 @@ const purgeRedundantDetectorCacheRows = async (
   cache: Pick<StudyCacheHandle, 'purge'>,
   log: (message: string) => void,
 ): Promise<void> => {
-  const activeIds = new Set(activeDetectorPatternIds());
+  const activeIds = new Set(retainedDetectorPatternIds());
   const activeVariantIds = [...activeIds].flatMap((variantId) => [
     variantId,
     ...(LEGACY_VARIANT_IDS[variantId] ?? []),
@@ -860,8 +867,8 @@ const purgeRedundantDetectorCacheRows = async (
   const elapsed = round(performance.now() - startedAt);
   log(
     purged > 0
-      ? `detector cache purge complete: removed ${purged} inactive pattern rows in ${elapsed}ms`
-      : `detector cache purge complete: no inactive pattern rows found in ${elapsed}ms`,
+      ? `detector cache purge complete: removed ${purged} binned pattern rows in ${elapsed}ms`
+      : `detector cache purge complete: no binned pattern rows found in ${elapsed}ms`,
   );
 };
 
@@ -960,6 +967,8 @@ const FLOOD_CANDIDATES = [
   { id: 'run-length-ccl', note: 'Run-length connected components prototype.' },
 ] as const;
 
+const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = [];
+
 const MATCHER_CANDIDATES = [
   {
     id: 'run-pattern',
@@ -974,6 +983,8 @@ const MATCHER_CANDIDATES = [
     note: 'Shared run-pattern artifact prototype feeding matcher enumeration.',
   },
 ] as const;
+
+const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] = [];
 
 const measureVariant = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
@@ -1388,7 +1399,7 @@ const measureFloodCandidateVariants = async (
       control.cached,
     );
 
-    for (const candidate of FLOOD_CANDIDATES) {
+    for (const candidate of ACTIVE_FLOOD_CANDIDATES) {
       const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
         if (candidate.id === 'spatial-bin') {
           return floodWithSpatialBins(labelDenseComponents(view));
@@ -1470,7 +1481,7 @@ const measureMatcherCandidateVariants = async (
       control.cached,
     );
 
-    for (const candidate of MATCHER_CANDIDATES) {
+    for (const candidate of ACTIVE_MATCHER_CANDIDATES) {
       const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
         if (candidate.id === 'axis-intersect') {
           return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));

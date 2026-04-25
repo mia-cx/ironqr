@@ -101,18 +101,25 @@ The first implementation was intentionally broad and exploratory: passive binary
 
 ## Active variants
 
-| Variant id                             | Area          | Control                   | Status                                               |
-| -------------------------------------- | ------------- | ------------------------- | ---------------------------------------------------- |
-| `inline-flood`    | Flood         | —              | Current running flood lead.                          |
-| `run-map`         | Matcher       | —              | Current running matcher lead.                        |
-| `run-length-ccl`  | Flood         | `inline-flood` | Wired runnable prototype; measured by variant cache. |
-| `dense-stats`     | Flood         | `inline-flood` | Wired runnable prototype; measured by variant cache. |
-| `spatial-bin`     | Flood         | `inline-flood` | Wired runnable prototype; measured by variant cache. |
-| `run-pattern`     | Matcher       | `run-map`      | Wired runnable prototype; measured by variant cache. |
-| `axis-intersect`  | Matcher       | `run-map`      | Wired runnable prototype; measured by variant cache. |
-| `shared-runs`     | Flood+Matcher | both leads     | Wired runnable prototype; measured by variant cache. |
+| Variant id      | Area    | Compared to | Status                       |
+| --------------- | ------- | ----------- | ---------------------------- |
+| `inline-flood`  | Flood   | —           | Current running flood lead.  |
+| `run-map`       | Matcher | —           | Current running matcher lead. |
 
-Active candidate means “included in the default detector-study run and summary matrices.” These are canonical study ids, not just display labels; they intentionally avoid `control` because today's lead can be replaced by a faster equivalent variant. Dashboard/cache pattern ids additionally abbreviate detector family and view parts: `flood→f`, `matcher→m`, `otsu→o`, `sauvola→s`, `hybrid→h`, `normal→n`, and `inverted→i`. The variant cache lets each candidate be measured independently while cached leads are reused.
+Current phase is lead-only cache warmup. Runnable candidates below remain implemented and cache-retained, but are disabled from default execution until the control cache is complete.
+
+## Disabled runnable variants
+
+| Variant id        | Area          | Compared to     | Status                                  |
+| ----------------- | ------------- | --------------- | --------------------------------------- |
+| `run-length-ccl`  | Flood         | `inline-flood`  | Disabled; cache rows are retained.      |
+| `dense-stats`     | Flood         | `inline-flood`  | Disabled; cache rows are retained.      |
+| `spatial-bin`     | Flood         | `inline-flood`  | Disabled; cache rows are retained.      |
+| `run-pattern`     | Matcher       | `run-map`       | Disabled; cache rows are retained.      |
+| `axis-intersect`  | Matcher       | `run-map`       | Disabled; cache rows are retained.      |
+| `shared-runs`     | Flood+Matcher | both leads      | Disabled; cache rows are retained.      |
+
+Active candidate means “included in the default detector-study run and summary matrices.” Disabled means “implemented and retained in cache, but not currently queued.” Binned means “excluded and purged from cache.” These are canonical study ids, not just display labels; they intentionally avoid `control` because today's lead can be replaced by a faster equivalent variant. Dashboard/cache pattern ids additionally abbreviate detector family and view parts: `flood→f`, `matcher→m`, `otsu→o`, `sauvola→s`, `hybrid→h`, `normal→n`, and `inverted→i`.
 
 ## Binned / empirically exhausted variants
 

@@ -289,7 +289,7 @@ const buildStudyHeadline = (
   const floodMs = detectorBreakdown.floodMs ?? 0;
   const floodControlMs = numberField(totals, 'floodControlMs');
   if (floodControlMs > 0) {
-    return `Detector=${formatMs(detectorMs)}; inline flood control=${formatMs(floodControlMs)}; activeCandidates=0.`;
+    return `Detector=${formatMs(detectorMs)}; inline-flood lead=${formatMs(floodControlMs)}; activeCandidates=0.`;
   }
   const matcherMs = numberField(totals, 'matcherControlMs');
   const legacyMs = numberField(totals, 'matcherLegacyControlMs');
@@ -461,7 +461,7 @@ const buildStudyConclusions = (
     'No exhausted legacy flood, filtered flood, or center-signal matcher variants are active in this study phase.',
   );
   conclusions.push(
-    'Active runnable candidates are run-length-ccl, dense-stats, spatial-bin, run-pattern, axis-intersect, and shared-runs.',
+    'Current run phase is lead-only cache warmup: active detector execution is inline-flood plus run-map; candidate variants are retained in the ledger but disabled by default.',
   );
   conclusions.push(
     'Decode success and false-positive impact remain out of scope for this detector-evidence report.',
@@ -481,7 +481,7 @@ const buildQuestionCoverage = (
       {
         question: 'What is the current detector control baseline?',
         status: 'answered-for-control-with-active-candidates',
-        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidates=6`,
+        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidates=0 leadOnlyCacheWarmup=true`,
       },
       {
         question: 'Do flood variants prove decode success or false positives?',
