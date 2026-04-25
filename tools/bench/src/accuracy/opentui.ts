@@ -31,6 +31,7 @@ const TABLE_LAYOUT_RESERVED_ROWS = 26;
 const RECENT_LAYOUT_RESERVED_ROWS = 24;
 const PROGRESS_BAR_WIDTH = 56;
 const DASHBOARD_REFRESH_INTERVAL_MS = 250;
+const TABLE_ROW_FILL_SLACK = 6;
 
 const panelBodyRows = (panelRows: number): number =>
   Math.max(0, panelRows - PANEL_BORDER_ROWS - PANEL_TITLE_ROWS - PANEL_BODY_BOTTOM_GUTTER_ROWS);
@@ -518,8 +519,14 @@ export class BenchOpenTuiDashboard {
       this.dashboard.commandName === 'study'
         ? Math.max(40, rightWidth - legendWidth - 8)
         : rightWidth;
-    const fallbackTableRows = Math.max(4, Math.floor((height - TABLE_LAYOUT_RESERVED_ROWS) / 2));
-    const fallbackRecentRows = Math.max(4, height - RECENT_LAYOUT_RESERVED_ROWS);
+    const fallbackTableRows = Math.max(
+      4,
+      Math.floor((height - TABLE_LAYOUT_RESERVED_ROWS) / 2) + TABLE_ROW_FILL_SLACK,
+    );
+    const fallbackRecentRows = Math.max(
+      4,
+      height - RECENT_LAYOUT_RESERVED_ROWS + TABLE_ROW_FILL_SLACK,
+    );
     const tableRows = fallbackTableRows;
     const recentRows = fallbackRecentRows;
     const eventRows = fallbackRecentRows;
