@@ -1144,9 +1144,7 @@ const FLOOD_CANDIDATES = [
 ] as const;
 
 const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] =
-  FLOOD_CANDIDATES.filter(
-    (candidate) => candidate.id !== 'spatial-bin' && candidate.id !== 'run-length-ccl',
-  );
+  FLOOD_CANDIDATES.filter((candidate) => candidate.id === 'scanline-squared');
 
 const MATCHER_CANDIDATES = [
   {
