@@ -157,14 +157,14 @@ export const createBenchProgressReporter = (options: {
       const studyTiming = parseStudyTimingMessage(message);
       if (studyTiming) {
         onBenchRunStudyTiming(dashboard, studyTiming);
+        if (!studyTiming.cached) {
+          pushStudyEvent(dashboard, formatStudyTimingEvent(studyTiming));
+        }
         queueRender();
         return;
       }
       dashboard.message = `${options.commandName}: ${message}`;
-      dashboard.studyEvents.push(message);
-      if (dashboard.studyEvents.length > 500) {
-        dashboard.studyEvents.splice(0, dashboard.studyEvents.length - 500);
-      }
+      pushStudyEvent(dashboard, message);
       queueRender();
     },
     requestStop: () => {
@@ -179,6 +179,33 @@ export const createBenchProgressReporter = (options: {
       stopped = true;
     },
   };
+};
+
+const pushStudyEvent = (dashboard: { readonly studyEvents: string[] }, message: string): void => {
+  dashboard.studyEvents.push(message);
+  if (dashboard.studyEvents.length > 500) {
+    dashboard.studyEvents.splice(0, dashboard.studyEvents.length - 500);
+  }
+};
+
+const formatStudyTimingEvent = (event: {
+  readonly id: string;
+  readonly durationMs: number;
+  readonly group?: 'view' | 'detector';
+  readonly outputCount?: number;
+}): string => {
+  const group = event.group ?? 'study';
+  const output = event.outputCount === undefined ? '' : ` outputs=${event.outputCount}`;
+  return `${group} ${event.id} ${formatStudyTimingDuration(event.durationMs)}${output}`;
+};
+
+const formatStudyTimingDuration = (durationMs: number): string => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return '-';
+  if (durationMs < 1_000) return `${Math.round(durationMs * 10) / 10}ms`;
+  if (durationMs < 60_000) return `${Math.round(durationMs / 100) / 10}s`;
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1_000);
+  return `${minutes}m${String(seconds).padStart(2, '0')}s`;
 };
 
 const parseStudyTimingMessage = (
