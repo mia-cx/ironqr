@@ -49,7 +49,13 @@ export const renderSlowestFreshScans = (
     truncate('#  engine     time      outcome      asset', width),
   ];
   if (rows.length === 0) {
-    lines.push(truncate('none yet', width));
+    const cachedRecent = model.recentScans.filter((scan) => scan.result.cached).length;
+    lines.push(
+      truncate(
+        cachedRecent > 0 ? `no fresh units yet; ${cachedRecent} recent cache hits` : 'none yet',
+        width,
+      ),
+    );
     return lines;
   }
 

@@ -793,7 +793,9 @@ const readCachedDetectorAssetResult = async (
     }
   }
 
-  log(`${asset.id}: detector cache hit; no variant work queued`);
+  log(
+    `${asset.id}: cache replayed ${requiredIds.length * viewIds.length} detector pattern rows; no variant work queued`,
+  );
   return {
     cacheHit: true,
     assetId: asset.id,
@@ -1322,9 +1324,10 @@ const measureFloodCandidateVariants = async (
     logStudyTiming(
       log,
       detectorTimingId(viewId, 'inline', 'flood'),
-      control.cached ? 0 : control.measurement.durationMs,
+      control.measurement.durationMs,
       'detector',
       control.measurement.outputCount,
+      control.cached,
     );
 
     for (const candidate of FLOOD_CANDIDATES) {
@@ -1350,11 +1353,14 @@ const measureFloodCandidateVariants = async (
       logStudyTiming(
         log,
         detectorTimingId(viewId, candidate.id, 'flood'),
-        measured.cached ? 0 : measured.measurement.durationMs,
+        measured.measurement.durationMs,
         'detector',
         measured.measurement.outputCount,
+        measured.cached,
       );
-      log(`${assetId}: flood ${candidate.id} ${viewId} p=${measured.measurement.outputCount}`);
+      log(
+        `${assetId}: flood ${candidate.id} ${viewId} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
+      );
       await yieldToDashboard();
     }
   }
@@ -1400,9 +1406,10 @@ const measureMatcherCandidateVariants = async (
     logStudyTiming(
       log,
       detectorTimingId(viewId, 'run-map', 'matcher'),
-      control.cached ? 0 : control.measurement.durationMs,
+      control.measurement.durationMs,
       'detector',
       control.measurement.outputCount,
+      control.cached,
     );
 
     for (const candidate of MATCHER_CANDIDATES) {
@@ -1431,11 +1438,14 @@ const measureMatcherCandidateVariants = async (
       logStudyTiming(
         log,
         detectorTimingId(viewId, candidate.id, 'matcher'),
-        measured.cached ? 0 : measured.measurement.durationMs,
+        measured.measurement.durationMs,
         'detector',
         measured.measurement.outputCount,
+        measured.cached,
       );
-      log(`${assetId}: matcher ${candidate.id} ${viewId} p=${measured.measurement.outputCount}`);
+      log(
+        `${assetId}: matcher ${candidate.id} ${viewId} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
+      );
       await yieldToDashboard();
     }
   }
