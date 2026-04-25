@@ -89,7 +89,7 @@ Report fitness notes:
 - The run is not a decode-capability or prefilter-safety proof because `decode=false`; it cannot report lost positives or false positives for a future gating policy.
 - The run still does not fully match the original designed experiment because signal rows are not joined to exhaustive `view-proposals` trace outcomes. It lacks ranked proposal score, structure pass/fail, decode success, and false-positive outcomes per signal row.
 - Inverted entries are polarity paths/signals over shared threshold planes, not separately materialized inverted planes.
-- The next study iteration removes the old materialized-inverted (`a`) and shared-run-artifact (`b`) candidates; those answered the XOR/polarity-read question. The active candidate set now targets matcher speedups directly.
+- The next study iteration removes the old materialized-inverted (`a`) and shared-run-artifact (`b`) candidates; those answered the XOR/polarity-read question. The active candidate set now targets matcher speedups directly and expands to legacy/run-map controls plus legacy/run-map versions of center pruning, row/flood seeding, and fused-polarity traversal.
 
 Question coverage:
 
@@ -133,10 +133,14 @@ Active matcher-candidate study revision:
 
 | Variant id | Purpose | Behavior-equivalent? | Notes |
 | --- | --- | --- | --- |
-| `matcher-run-map-crosscheck` | Default production matcher control: row/column run-map-backed cross-checks replace repeated pixel walking. | Yes | Promoted after 25-asset equality evidence (`0` mismatched views). Future runs use this as control, not an extra candidate. |
-| `matcher-candidate-pruning-prototype` | Run the run-map matcher with cheap local center-signal filtering and compare finder output signatures to control. | Yes, study-enforced | Candidate `b`; report includes sampled centers, survivors, output equality, and mismatch counts. |
-| `matcher-seeded-rescue-estimate` | Count how many row-scan/flood finder centers could seed matcher refinement/rescue. | No, evidence-count only | Keeps the stylized-QR rescue question visible without pretending to time an implementation. |
-| `matcher-fused-polarity-traversal-prototype` | Measure one shared-plane traversal that classifies normal-dark and inverted-dark centers together. | No | Candidate `d`; answers whether normal+inverted fusion is worth deeper work. |
+| `legacy-matcher-control` | Legacy pixel-walk cross-check matcher control measured against the current run-map control. | Yes, study-enforced | Reintroduced for full-corpus regression checks after run-map promotion. |
+| `run-map-matcher-control` | Default production matcher control: row/column run-map-backed cross-checks replace repeated pixel walking. | Yes | Promoted after 25-asset equality evidence (`0` mismatched views). |
+| `legacy-center-pruned-matcher-prototype` | Legacy matcher with cheap local center-signal filtering. | Yes, study-enforced | Confirms whether pruning behavior changes independently of run-map cross-checks. |
+| `legacy-row-flood-seeded-matcher-prototype` | Legacy matcher run around row-scan/flood finder centers. | Yes, study-enforced | Output-producing rescue-order candidate. |
+| `legacy-fused-polarity-matcher-prototype` | Legacy matcher in one shared-plane normal+inverted traversal. | Yes, study-enforced | Checks fused traversal without run-map cross-check behavior. |
+| `run-map-center-pruned-matcher-prototype` | Run-map matcher with cheap local center-signal filtering. | Yes, study-enforced | Reports sampled centers, survivors, output equality, and mismatch counts. |
+| `run-map-row-flood-seeded-matcher-prototype` | Run-map matcher run around row-scan/flood finder centers. | Yes, study-enforced | Output-producing rescue-order candidate. |
+| `run-map-fused-polarity-matcher-prototype` | Run-map matcher in one shared-plane normal+inverted traversal. | Yes, study-enforced | Answers whether normal+inverted fusion is worth deeper work under the production matcher. |
 
 ## Matcher refinement checkpoint
 
@@ -259,7 +263,7 @@ The strongest predictors in this run were deduped finder count, matcher finder c
 
 The retired materialized-inverted candidate answered the immediate XOR-vs-interaction question for the smoke sample: materializing inverted buffers reduced inverted detector+materialization time by only 3.5% while preserving finder/proposal counts. That suggests polarity-read/XOR overhead is not the main cause of inverted cost. Most of the cost appears to come from matcher interaction with inverted semantics and repeated detector traversal.
 
-The active candidate set now focuses on matcher-specific implementation shapes: cheap center pruning on top of the run-map matcher, row/flood seeded rescue, and fused normal+inverted traversal over the shared threshold plane. Run-map-backed cross-checks are now the default matcher control after output-equality evidence. The center-pruning candidate is output-producing and compares finder signatures to the control matcher. Seeded rescue and fused polarity traversal remain prototype/headroom measurements until they produce matcher finder lists and prove finder/proposal equivalence.
+The active candidate set now focuses on matcher-specific implementation shapes across both cross-check implementations: legacy and run-map controls, plus center pruning, row/flood seeded rescue, and fused normal+inverted traversal for each control family. Run-map-backed cross-checks are now the default matcher control after output-equality evidence, but the legacy control remains in the study so a full run can catch proposal/cluster detection regressions caused by the matcher promotion. All active matcher candidates emit finder lists and compare signatures against the current run-map control.
 
 `binaryViewMs` remains effectively zero compared with detector time, confirming that inverted view identities are cheap proxies. Optimization should target detector traversal/artifact reuse, not binary-view wrapper construction.
 
@@ -308,7 +312,7 @@ Full refined experiment still needed for prefilter gating:
 
 Do not ship production prefilter gating from this run. Required next evidence:
 
-- rerun `binary-prefilter-signals` after the run-map matcher promotion to quantify the new control cost across the same 25-asset sample and the full corpus;
+- rerun `binary-prefilter-signals` after the matcher variant expansion to compare legacy and run-map controls across the full corpus;
 - rerun `view-proposals` so proposal ranking, structure, cluster, and decode outcomes are measured against the faster matcher default;
 - if center pruning is revisited, report both a fast-first candidate and a fallback-to-full-matcher candidate so speed and output equivalence are evaluated together;
 - make fused polarity traversal output-producing before using it for a production decision: it must emit finder lists for normal and inverted views and prove equality against the default matcher;

@@ -13,6 +13,10 @@ import {
   detectMatcherFinders,
   detectMatcherFindersForSharedPolarities,
   detectMatcherFindersFromSeeds,
+  detectMatcherFindersLegacy,
+  detectMatcherFindersLegacyForSharedPolarities,
+  detectMatcherFindersLegacyFromSeeds,
+  detectMatcherFindersLegacyWithCenterSignal,
   detectMatcherFindersWithCenterSignal,
   detectRowScanFinders,
   type FinderEvidence,
@@ -125,18 +129,30 @@ interface BinaryReadMeasurement {
 
 interface MatcherCandidateMeasurement {
   readonly controlMatcherMs: number;
+  readonly legacyControlMs: number;
+  readonly legacyControlOutputsEqual: boolean;
+  readonly legacyControlMismatchCount: number;
   readonly runMapMs: number;
   readonly prunedCenterMs: number;
+  readonly legacyPrunedCenterMs: number;
   readonly runMapOutputsEqual: boolean;
   readonly prunedCenterOutputsEqual: boolean;
+  readonly legacyPrunedCenterOutputsEqual: boolean;
   readonly runMapMismatchCount: number;
   readonly prunedCenterMismatchCount: number;
+  readonly legacyPrunedCenterMismatchCount: number;
   readonly seededMatcherMs: number;
+  readonly legacySeededMatcherMs: number;
   readonly fusedPolarityMs: number;
+  readonly legacyFusedPolarityMs: number;
   readonly seededMatcherOutputsEqual: boolean;
+  readonly legacySeededMatcherOutputsEqual: boolean;
   readonly fusedPolarityOutputsEqual: boolean;
+  readonly legacyFusedPolarityOutputsEqual: boolean;
   readonly seededMatcherMismatchCount: number;
+  readonly legacySeededMatcherMismatchCount: number;
   readonly fusedPolarityMismatchCount: number;
+  readonly legacyFusedPolarityMismatchCount: number;
   readonly seededMatcherEstimatedCenters: number;
   readonly sampledCenterCount: number;
   readonly prunedCenterCount: number;
@@ -193,18 +209,30 @@ interface ImageProcessingTotals {
   readonly binaryReadDirectMs: number;
   readonly binaryReadPixels: number;
   readonly matcherControlMs: number;
+  readonly matcherLegacyControlMs: number;
+  readonly matcherLegacyControlOutputsEqual: boolean;
+  readonly matcherLegacyControlMismatchCount: number;
   readonly matcherRunMapMs: number;
   readonly matcherPrunedCenterMs: number;
+  readonly matcherLegacyPrunedCenterMs: number;
   readonly matcherRunMapOutputsEqual: boolean;
   readonly matcherPrunedCenterOutputsEqual: boolean;
+  readonly matcherLegacyPrunedCenterOutputsEqual: boolean;
   readonly matcherRunMapMismatchCount: number;
   readonly matcherPrunedCenterMismatchCount: number;
+  readonly matcherLegacyPrunedCenterMismatchCount: number;
   readonly matcherSeededMs: number;
+  readonly matcherLegacySeededMs: number;
   readonly matcherFusedPolarityMs: number;
+  readonly matcherLegacyFusedPolarityMs: number;
   readonly matcherSeededOutputsEqual: boolean;
+  readonly matcherLegacySeededOutputsEqual: boolean;
   readonly matcherFusedPolarityOutputsEqual: boolean;
+  readonly matcherLegacyFusedPolarityOutputsEqual: boolean;
   readonly matcherSeededMismatchCount: number;
+  readonly matcherLegacySeededMismatchCount: number;
   readonly matcherFusedPolarityMismatchCount: number;
+  readonly matcherLegacyFusedPolarityMismatchCount: number;
   readonly matcherSeededEstimatedCenters: number;
   readonly matcherSampledCenterCount: number;
   readonly matcherPrunedCenterCount: number;
@@ -604,22 +632,34 @@ const measureMatcherCandidateVariants = async (
     0,
   );
   const runMapMs = 0;
+  let legacyControlMs = 0;
   let prunedCenterMs = 0;
+  let legacyPrunedCenterMs = 0;
   let seededMatcherMs = 0;
+  let legacySeededMatcherMs = 0;
   let fusedPolarityMs = 0;
+  let legacyFusedPolarityMs = 0;
   let seededMatcherEstimatedCenters = 0;
   let sampledCenterCount = 0;
   let prunedCenterCount = 0;
   let fusedDarkCenterCount = 0;
   let fusedLightCenterCount = 0;
   const runMapOutputsEqual = true;
+  let legacyControlOutputsEqual = true;
   let prunedCenterOutputsEqual = true;
+  let legacyPrunedCenterOutputsEqual = true;
   let seededMatcherOutputsEqual = true;
+  let legacySeededMatcherOutputsEqual = true;
   let fusedPolarityOutputsEqual = true;
+  let legacyFusedPolarityOutputsEqual = true;
   const runMapMismatchCount = 0;
+  let legacyControlMismatchCount = 0;
   let prunedCenterMismatchCount = 0;
+  let legacyPrunedCenterMismatchCount = 0;
   let seededMatcherMismatchCount = 0;
+  let legacySeededMatcherMismatchCount = 0;
   let fusedPolarityMismatchCount = 0;
+  let legacyFusedPolarityMismatchCount = 0;
 
   for (const summary of controlSummaries) {
     seededMatcherEstimatedCenters +=
@@ -629,11 +669,45 @@ const measureMatcherCandidateVariants = async (
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
     const controlOutput = detectMatcherFinders(view, view.width, view.height);
+    const legacyStartedAt = performance.now();
+    const legacyOutput = detectMatcherFindersLegacy(view, view.width, view.height);
+    const legacyElapsed = performance.now() - legacyStartedAt;
+    legacyControlMs += legacyElapsed;
+    const legacyEqual = finderOutputsEqual(controlOutput, legacyOutput);
+    legacyControlOutputsEqual &&= legacyEqual;
+    if (!legacyEqual) legacyControlMismatchCount += 1;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'lc', 'legacy-control'),
+      legacyElapsed,
+      'detector',
+      legacyOutput.length,
+    );
 
     const seeds = [
       ...detectRowScanFinders(view, view.width, view.height),
       ...detectFloodFinders(view, view.width, view.height),
     ];
+    const legacySeededStartedAt = performance.now();
+    const legacySeededOutput = detectMatcherFindersLegacyFromSeeds(
+      view,
+      view.width,
+      view.height,
+      seeds,
+    );
+    const legacySeededElapsed = performance.now() - legacySeededStartedAt;
+    legacySeededMatcherMs += legacySeededElapsed;
+    const legacySeededEqual = finderOutputsEqual(controlOutput, legacySeededOutput);
+    legacySeededMatcherOutputsEqual &&= legacySeededEqual;
+    if (!legacySeededEqual) legacySeededMatcherMismatchCount += 1;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'le', 'seeded-matcher'),
+      legacySeededElapsed,
+      'detector',
+      legacySeededOutput.length,
+    );
+
     const seededStartedAt = performance.now();
     const seededOutput = detectMatcherFindersFromSeeds(view, view.width, view.height, seeds);
     const seededElapsed = performance.now() - seededStartedAt;
@@ -647,6 +721,25 @@ const measureMatcherCandidateVariants = async (
       seededElapsed,
       'detector',
       seededOutput.length,
+    );
+
+    const legacyPrunedStartedAt = performance.now();
+    const legacyPrunedOutput = detectMatcherFindersLegacyWithCenterSignal(
+      view,
+      view.width,
+      view.height,
+    );
+    const legacyPrunedElapsed = performance.now() - legacyPrunedStartedAt;
+    legacyPrunedCenterMs += legacyPrunedElapsed;
+    const legacyPrunedEqual = finderOutputsEqual(controlOutput, legacyPrunedOutput);
+    legacyPrunedCenterOutputsEqual &&= legacyPrunedEqual;
+    if (!legacyPrunedEqual) legacyPrunedCenterMismatchCount += 1;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'lb', 'pruned-matcher'),
+      legacyPrunedElapsed,
+      'detector',
+      legacyPrunedOutput.length,
     );
 
     const prunedStartedAt = performance.now();
@@ -667,7 +760,7 @@ const measureMatcherCandidateVariants = async (
       prunedOutput.length,
     );
     log(
-      `${assetId}: matcher output candidates ${viewId} seededEqual=${seededEqual} prunedEqual=${prunedEqual}`,
+      `${assetId}: matcher output candidates ${viewId} legacyEqual=${legacyEqual} legacySeededEqual=${legacySeededEqual} seededEqual=${seededEqual} legacyPrunedEqual=${legacyPrunedEqual} prunedEqual=${prunedEqual}`,
     );
     await yieldToDashboard();
   }
@@ -680,6 +773,33 @@ const measureMatcherCandidateVariants = async (
     if (!viewIds.includes(normalViewId) || !viewIds.includes(invertedViewId)) continue;
     const normalView = viewBank.getBinaryView(normalViewId);
     const invertedView = viewBank.getBinaryView(invertedViewId);
+    const normalControl = detectMatcherFinders(normalView, normalView.width, normalView.height);
+    const invertedControl = detectMatcherFinders(
+      invertedView,
+      invertedView.width,
+      invertedView.height,
+    );
+
+    const legacyFusedStartedAt = performance.now();
+    const legacyFusedOutput = detectMatcherFindersLegacyForSharedPolarities(
+      normalView,
+      invertedView,
+    );
+    const legacyFusedElapsed = performance.now() - legacyFusedStartedAt;
+    legacyFusedPolarityMs += legacyFusedElapsed;
+    const legacyNormalEqual = finderOutputsEqual(normalControl, legacyFusedOutput.normal);
+    const legacyInvertedEqual = finderOutputsEqual(invertedControl, legacyFusedOutput.inverted);
+    legacyFusedPolarityOutputsEqual &&= legacyNormalEqual && legacyInvertedEqual;
+    if (!legacyNormalEqual) legacyFusedPolarityMismatchCount += 1;
+    if (!legacyInvertedEqual) legacyFusedPolarityMismatchCount += 1;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'ld', 'fused-polarity'),
+      legacyFusedElapsed,
+      'detector',
+      legacyFusedOutput.normal.length + legacyFusedOutput.inverted.length,
+    );
+
     const fusedStartedAt = performance.now();
     const fusedOutput = detectMatcherFindersForSharedPolarities(normalView, invertedView);
     const fusedElapsed = performance.now() - fusedStartedAt;
@@ -687,14 +807,8 @@ const measureMatcherCandidateVariants = async (
     const fused = measureFusedPolarityMatcherCenters(normalView);
     fusedDarkCenterCount += fused.darkCenterCount;
     fusedLightCenterCount += fused.lightCenterCount;
-    const normalEqual = finderOutputsEqual(
-      detectMatcherFinders(normalView, normalView.width, normalView.height),
-      fusedOutput.normal,
-    );
-    const invertedEqual = finderOutputsEqual(
-      detectMatcherFinders(invertedView, invertedView.width, invertedView.height),
-      fusedOutput.inverted,
-    );
+    const normalEqual = finderOutputsEqual(normalControl, fusedOutput.normal);
+    const invertedEqual = finderOutputsEqual(invertedControl, fusedOutput.inverted);
     fusedPolarityOutputsEqual &&= normalEqual && invertedEqual;
     if (!normalEqual) fusedPolarityMismatchCount += 1;
     if (!invertedEqual) fusedPolarityMismatchCount += 1;
@@ -706,30 +820,42 @@ const measureMatcherCandidateVariants = async (
       fusedOutput.normal.length + fusedOutput.inverted.length,
     );
     log(
-      `${assetId}: matcher fused-polarity candidate ${viewId} normalEqual=${normalEqual} invertedEqual=${invertedEqual}`,
+      `${assetId}: matcher fused-polarity candidates ${viewId} legacyNormalEqual=${legacyNormalEqual} legacyInvertedEqual=${legacyInvertedEqual} normalEqual=${normalEqual} invertedEqual=${invertedEqual}`,
     );
     await yieldToDashboard();
   }
 
   return {
     controlMatcherMs: round(controlMatcherMs),
+    legacyControlMs: round(legacyControlMs),
     runMapMs: round(runMapMs),
     prunedCenterMs: round(prunedCenterMs),
+    legacyPrunedCenterMs: round(legacyPrunedCenterMs),
     seededMatcherMs: round(seededMatcherMs),
+    legacySeededMatcherMs: round(legacySeededMatcherMs),
     fusedPolarityMs: round(fusedPolarityMs),
+    legacyFusedPolarityMs: round(legacyFusedPolarityMs),
     seededMatcherEstimatedCenters,
     sampledCenterCount,
     prunedCenterCount,
     fusedDarkCenterCount,
     fusedLightCenterCount,
     runMapOutputsEqual,
+    legacyControlOutputsEqual,
     prunedCenterOutputsEqual,
+    legacyPrunedCenterOutputsEqual,
     seededMatcherOutputsEqual,
+    legacySeededMatcherOutputsEqual,
     fusedPolarityOutputsEqual,
+    legacyFusedPolarityOutputsEqual,
     runMapMismatchCount,
+    legacyControlMismatchCount,
     prunedCenterMismatchCount,
+    legacyPrunedCenterMismatchCount,
     seededMatcherMismatchCount,
+    legacySeededMatcherMismatchCount,
     fusedPolarityMismatchCount,
+    legacyFusedPolarityMismatchCount,
     sharedPlaneCount: planeViewIds.length,
   };
 };
@@ -1134,20 +1260,40 @@ const summarizeImageProcessingStudy = ({
     }
     if (result.matcherCandidates) {
       totals.matcherControlMs += result.matcherCandidates.controlMatcherMs;
+      totals.matcherLegacyControlMs += result.matcherCandidates.legacyControlMs;
       totals.matcherRunMapMs += result.matcherCandidates.runMapMs;
       totals.matcherPrunedCenterMs += result.matcherCandidates.prunedCenterMs;
+      totals.matcherLegacyPrunedCenterMs += result.matcherCandidates.legacyPrunedCenterMs;
       totals.matcherSeededMs += result.matcherCandidates.seededMatcherMs;
+      totals.matcherLegacySeededMs += result.matcherCandidates.legacySeededMatcherMs;
+      totals.matcherFusedPolarityMs += result.matcherCandidates.fusedPolarityMs;
+      totals.matcherLegacyFusedPolarityMs += result.matcherCandidates.legacyFusedPolarityMs;
+      totals.matcherLegacyControlOutputsEqual &&=
+        result.matcherCandidates.legacyControlOutputsEqual;
       totals.matcherRunMapOutputsEqual &&= result.matcherCandidates.runMapOutputsEqual;
       totals.matcherPrunedCenterOutputsEqual &&= result.matcherCandidates.prunedCenterOutputsEqual;
+      totals.matcherLegacyPrunedCenterOutputsEqual &&=
+        result.matcherCandidates.legacyPrunedCenterOutputsEqual;
       totals.matcherSeededOutputsEqual &&= result.matcherCandidates.seededMatcherOutputsEqual;
+      totals.matcherLegacySeededOutputsEqual &&=
+        result.matcherCandidates.legacySeededMatcherOutputsEqual;
       totals.matcherFusedPolarityOutputsEqual &&=
         result.matcherCandidates.fusedPolarityOutputsEqual;
+      totals.matcherLegacyFusedPolarityOutputsEqual &&=
+        result.matcherCandidates.legacyFusedPolarityOutputsEqual;
+      totals.matcherLegacyControlMismatchCount +=
+        result.matcherCandidates.legacyControlMismatchCount;
       totals.matcherRunMapMismatchCount += result.matcherCandidates.runMapMismatchCount;
       totals.matcherPrunedCenterMismatchCount += result.matcherCandidates.prunedCenterMismatchCount;
+      totals.matcherLegacyPrunedCenterMismatchCount +=
+        result.matcherCandidates.legacyPrunedCenterMismatchCount;
       totals.matcherSeededMismatchCount += result.matcherCandidates.seededMatcherMismatchCount;
+      totals.matcherLegacySeededMismatchCount +=
+        result.matcherCandidates.legacySeededMatcherMismatchCount;
       totals.matcherFusedPolarityMismatchCount +=
         result.matcherCandidates.fusedPolarityMismatchCount;
-      totals.matcherFusedPolarityMs += result.matcherCandidates.fusedPolarityMs;
+      totals.matcherLegacyFusedPolarityMismatchCount +=
+        result.matcherCandidates.legacyFusedPolarityMismatchCount;
       totals.matcherSeededEstimatedCenters +=
         result.matcherCandidates.seededMatcherEstimatedCenters;
       totals.matcherSampledCenterCount += result.matcherCandidates.sampledCenterCount;
@@ -1264,18 +1410,30 @@ const emptyTotals = (): MutableTotals => ({
   binaryReadDirectMs: 0,
   binaryReadPixels: 0,
   matcherControlMs: 0,
+  matcherLegacyControlMs: 0,
   matcherRunMapMs: 0,
   matcherPrunedCenterMs: 0,
+  matcherLegacyPrunedCenterMs: 0,
   matcherSeededMs: 0,
+  matcherLegacySeededMs: 0,
   matcherFusedPolarityMs: 0,
+  matcherLegacyFusedPolarityMs: 0,
+  matcherLegacyControlOutputsEqual: true,
   matcherRunMapOutputsEqual: true,
   matcherPrunedCenterOutputsEqual: true,
+  matcherLegacyPrunedCenterOutputsEqual: true,
   matcherSeededOutputsEqual: true,
+  matcherLegacySeededOutputsEqual: true,
   matcherFusedPolarityOutputsEqual: true,
+  matcherLegacyFusedPolarityOutputsEqual: true,
+  matcherLegacyControlMismatchCount: 0,
   matcherRunMapMismatchCount: 0,
   matcherPrunedCenterMismatchCount: 0,
+  matcherLegacyPrunedCenterMismatchCount: 0,
   matcherSeededMismatchCount: 0,
+  matcherLegacySeededMismatchCount: 0,
   matcherFusedPolarityMismatchCount: 0,
+  matcherLegacyFusedPolarityMismatchCount: 0,
   matcherSeededEstimatedCenters: 0,
   matcherSampledCenterCount: 0,
   matcherPrunedCenterCount: 0,
@@ -1355,18 +1513,30 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   binaryReadDirectMs: round(totals.binaryReadDirectMs),
   binaryReadPixels: totals.binaryReadPixels,
   matcherControlMs: round(totals.matcherControlMs),
+  matcherLegacyControlMs: round(totals.matcherLegacyControlMs),
   matcherRunMapMs: round(totals.matcherRunMapMs),
   matcherPrunedCenterMs: round(totals.matcherPrunedCenterMs),
+  matcherLegacyPrunedCenterMs: round(totals.matcherLegacyPrunedCenterMs),
   matcherSeededMs: round(totals.matcherSeededMs),
+  matcherLegacySeededMs: round(totals.matcherLegacySeededMs),
   matcherFusedPolarityMs: round(totals.matcherFusedPolarityMs),
+  matcherLegacyFusedPolarityMs: round(totals.matcherLegacyFusedPolarityMs),
+  matcherLegacyControlOutputsEqual: totals.matcherLegacyControlOutputsEqual,
   matcherRunMapOutputsEqual: totals.matcherRunMapOutputsEqual,
   matcherPrunedCenterOutputsEqual: totals.matcherPrunedCenterOutputsEqual,
+  matcherLegacyPrunedCenterOutputsEqual: totals.matcherLegacyPrunedCenterOutputsEqual,
   matcherSeededOutputsEqual: totals.matcherSeededOutputsEqual,
+  matcherLegacySeededOutputsEqual: totals.matcherLegacySeededOutputsEqual,
   matcherFusedPolarityOutputsEqual: totals.matcherFusedPolarityOutputsEqual,
+  matcherLegacyFusedPolarityOutputsEqual: totals.matcherLegacyFusedPolarityOutputsEqual,
+  matcherLegacyControlMismatchCount: totals.matcherLegacyControlMismatchCount,
   matcherRunMapMismatchCount: totals.matcherRunMapMismatchCount,
   matcherPrunedCenterMismatchCount: totals.matcherPrunedCenterMismatchCount,
+  matcherLegacyPrunedCenterMismatchCount: totals.matcherLegacyPrunedCenterMismatchCount,
   matcherSeededMismatchCount: totals.matcherSeededMismatchCount,
+  matcherLegacySeededMismatchCount: totals.matcherLegacySeededMismatchCount,
   matcherFusedPolarityMismatchCount: totals.matcherFusedPolarityMismatchCount,
+  matcherLegacyFusedPolarityMismatchCount: totals.matcherLegacyFusedPolarityMismatchCount,
   matcherSeededEstimatedCenters: totals.matcherSeededEstimatedCenters,
   matcherSampledCenterCount: totals.matcherSampledCenterCount,
   matcherPrunedCenterCount: totals.matcherPrunedCenterCount,
@@ -1411,50 +1581,110 @@ const buildVariantSummaries = (
   const variants: ImageProcessingVariantSummary[] = [];
   if (config.focus === 'binary-prefilter-signals' && totals.matcherControlMs > 0) {
     variants.push({
-      id: 'matcher-candidate-pruning-prototype',
-      title: 'Center-pruned run-map matcher prototype',
-      controlMetric: 'current matcher detector duration',
-      candidateMetric:
-        'output-producing run-map matcher guarded by cheap local center-signal filter',
-      controlMs: totals.matcherControlMs,
-      candidateMs: totals.matcherPrunedCenterMs,
-      deltaMs: round(totals.matcherControlMs - totals.matcherPrunedCenterMs),
-      improvementPct: percent(
-        totals.matcherControlMs - totals.matcherPrunedCenterMs,
-        totals.matcherControlMs,
-      ),
-      evidence: `finder outputs equal=${totals.matcherPrunedCenterOutputsEqual}; mismatched views=${totals.matcherPrunedCenterMismatchCount}; ${totals.matcherPrunedCenterCount}/${totals.matcherSampledCenterCount} sampled centers survived the cheap signal filter.`,
-    });
-    variants.push({
-      id: 'matcher-seeded-rescue-estimate',
-      title: 'Row/flood seeded matcher rescue prototype',
+      id: 'legacy-matcher-control',
+      title: 'Legacy matcher cross-check control',
       controlMetric: 'current run-map matcher detector duration',
-      candidateMetric: 'output-producing matcher run around row-scan/flood finder centers',
+      candidateMetric: 'legacy pixel-walk cross-check matcher detector duration',
       controlMs: totals.matcherControlMs,
-      candidateMs: totals.matcherSeededMs,
-      deltaMs: round(totals.matcherControlMs - totals.matcherSeededMs),
+      candidateMs: totals.matcherLegacyControlMs,
+      deltaMs: round(totals.matcherControlMs - totals.matcherLegacyControlMs),
       improvementPct: percent(
-        totals.matcherControlMs - totals.matcherSeededMs,
+        totals.matcherControlMs - totals.matcherLegacyControlMs,
         totals.matcherControlMs,
       ),
-      evidence: `finder outputs equal=${totals.matcherSeededOutputsEqual}; mismatched views=${totals.matcherSeededMismatchCount}; ${totals.matcherSeededEstimatedCenters} row/flood finder centers seeded matcher refinement.`,
+      evidence: `finder outputs equal=${totals.matcherLegacyControlOutputsEqual}; mismatched views=${totals.matcherLegacyControlMismatchCount}.`,
     });
     variants.push({
-      id: 'matcher-fused-polarity-traversal-prototype',
-      title: 'Normal+inverted matcher traversal fusion prototype',
-      controlMetric:
-        'current run-map matcher detector duration over separate polarity view identities',
-      candidateMetric:
-        'output-producing shared-plane matcher traversal for normal and inverted views',
+      id: 'run-map-matcher-control',
+      title: 'Run-map matcher cross-check control',
+      controlMetric: 'current production matcher detector duration',
+      candidateMetric: 'current production matcher detector duration',
       controlMs: totals.matcherControlMs,
-      candidateMs: totals.matcherFusedPolarityMs,
-      deltaMs: round(totals.matcherControlMs - totals.matcherFusedPolarityMs),
-      improvementPct: percent(
-        totals.matcherControlMs - totals.matcherFusedPolarityMs,
-        totals.matcherControlMs,
-      ),
-      evidence: `finder outputs equal=${totals.matcherFusedPolarityOutputsEqual}; mismatched polarity views=${totals.matcherFusedPolarityMismatchCount}; ${totals.matcherFusedDarkCenterCount} normal-dark and ${totals.matcherFusedLightCenterCount} inverted-dark sampled centers classified in one shared traversal.`,
+      candidateMs: totals.matcherControlMs,
+      deltaMs: 0,
+      improvementPct: 0,
+      evidence: `production control; finder outputs equal=true; mismatched views=0.`,
     });
+    const pushMatcherVariant = (
+      id: string,
+      title: string,
+      controlMs: number,
+      candidateMs: number,
+      outputsEqual: boolean,
+      mismatchCount: number,
+      detail: string,
+    ) => {
+      variants.push({
+        id,
+        title,
+        controlMetric: title.startsWith('Legacy')
+          ? 'legacy matcher detector duration'
+          : 'current run-map matcher detector duration',
+        candidateMetric: 'output-producing matcher variant duration',
+        controlMs,
+        candidateMs,
+        deltaMs: round(controlMs - candidateMs),
+        improvementPct: percent(controlMs - candidateMs, controlMs),
+        evidence: `finder outputs equal=${outputsEqual}; mismatched views=${mismatchCount}; ${detail}`,
+      });
+    };
+    const pruneDetail = `${totals.matcherPrunedCenterCount}/${totals.matcherSampledCenterCount} sampled centers survived the cheap signal filter.`;
+    const seededDetail = `${totals.matcherSeededEstimatedCenters} row/flood finder centers seeded matcher refinement.`;
+    const fusedDetail = `${totals.matcherFusedDarkCenterCount} normal-dark and ${totals.matcherFusedLightCenterCount} inverted-dark sampled centers classified in one shared traversal.`;
+    pushMatcherVariant(
+      'legacy-center-pruned-matcher-prototype',
+      'Legacy center-pruned matcher prototype',
+      totals.matcherLegacyControlMs,
+      totals.matcherLegacyPrunedCenterMs,
+      totals.matcherLegacyPrunedCenterOutputsEqual,
+      totals.matcherLegacyPrunedCenterMismatchCount,
+      pruneDetail,
+    );
+    pushMatcherVariant(
+      'legacy-row-flood-seeded-matcher-prototype',
+      'Legacy row/flood seeded matcher prototype',
+      totals.matcherLegacyControlMs,
+      totals.matcherLegacySeededMs,
+      totals.matcherLegacySeededOutputsEqual,
+      totals.matcherLegacySeededMismatchCount,
+      seededDetail,
+    );
+    pushMatcherVariant(
+      'legacy-fused-polarity-matcher-prototype',
+      'Legacy fused-polarity matcher prototype',
+      totals.matcherLegacyControlMs,
+      totals.matcherLegacyFusedPolarityMs,
+      totals.matcherLegacyFusedPolarityOutputsEqual,
+      totals.matcherLegacyFusedPolarityMismatchCount,
+      fusedDetail,
+    );
+    pushMatcherVariant(
+      'run-map-center-pruned-matcher-prototype',
+      'Run-map center-pruned matcher prototype',
+      totals.matcherControlMs,
+      totals.matcherPrunedCenterMs,
+      totals.matcherPrunedCenterOutputsEqual,
+      totals.matcherPrunedCenterMismatchCount,
+      pruneDetail,
+    );
+    pushMatcherVariant(
+      'run-map-row-flood-seeded-matcher-prototype',
+      'Run-map row/flood seeded matcher prototype',
+      totals.matcherControlMs,
+      totals.matcherSeededMs,
+      totals.matcherSeededOutputsEqual,
+      totals.matcherSeededMismatchCount,
+      seededDetail,
+    );
+    pushMatcherVariant(
+      'run-map-fused-polarity-matcher-prototype',
+      'Run-map fused-polarity matcher prototype',
+      totals.matcherControlMs,
+      totals.matcherFusedPolarityMs,
+      totals.matcherFusedPolarityOutputsEqual,
+      totals.matcherFusedPolarityMismatchCount,
+      fusedDetail,
+    );
   }
   if (config.focus === 'binary-bit-hot-path' && totals.binaryReadPixels > 0) {
     variants.push({

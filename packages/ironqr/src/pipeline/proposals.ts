@@ -843,6 +843,13 @@ export const detectMatcherFindersLegacy = (
   height: number,
 ): FinderEvidence[] => detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck);
 
+export const detectMatcherFindersLegacyWithCenterSignal = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): FinderEvidence[] =>
+  detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck, hasMatcherCenterSignal);
+
 export const detectMatcherFindersWithRunMaps = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -874,6 +881,14 @@ export const detectMatcherFindersWithCenterSignal = (
   );
 };
 
+export const detectMatcherFindersLegacyFromSeeds = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  seeds: readonly FinderEvidence[],
+): FinderEvidence[] =>
+  detectMatcherFindersFromSeedsWithCrossCheck(binary, width, height, seeds, crossCheck);
+
 export const detectMatcherFindersFromSeeds = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -881,22 +896,36 @@ export const detectMatcherFindersFromSeeds = (
   seeds: readonly FinderEvidence[],
 ): FinderEvidence[] => {
   const runs = buildAxisRuns(binary, width, height);
-  return finalizeMatcherEvidence(
+  return detectMatcherFindersFromSeedsWithCrossCheck(
+    binary,
+    width,
+    height,
+    seeds,
+    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+  );
+};
+
+const detectMatcherFindersFromSeedsWithCrossCheck = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  seeds: readonly FinderEvidence[],
+  crossCheckFn: typeof crossCheck,
+): FinderEvidence[] =>
+  finalizeMatcherEvidence(
     seeds.flatMap((seed) =>
       matcherNeighborhoodCenters(seed).flatMap(([x, y]) =>
-        matcherEvidenceAt(
-          binary,
-          width,
-          height,
-          x,
-          y,
-          (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-            runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-        ),
+        matcherEvidenceAt(binary, width, height, x, y, crossCheckFn),
       ),
     ),
   );
-};
+
+export const detectMatcherFindersLegacyForSharedPolarities = (
+  normalView: BinaryView,
+  invertedView: BinaryView,
+): { readonly normal: readonly FinderEvidence[]; readonly inverted: readonly FinderEvidence[] } =>
+  detectMatcherFindersForSharedPolaritiesWithCrossCheck(normalView, invertedView, crossCheck);
 
 export const detectMatcherFindersForSharedPolarities = (
   normalView: BinaryView,
@@ -905,34 +934,31 @@ export const detectMatcherFindersForSharedPolarities = (
   const width = normalView.width;
   const height = normalView.height;
   const runs = buildAxisRuns(normalView, width, height);
+  return detectMatcherFindersForSharedPolaritiesWithCrossCheck(
+    normalView,
+    invertedView,
+    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+  );
+};
+
+const detectMatcherFindersForSharedPolaritiesWithCrossCheck = (
+  normalView: BinaryView,
+  invertedView: BinaryView,
+  crossCheckFn: typeof crossCheck,
+): { readonly normal: readonly FinderEvidence[]; readonly inverted: readonly FinderEvidence[] } => {
+  const width = normalView.width;
+  const height = normalView.height;
   const normalEvidence: FinderEvidence[] = [];
   const invertedEvidence: FinderEvidence[] = [];
   const step = matcherStep(width, height);
   for (let y = 2; y < height - 2; y += step) {
     for (let x = 2; x < width - 2; x += step) {
       if (pixel(normalView, width, x, y) === 0) {
-        normalEvidence.push(
-          ...matcherEvidenceAt(
-            normalView,
-            width,
-            height,
-            x,
-            y,
-            (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-              runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-          ),
-        );
+        normalEvidence.push(...matcherEvidenceAt(normalView, width, height, x, y, crossCheckFn));
       } else {
         invertedEvidence.push(
-          ...matcherEvidenceAt(
-            invertedView,
-            width,
-            height,
-            x,
-            y,
-            (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-              runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-          ),
+          ...matcherEvidenceAt(invertedView, width, height, x, y, crossCheckFn),
         );
       }
     }
