@@ -30,7 +30,6 @@ interface ImageProcessingConfig extends Record<string, unknown> {
   readonly focus: ImageProcessingFocus;
   readonly viewSet: 'all' | 'production';
   readonly decode: boolean;
-  readonly maxProposals: number;
 }
 
 interface ImageProcessingAssetResult {
@@ -171,6 +170,7 @@ interface ImageProcessingScalarSummary {
 
 const STUDY_VERSION = 'study-v1';
 const WHITE = 255;
+const EXHAUSTIVE_SCAN_CEILING = 10_000;
 
 const ironqrDescriptor = () => describeAccuracyEngine(getAccuracyEngineById('ironqr'));
 
@@ -266,30 +266,16 @@ function makeImageProcessingStudyPlugin(input: {
         description: 'Run the full decode scanner after proposal/materialization profiling.',
         default: input.decodeDefault,
       },
-      {
-        name: 'max-proposals',
-        type: 'number',
-        description: 'Decode-stage proposal/cluster ceiling when --decode is enabled.',
-        default: 10_000,
-      },
     ],
     parseConfig: ({ flags }) => {
       const viewSet = flags['view-set'] ?? 'all';
       if (viewSet !== 'all' && viewSet !== 'production') {
         throw new Error(`${input.id} --view-set must be all or production, got ${String(viewSet)}`);
       }
-      const maxProposals =
-        typeof flags['max-proposals'] === 'number' ? flags['max-proposals'] : 10_000;
-      if (!Number.isSafeInteger(maxProposals) || maxProposals < 1) {
-        throw new Error(
-          `${input.id} --max-proposals must be a positive integer, got ${String(flags['max-proposals'])}`,
-        );
-      }
       return {
         focus: input.focus,
         viewSet,
         decode: typeof flags.decode === 'boolean' ? flags.decode : input.decodeDefault,
-        maxProposals,
       };
     },
     cacheKey: (config) => JSON.stringify(config),
@@ -315,7 +301,7 @@ function makeImageProcessingStudyPlugin(input: {
       const proposalSummaries = viewIds.map(
         (viewId) =>
           generateProposalBatchForView(viewBank, viewId, {
-            maxProposalsPerView: config.maxProposals,
+            maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
           }).summary,
       );
       const proposalGenerationMs = round(performance.now() - proposalStartedAt);
@@ -334,9 +320,7 @@ function makeImageProcessingStudyPlugin(input: {
         );
       const scalarFusion = measureScalarFusion(image);
       const sharedArtifacts = summarizeSharedArtifacts(binarySignals);
-      const decode = config.decode
-        ? await runDecodeMeasurement(image, viewIds, config.maxProposals, asset, log)
-        : null;
+      const decode = config.decode ? await runDecodeMeasurement(image, viewIds, asset, log) : null;
       const expectedTexts = uniqueTexts(
         asset.expectedTexts.map(normalizeDecodedText).filter(Boolean),
       );
@@ -414,7 +398,6 @@ function makeImageProcessingStudyPlugin(input: {
 const runDecodeMeasurement = async (
   image: Parameters<typeof scanFrame>[0],
   viewIds: readonly BinaryViewId[],
-  maxProposals: number,
   asset: { readonly id: string },
   log: (message: string) => void,
 ): Promise<DecodeMeasurement & { readonly decodedTexts: readonly string[] }> => {
@@ -423,7 +406,10 @@ const runDecodeMeasurement = async (
   log(`${asset.id}: running decode scanner for module-sampling evidence`);
   const results = await scanFrame(image, {
     allowMultiple: true,
-    maxProposals,
+    maxProposals: EXHAUSTIVE_SCAN_CEILING,
+    maxClusterRepresentatives: EXHAUSTIVE_SCAN_CEILING,
+    maxClusterStructuralFailures: EXHAUSTIVE_SCAN_CEILING,
+    continueAfterDecode: true,
     proposalViewIds: viewIds,
     metricsSink: { record: (span: ScanTimingSpan) => spans.push(span) },
   });
