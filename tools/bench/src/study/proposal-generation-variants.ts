@@ -17,6 +17,11 @@ const TIMING_ROWS_PER_VARIANT = 6;
 const VARIANTS = [
   'sort-all',
   'streaming-topk',
+  'fixed-array-topk',
+  'min-heap-topk',
+  'distance-matrix-sort-all',
+  'distance-matrix-streaming',
+  'no-allocation-score',
 ] as const satisfies readonly ProposalAssemblyVariant[];
 
 type DetectorPolicyId = 'full-current' | 'no-flood' | 'row-only' | 'matcher-only';

@@ -138,6 +138,7 @@ export interface RankedProposalCandidate {
 interface FinderTripleCandidate {
   readonly finders: readonly [FinderEvidence, FinderEvidence, FinderEvidence];
   readonly seedScore: number;
+  readonly order: number;
 }
 
 /**
@@ -225,7 +226,14 @@ export interface FinderEvidenceDetectionPolicy {
   readonly suppressMatcherOverlappingRowScan?: boolean;
 }
 
-export type ProposalAssemblyVariant = 'sort-all' | 'streaming-topk';
+export type ProposalAssemblyVariant =
+  | 'sort-all'
+  | 'streaming-topk'
+  | 'fixed-array-topk'
+  | 'min-heap-topk'
+  | 'distance-matrix-sort-all'
+  | 'distance-matrix-streaming'
+  | 'no-allocation-score';
 
 /**
  * Per-view proposal-generation options.
@@ -755,49 +763,156 @@ const buildFinderTriples = (
   maxCombinations: number,
   variant: ProposalAssemblyVariant = 'sort-all',
 ): readonly FinderTripleCandidate[] => {
-  if (variant === 'sort-all') return buildFinderTriplesBySorting(evidence, maxCombinations);
-  return buildFinderTriplesStreamingTopK(evidence, maxCombinations);
+  if (variant === 'streaming-topk') {
+    return buildFinderTriplesStreamingTopK(evidence, maxCombinations);
+  }
+  if (variant === 'fixed-array-topk') {
+    return buildFinderTriplesFixedArrayTopK(evidence, maxCombinations);
+  }
+  if (variant === 'min-heap-topk') {
+    return buildFinderTriplesMinHeapTopK(evidence, maxCombinations);
+  }
+  if (variant === 'distance-matrix-sort-all') {
+    return buildFinderTriplesBySorting(evidence, maxCombinations, true);
+  }
+  if (variant === 'distance-matrix-streaming') {
+    return buildFinderTriplesStreamingTopK(evidence, maxCombinations, true);
+  }
+  if (variant === 'no-allocation-score') {
+    return buildFinderTriplesBySorting(evidence, maxCombinations, false, true);
+  }
+  return buildFinderTriplesBySorting(evidence, maxCombinations);
 };
 
 const buildFinderTriplesBySorting = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
+  useDistanceMatrix = false,
+  useNoAllocationScore = false,
 ): readonly FinderTripleCandidate[] => {
   const scored: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, (candidate) => scored.push(candidate));
+  forEachScoredTriple(evidence, { useDistanceMatrix, useNoAllocationScore }, (candidate) =>
+    scored.push(candidate),
+  );
   return scored.sort(compareTripleCandidates).slice(0, maxCombinations);
 };
 
 const buildFinderTriplesStreamingTopK = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
+  useDistanceMatrix = false,
 ): readonly FinderTripleCandidate[] => {
   const top: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, (candidate) =>
+  forEachScoredTriple(evidence, { useDistanceMatrix }, (candidate) =>
     insertTopTripleCandidate(top, candidate, maxCombinations),
   );
   return top;
 };
 
+const buildFinderTriplesFixedArrayTopK = (
+  evidence: readonly FinderEvidence[],
+  maxCombinations: number,
+): readonly FinderTripleCandidate[] => {
+  const top = new Array<FinderTripleCandidate | undefined>(maxCombinations);
+  let topLength = 0;
+  forEachScoredTriple(evidence, {}, (candidate) => {
+    if (topLength === 0) {
+      top[0] = candidate;
+      topLength = 1;
+      return;
+    }
+    let insertAt = topLength;
+    while (insertAt > 0 && compareTripleCandidates(candidate, top[insertAt - 1]!) < 0) {
+      insertAt -= 1;
+    }
+    if (insertAt >= maxCombinations) return;
+    const nextLength = Math.min(maxCombinations, topLength + 1);
+    for (let index = nextLength - 1; index > insertAt; index -= 1) {
+      top[index] = top[index - 1];
+    }
+    top[insertAt] = candidate;
+    topLength = nextLength;
+  });
+  return top.slice(0, topLength) as FinderTripleCandidate[];
+};
+
+const buildFinderTriplesMinHeapTopK = (
+  evidence: readonly FinderEvidence[],
+  maxCombinations: number,
+): readonly FinderTripleCandidate[] => {
+  const heap: FinderTripleCandidate[] = [];
+  forEachScoredTriple(evidence, {}, (candidate) => {
+    if (heap.length < maxCombinations) {
+      heapPushWorstFirst(heap, candidate);
+      return;
+    }
+    if (compareTripleCandidates(candidate, heap[0]!) < 0) {
+      heap[0] = candidate;
+      heapSinkWorstFirst(heap, 0);
+    }
+  });
+  return heap.sort(compareTripleCandidates);
+};
+
 const forEachScoredTriple = (
   evidence: readonly FinderEvidence[],
+  options: {
+    readonly useDistanceMatrix?: boolean;
+    readonly useNoAllocationScore?: boolean;
+  },
   visit: (candidate: FinderTripleCandidate) => void,
 ): void => {
+  const distances = options.useDistanceMatrix ? buildFinderDistanceMatrix(evidence) : null;
+  let order = 0;
   for (let i = 0; i < evidence.length - 2; i += 1) {
     for (let j = i + 1; j < evidence.length - 1; j += 1) {
       for (let k = j + 1; k < evidence.length; k += 1) {
         const a = evidence[i]!;
         const b = evidence[j]!;
         const c = evidence[k]!;
-        const score = scoreTripleGeometry(a, b, c);
-        if (score === null) continue;
+        const score = scoreTripleForVariant(a, b, c, i, j, k, distances, options);
+        if (score === null) {
+          order += 1;
+          continue;
+        }
         const detectorBias =
           ((a.score ?? 0) + (b.score ?? 0) + (c.score ?? 0)) / 3 +
           (sourceBonus(a.source) + sourceBonus(b.source) + sourceBonus(c.source)) / 3;
-        visit({ finders: [a, b, c], seedScore: score + detectorBias });
+        visit({ finders: [a, b, c], seedScore: score + detectorBias, order });
+        order += 1;
       }
     }
   }
+};
+
+const scoreTripleForVariant = (
+  a: FinderEvidence,
+  b: FinderEvidence,
+  c: FinderEvidence,
+  i: number,
+  j: number,
+  k: number,
+  distances: Float64Array | null,
+  options: {
+    readonly useDistanceMatrix?: boolean;
+    readonly useNoAllocationScore?: boolean;
+  },
+): number | null => {
+  if (distances) {
+    const count = distanceMatrixRowCount(distances);
+    return scoreTripleGeometryFromLengths(
+      a,
+      b,
+      c,
+      distances[distanceMatrixIndex(i, j, count)]!,
+      distances[distanceMatrixIndex(i, k, count)]!,
+      distances[distanceMatrixIndex(j, k, count)]!,
+    );
+  }
+  if (options.useNoAllocationScore) {
+    return scoreTripleGeometryNoAllocation(a, b, c);
+  }
+  return scoreTripleGeometry(a, b, c);
 };
 
 const insertTopTripleCandidate = (
@@ -817,7 +932,72 @@ const insertTopTripleCandidate = (
 const compareTripleCandidates = (
   left: FinderTripleCandidate,
   right: FinderTripleCandidate,
-): number => right.seedScore - left.seedScore;
+): number => right.seedScore - left.seedScore || left.order - right.order;
+
+const compareWorstFirst = (left: FinderTripleCandidate, right: FinderTripleCandidate): number =>
+  left.seedScore - right.seedScore || right.order - left.order;
+
+const heapPushWorstFirst = (
+  heap: FinderTripleCandidate[],
+  candidate: FinderTripleCandidate,
+): void => {
+  heap.push(candidate);
+  let index = heap.length - 1;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (compareWorstFirst(heap[index]!, heap[parent]!) <= 0) break;
+    swapHeapEntries(heap, index, parent);
+    index = parent;
+  }
+};
+
+const heapSinkWorstFirst = (heap: FinderTripleCandidate[], startIndex: number): void => {
+  let index = startIndex;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    let largest = index;
+    if (left < heap.length && compareWorstFirst(heap[left]!, heap[largest]!) > 0) largest = left;
+    if (right < heap.length && compareWorstFirst(heap[right]!, heap[largest]!) > 0) largest = right;
+    if (largest === index) return;
+    swapHeapEntries(heap, index, largest);
+    index = largest;
+  }
+};
+
+const swapHeapEntries = (heap: FinderTripleCandidate[], left: number, right: number): void => {
+  const value = heap[left]!;
+  heap[left] = heap[right]!;
+  heap[right] = value;
+};
+
+const buildFinderDistanceMatrix = (evidence: readonly FinderEvidence[]): Float64Array => {
+  const count = evidence.length;
+  const distances = new Float64Array((count * (count - 1)) / 2 + 1);
+  distances[distances.length - 1] = count;
+  for (let i = 0; i < count - 1; i += 1) {
+    for (let j = i + 1; j < count; j += 1) {
+      distances[distanceMatrixIndex(i, j, count)] = distance(evidence[i]!, evidence[j]!);
+    }
+  }
+  return distances;
+};
+
+const distanceMatrixRowCount = (distances: Float64Array): number =>
+  distances[distances.length - 1]!;
+
+const distanceMatrixIndex = (left: number, right: number, count: number): number => {
+  const i = Math.min(left, right);
+  const j = Math.max(left, right);
+  return (i * (2 * count - i - 1)) / 2 + (j - i - 1);
+};
+
+interface TripleSide {
+  readonly left: FinderEvidence;
+  readonly right: FinderEvidence;
+  readonly length: number;
+  readonly opposite: FinderEvidence;
+}
 
 const scoreTripleGeometry = (
   a: FinderEvidence,
@@ -825,15 +1005,56 @@ const scoreTripleGeometry = (
   c: FinderEvidence,
 ): number | null => {
   const lengths = [
-    { pair: [a, b] as const, length: distance(a, b), opposite: c },
-    { pair: [a, c] as const, length: distance(a, c), opposite: b },
-    { pair: [b, c] as const, length: distance(b, c), opposite: a },
+    { left: a, right: b, length: distance(a, b), opposite: c },
+    { left: a, right: c, length: distance(a, c), opposite: b },
+    { left: b, right: c, length: distance(b, c), opposite: a },
   ].sort((left, right) => right.length - left.length);
-  const hyp = lengths[0]!;
-  const leg1 = lengths[1]!;
-  const leg2 = lengths[2]!;
+  return scoreTripleGeometryFromSides(a, b, c, lengths[0]!, lengths[1]!, lengths[2]!);
+};
+
+const scoreTripleGeometryNoAllocation = (
+  a: FinderEvidence,
+  b: FinderEvidence,
+  c: FinderEvidence,
+): number | null =>
+  scoreTripleGeometryFromLengths(a, b, c, distance(a, b), distance(a, c), distance(b, c));
+
+const scoreTripleGeometryFromLengths = (
+  a: FinderEvidence,
+  b: FinderEvidence,
+  c: FinderEvidence,
+  ab: number,
+  ac: number,
+  bc: number,
+): number | null => {
+  const abSide = { left: a, right: b, length: ab, opposite: c } satisfies TripleSide;
+  const acSide = { left: a, right: c, length: ac, opposite: b } satisfies TripleSide;
+  const bcSide = { left: b, right: c, length: bc, opposite: a } satisfies TripleSide;
+  if (ab >= ac && ab >= bc) {
+    return ac >= bc
+      ? scoreTripleGeometryFromSides(a, b, c, abSide, acSide, bcSide)
+      : scoreTripleGeometryFromSides(a, b, c, abSide, bcSide, acSide);
+  }
+  if (ac >= bc) {
+    return ab >= bc
+      ? scoreTripleGeometryFromSides(a, b, c, acSide, abSide, bcSide)
+      : scoreTripleGeometryFromSides(a, b, c, acSide, bcSide, abSide);
+  }
+  return ab >= ac
+    ? scoreTripleGeometryFromSides(a, b, c, bcSide, abSide, acSide)
+    : scoreTripleGeometryFromSides(a, b, c, bcSide, acSide, abSide);
+};
+
+const scoreTripleGeometryFromSides = (
+  a: FinderEvidence,
+  b: FinderEvidence,
+  c: FinderEvidence,
+  hyp: TripleSide,
+  leg1: TripleSide,
+  leg2: TripleSide,
+): number | null => {
   const topLeft = hyp.opposite;
-  const armA = leg1.pair[0] === topLeft || leg1.pair[1] === topLeft ? leg1 : leg2;
+  const armA = leg1.left === topLeft || leg1.right === topLeft ? leg1 : leg2;
   const armB = armA === leg1 ? leg2 : leg1;
   const sizeRatio =
     Math.max(a.moduleSize, b.moduleSize, c.moduleSize) /

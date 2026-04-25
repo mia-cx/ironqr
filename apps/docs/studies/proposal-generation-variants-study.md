@@ -33,7 +33,12 @@ Variants:
 | Variant | Behavior | Question answered |
 | --- | --- | --- |
 | `sort-all` | Current control: materialize every valid triple, sort all, slice top combinations. | Baseline output and cost. |
-| `streaming-topk` | Score every valid triple but maintain only the top-K triples incrementally. | Can we preserve exact output while avoiding full materialization/sort? |
+| `streaming-topk` | Score every valid triple but maintain only the top-K triples incrementally with insertion/splice. | Can we preserve exact output while avoiding full materialization/sort? |
+| `fixed-array-topk` | Score every valid triple and maintain a fixed-size sorted top-K array. | Does avoiding dynamic array growth/splice improve top-K retention? |
+| `min-heap-topk` | Score every valid triple and keep top-K in a worst-first heap, then sort the retained K. | Is heap retention faster than sorted insertion for K=120? |
+| `distance-matrix-sort-all` | Precompute pair distances, then use sort-all retention. | Does reusing pair distances beat direct distance calls? |
+| `distance-matrix-streaming` | Precompute pair distances, then use streaming top-K retention. | Do distance reuse and top-K retention compound? |
+| `no-allocation-score` | Score every valid triple with manual side selection instead of per-triple side array allocation/sort. | Does allocation-free geometry scoring preserve output and improve assembly time? |
 
 Default corpus: all approved assets, all default binary views. Cache is study-level per asset/config; use `--refresh-cache` when changing variant implementation.
 
@@ -55,7 +60,7 @@ Default corpus: all approved assets, all default binary views. Cache is study-le
 
 ## Decision rule
 
-Promote `streaming-topk` only if:
+Promote any exact implementation variant only if:
 
 ```text
 proposal signature mismatches = 0
@@ -70,7 +75,7 @@ Pending. Run the study before changing production proposal assembly.
 
 ## Interpretation plan
 
-First compare `streaming-topk` with `sort-all` for exact proposal signatures. If exact and faster, it is the safest implementation-level win. Do not include capped evidence, early-exit, or budget variants in this study; those belong in a separate policy/budget study after exact implementation work is exhausted.
+First compare each variant with `sort-all` for exact proposal signatures. If exact and faster, it is a safe implementation-level candidate. Do not include capped evidence, early-exit, or budget variants in this study; those belong in a separate policy/budget study after exact implementation work is exhausted.
 
 ## Conclusion / evidence-backed decision
 
