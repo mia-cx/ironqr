@@ -34,6 +34,7 @@ const RECENT_LAYOUT_RESERVED_ROWS = 24;
 const PROGRESS_BAR_WIDTH = 56;
 const DASHBOARD_REFRESH_INTERVAL_MS = 250;
 const TABLE_ROW_FILL_SLACK = 6;
+const ACTIVE_WORKER_MAX_BODY_ROWS = 11;
 const FILTER_MODAL_MIN_ROWS = 22;
 const FILTER_MODAL_MAX_ROWS = 30;
 const FILTER_MODAL_WIDTH_RATIO = 0.42;
@@ -655,6 +656,10 @@ export class BenchOpenTuiDashboard {
       height - RECENT_LAYOUT_RESERVED_ROWS + TABLE_ROW_FILL_SLACK,
     );
     const tableRows = fallbackTableRows;
+    const activeRows =
+      this.dashboard.commandName === 'study'
+        ? Math.min(ACTIVE_WORKER_MAX_BODY_ROWS, tableRows)
+        : tableRows;
     const recentRows = fallbackRecentRows;
     const eventRows = fallbackRecentRows;
 
@@ -720,10 +725,10 @@ export class BenchOpenTuiDashboard {
       renderActiveWorkers(this.dashboard, {
         width: leftWidth,
         nowMs: Date.now(),
-        maxRows: tableRows,
+        maxRows: activeRows,
         offset: this.activeStudyWorkOffset,
       }),
-      tableRows,
+      activeRows,
     );
     panels.slowest.body.content = panelBody(
       renderSlowestFreshScans(this.dashboard, {
