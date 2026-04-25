@@ -13,6 +13,7 @@ import {
   onDashboardBenchmarkStarted,
   onDashboardScanFinished,
   onDashboardScanStarted,
+  onDashboardStudyTiming,
 } from '../../src/accuracy/dashboard/model.js';
 import { renderScorecard } from '../../src/accuracy/dashboard/scorecard.js';
 import {
@@ -334,6 +335,31 @@ describe('table widgets', () => {
     expect(renderRecentScans(model, { width: 100 }).join('\n')).toContain('02:45:12');
     expect(renderRecentScans(model, { width: 100 }).join('\n')).toContain('decoded=0 matched=0');
     expect(renderRecentScans(model, { width: 100, maxRows: 0 }).join('\n')).toContain('none yet');
+  });
+
+  it('ranks study timing rows by fresh samples when cached preload rows exist', () => {
+    const model = createBenchDashboardModel();
+    model.commandName = 'study';
+    onDashboardStudyTiming(model, {
+      id: 'det:f:dense:gray:h:i',
+      durationMs: 1000,
+      group: 'detector',
+      cached: true,
+    });
+    onDashboardStudyTiming(model, {
+      id: 'det:f:dense:gray:h:i',
+      durationMs: 10,
+      group: 'detector',
+      cached: false,
+    });
+
+    const output = renderSlowestFreshScans(model, {
+      width: 80,
+      studySlowestMetric: 'avg',
+    }).join('\n');
+    expect(output).toContain('10ms');
+    expect(output).toContain('c=1');
+    expect(output).not.toContain('505ms');
   });
 
   it('renders two widgets side by side', () => {

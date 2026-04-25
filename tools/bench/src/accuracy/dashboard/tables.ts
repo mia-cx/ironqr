@@ -207,15 +207,25 @@ const studyTimingMetric = (
   row: {
     readonly totalMs: number;
     readonly count: number;
+    readonly freshCount?: number;
+    readonly freshTotalMs?: number;
     readonly maxMs: number;
+    readonly freshMaxMs?: number;
     readonly samples: readonly number[];
+    readonly freshSamples?: readonly number[];
   },
   metric: StudySlowestMetric,
 ): number => {
-  if (metric === 'avg') return row.totalMs / Math.max(1, row.count);
-  if (metric === 'min') return row.samples.length === 0 ? 0 : Math.min(...row.samples);
-  if (metric === 'max') return row.maxMs;
-  return percentile(row.samples, Number(metric.slice(1)) / 100);
+  const hasFresh = (row.freshCount ?? 0) > 0;
+  const samples = hasFresh ? (row.freshSamples ?? row.samples) : row.samples;
+  if (metric === 'avg') {
+    return hasFresh
+      ? (row.freshTotalMs ?? row.totalMs) / Math.max(1, row.freshCount ?? row.count)
+      : row.totalMs / Math.max(1, row.count);
+  }
+  if (metric === 'min') return samples.length === 0 ? 0 : Math.min(...samples);
+  if (metric === 'max') return hasFresh ? (row.freshMaxMs ?? row.maxMs) : row.maxMs;
+  return percentile(samples, Number(metric.slice(1)) / 100);
 };
 
 const percentile = (values: readonly number[], quantile: number): number => {

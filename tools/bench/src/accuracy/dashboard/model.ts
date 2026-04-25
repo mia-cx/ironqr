@@ -69,10 +69,13 @@ export interface StudyTimingStats {
   count: number;
   freshCount: number;
   cachedCount: number;
+  freshTotalMs: number;
   maxMs: number;
+  freshMaxMs: number;
   lastMs: number;
   outputCount: number;
   samples: number[];
+  freshSamples: number[];
 }
 
 export interface BenchDashboardModel {
@@ -374,8 +377,14 @@ export const onDashboardStudyTiming = (
   if (existing) {
     existing.totalMs += event.durationMs;
     existing.count += 1;
-    if (event.cached) existing.cachedCount += 1;
-    else existing.freshCount += 1;
+    if (event.cached) {
+      existing.cachedCount += 1;
+    } else {
+      existing.freshCount += 1;
+      existing.freshTotalMs += event.durationMs;
+      existing.freshMaxMs = Math.max(existing.freshMaxMs, event.durationMs);
+      existing.freshSamples.push(event.durationMs);
+    }
     existing.maxMs = Math.max(existing.maxMs, event.durationMs);
     existing.lastMs = event.durationMs;
     existing.outputCount += outputCount;
@@ -388,10 +397,13 @@ export const onDashboardStudyTiming = (
     count: 1,
     freshCount: event.cached ? 0 : 1,
     cachedCount: event.cached ? 1 : 0,
+    freshTotalMs: event.cached ? 0 : event.durationMs,
     maxMs: event.durationMs,
+    freshMaxMs: event.cached ? 0 : event.durationMs,
     lastMs: event.durationMs,
     outputCount,
     samples: [event.durationMs],
+    freshSamples: event.cached ? [] : [event.durationMs],
   });
 };
 
