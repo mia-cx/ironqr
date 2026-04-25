@@ -104,6 +104,7 @@ export interface StudyPlugin<
   engines?(config: Config): readonly AccuracyEngineDescriptor[];
   /** Scanner or observability dimensions relevant to generic cache keys and report metadata. */
   observability?(config: Config): Record<string, unknown>;
+  estimateUnits?(config: Config, assets: readonly CorpusBenchAsset[]): number | null;
   /** Skip runner-owned whole-asset cache so plugin can cache reusable sub-results itself. */
   readonly usesInternalCache?: boolean;
 

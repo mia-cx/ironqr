@@ -45,17 +45,38 @@ export const renderSlowestFreshScans = (
   const width = options.width;
   const rows = model.slowestFreshScans.slice(0, normalizeMaxRows(options.maxRows, 8));
   const lines = [
-    model.commandName === 'study' ? 'slowest fresh study assets' : 'slowest fresh scans',
-    truncate('#  engine     time      outcome      asset', width),
+    model.commandName === 'study' ? 'slowest study jobs' : 'slowest fresh scans',
+    truncate(
+      model.commandName === 'study'
+        ? '#  detector/view                         avg     jobs'
+        : '#  engine     time      outcome      asset',
+      width,
+    ),
   ];
+  if (model.commandName === 'study') {
+    const studyRows = [...model.studyDetectorTimings.values(), ...model.studyTimings.values()]
+      .sort(
+        (left, right) =>
+          right.totalMs / Math.max(1, right.count) - left.totalMs / Math.max(1, left.count),
+      )
+      .slice(0, normalizeMaxRows(options.maxRows, 8));
+    if (studyRows.length === 0) {
+      lines.push(truncate('none yet', width));
+      return lines;
+    }
+    for (const [index, row] of studyRows.entries()) {
+      const averageMs = row.totalMs / Math.max(1, row.count);
+      lines.push(
+        truncate(
+          `${padLeft(String(index + 1), 2)} ${padRight(row.id, 35)} ${padLeft(formatCompactDuration(averageMs), 7)} ${row.count} c=${row.cachedCount}`,
+          width,
+        ),
+      );
+    }
+    return lines;
+  }
   if (rows.length === 0) {
-    const cachedRecent = model.recentScans.filter((scan) => scan.result.cached).length;
-    lines.push(
-      truncate(
-        cachedRecent > 0 ? `no fresh assets yet; ${cachedRecent} recent cache hits` : 'none yet',
-        width,
-      ),
-    );
+    lines.push(truncate('none yet', width));
     return lines;
   }
 

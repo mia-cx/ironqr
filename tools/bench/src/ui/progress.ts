@@ -14,6 +14,7 @@ import {
   onBenchRunScanFinished,
   onBenchRunScanStarted,
   onBenchRunStudyTiming,
+  onBenchRunStudyUnitsPlanned,
 } from './model.js';
 
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
@@ -33,6 +34,7 @@ export interface BenchProgressReporter {
     engineIds: readonly string[],
     workerCount: number,
   ) => void;
+  onStudyUnitsPlanned: (totalUnits: number) => void;
   onScanStarted: (event: {
     readonly engineId: string;
     readonly assetId: string;
@@ -111,6 +113,10 @@ export const createBenchProgressReporter = (options: {
     },
     onBenchmarkStarted: (nextAssetCount, engineIds, nextWorkerCount) => {
       onBenchRunBenchmarkStarted(dashboard, nextAssetCount, engineIds, nextWorkerCount);
+      queueRender();
+    },
+    onStudyUnitsPlanned: (totalUnits) => {
+      onBenchRunStudyUnitsPlanned(dashboard, totalUnits);
       queueRender();
     },
     onScanStarted: ({ engineId, assetId, relativePath, label, cached, cacheable }) => {

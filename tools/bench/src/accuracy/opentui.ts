@@ -668,7 +668,7 @@ const renderStudyViewTimings = (
       options.width,
     ),
     truncateLine(
-      `assets prepared=${dashboard.preparedAssets}/${dashboard.assetCount} done=${dashboard.completedJobs}/${dashboard.totalJobs} active=${dashboard.activeScans.size}`,
+      `jobs ${studyJobProgress(dashboard)} assets ${dashboard.completedJobs}/${dashboard.totalJobs} active=${dashboard.activeScans.size}`,
       options.width,
     ),
     truncateLine(
@@ -872,7 +872,7 @@ const formatStudyTiming = (
   count: number,
   outputCount: number,
   cachedCount: number,
-): string => `${formatCompactDuration(averageMs)} p=${outputCount} rows=${count} c=${cachedCount}`;
+): string => `${formatCompactDuration(averageMs)} p=${outputCount} jobs=${count} c=${cachedCount}`;
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,
@@ -893,8 +893,8 @@ const renderStudyFooterStatus = (dashboard: BenchDashboardModel): string => {
   return [
     'bench study',
     `stage=${dashboard.stage}`,
+    `jobs=${studyJobProgress(dashboard)}`,
     `assets=${dashboard.completedJobs}/${dashboard.totalJobs}`,
-    `prepared=${dashboard.preparedAssets}/${dashboard.assetCount}`,
     `workers=${dashboard.workerCount || '-'}`,
     `cache=${dashboard.cacheEnabled ? 'on' : 'off'}:${cache.hits}/${cache.misses}/${cache.writes}`,
   ].join(' | ');
@@ -916,14 +916,17 @@ const truncateLine = (value: string, width: number): string =>
   value.length > width ? value.slice(0, Math.max(0, width - 1)) : value;
 
 const headerText = (dashboard: BenchDashboardModel): string => {
-  const percent = clamp01(
-    dashboard.totalJobs > 0 ? dashboard.completedJobs / dashboard.totalJobs : 0,
-  );
+  const completed =
+    dashboard.commandName === 'study' ? dashboard.studyCompletedUnits : dashboard.completedJobs;
+  const total = dashboard.commandName === 'study' ? dashboard.studyTotalUnits : dashboard.totalJobs;
+  const percent = clamp01(total > 0 ? completed / total : 0);
   const completeWidth = Math.round(percent * PROGRESS_BAR_WIDTH);
   const progress = `${'█'.repeat(completeWidth)}${'░'.repeat(PROGRESS_BAR_WIDTH - completeWidth)}`;
-  const unitLabel = dashboard.commandName === 'study' ? 'assets' : 'jobs';
-  return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}  ${dashboard.completedJobs}/${dashboard.totalJobs} ${unitLabel}  ${dashboard.message}`;
+  return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}  ${completed}/${total} jobs  ${dashboard.message}`;
 };
+
+const studyJobProgress = (dashboard: BenchDashboardModel): string =>
+  `${dashboard.studyCompletedUnits}/${dashboard.studyTotalUnits || '-'}`;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 

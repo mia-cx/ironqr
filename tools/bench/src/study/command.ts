@@ -559,6 +559,8 @@ const runPlugin = async (input: {
     const engines = input.plugin.engines?.(config) ?? [];
     const observability = input.plugin.observability?.(config) ?? {};
     input.progress.onBenchmarkStarted(input.assets.length, [input.plugin.id], input.workerCount);
+    const estimatedUnits = input.plugin.estimateUnits?.(config, input.assets) ?? null;
+    if (estimatedUnits !== null) input.progress.onStudyUnitsPlanned(estimatedUnits);
 
     const preloadedResults: unknown[] = [];
     const assetsToRun: (typeof input.assets)[number][] = [];

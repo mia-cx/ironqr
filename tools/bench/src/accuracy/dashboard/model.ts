@@ -84,6 +84,8 @@ export interface BenchDashboardModel {
   preparedAssets: number;
   totalJobs: number;
   completedJobs: number;
+  studyTotalUnits: number;
+  studyCompletedUnits: number;
   workerCount: number;
   cacheEnabled: boolean;
   readonly engineOrder: string[];
@@ -131,6 +133,8 @@ export const createBenchDashboardModel = (): BenchDashboardModel => ({
   preparedAssets: 0,
   totalJobs: 0,
   completedJobs: 0,
+  studyTotalUnits: 0,
+  studyCompletedUnits: 0,
   workerCount: 0,
   cacheEnabled: false,
   engineOrder: [],
@@ -226,6 +230,14 @@ export const onDashboardBenchmarkStarted = (
   model.totalJobs = assetCount * engineIds.length;
   model.message = `running ${model.totalJobs} engine jobs across ${workerCount} workers`;
   for (const engineId of engineIds) ensureDashboardEngine(model, engineId);
+};
+
+export const onDashboardStudyUnitsPlanned = (
+  model: BenchDashboardModel,
+  totalUnits: number,
+): void => {
+  model.studyTotalUnits = Math.max(0, totalUnits);
+  model.studyCompletedUnits = 0;
 };
 
 export const onDashboardScanStarted = (
@@ -344,6 +356,7 @@ export const onDashboardStudyTiming = (
     event.outputCount === undefined || !Number.isFinite(event.outputCount) || event.outputCount < 0
       ? 0
       : event.outputCount;
+  model.studyCompletedUnits += 1;
   const timings = event.group === 'detector' ? model.studyDetectorTimings : model.studyTimings;
   const existing = timings.get(event.id);
   if (existing) {

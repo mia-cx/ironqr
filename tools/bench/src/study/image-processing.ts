@@ -438,6 +438,10 @@ function makeImageProcessingStudyPlugin(input: {
       decode: config.decode,
       metrics: 'materialization,proposal,signals,stats,fusion,decode',
     }),
+    estimateUnits: (config, assets) =>
+      config.focus === 'binary-prefilter-signals'
+        ? assets.length * detectorStudyViewIds(config).length * activeDetectorPatternIds().length
+        : null,
     readCachedAsset: async ({ asset, config, cache, signal, log }) => {
       if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
       return config.focus === 'binary-prefilter-signals'
@@ -691,6 +695,13 @@ const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
 const detectorStudyViewIds = (config: ImageProcessingConfig): readonly BinaryViewId[] =>
   config.viewSet === 'all' ? listDefaultBinaryViewIds() : listDefaultProposalViewIds();
 
+const activeDetectorPatternIds = (): readonly string[] => [
+  'inline-flood-control',
+  'run-map-matcher-control',
+  ...FLOOD_CANDIDATES.map((candidate) => candidate.id),
+  ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
+];
+
 const readCachedDetectorAssetResult = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
   config: ImageProcessingConfig,
@@ -698,12 +709,7 @@ const readCachedDetectorAssetResult = async (
   log: (message: string) => void,
 ): Promise<ImageProcessingAssetResult | null> => {
   const viewIds = detectorStudyViewIds(config);
-  const requiredIds = [
-    'inline-flood-control',
-    'run-map-matcher-control',
-    ...FLOOD_CANDIDATES.map((candidate) => candidate.id),
-    ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
-  ];
+  const requiredIds = activeDetectorPatternIds();
   const missing = viewIds.flatMap((viewId) =>
     requiredIds
       .filter((variantId) =>

@@ -26,5 +26,6 @@ export {
   onDashboardScanFinished as onBenchRunScanFinished,
   onDashboardScanStarted as onBenchRunScanStarted,
   onDashboardStudyTiming as onBenchRunStudyTiming,
+  onDashboardStudyUnitsPlanned as onBenchRunStudyUnitsPlanned,
   timingBucketKeys,
 } from '../accuracy/dashboard/model.js';
