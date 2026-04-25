@@ -26,6 +26,9 @@ export interface StudyWorkerRequest {
 
 export type StudyWorkerResponse =
   | {
+      readonly type: 'ready';
+    }
+  | {
       readonly type: 'log';
       readonly jobId: string;
       readonly message: string;

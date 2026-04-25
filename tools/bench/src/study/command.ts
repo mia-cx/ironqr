@@ -642,6 +642,11 @@ const runPlugin = async (input: {
       void studyWorkerPool.close();
     };
     input.signal?.addEventListener('abort', abortStudyWorkers, { once: true });
+    input.progress.onMessage(`study workers starting: ${input.workerCount}`);
+    await yieldToProgressRenderer();
+    await studyWorkerPool.ready();
+    if (input.signal?.aborted) throw input.signal.reason ?? new Error('Study interrupted.');
+    input.progress.onMessage(`study workers ready: ${input.workerCount}`);
     try {
       const run = await mapConcurrentPartial(
         assetsToRun,

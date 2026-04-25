@@ -32,6 +32,8 @@ const post = (message: StudyWorkerResponse): void => {
   self.postMessage(message);
 };
 
+post({ type: 'ready' });
+
 const run = async (request: StudyWorkerRequest): Promise<void> => {
   try {
     const plugin = plugins.get(request.pluginId);

@@ -27,9 +27,11 @@ interface WorkerSlot {
   readonly id: number;
   worker: Worker | null;
   current: QueuedJob | null;
+  ready: boolean;
 }
 
 export interface StudyWorkerPool {
+  readonly ready: () => Promise<void>;
   readonly run: (job: StudyWorkerJob) => Promise<StudyWorkerExecution>;
   readonly close: () => Promise<void>;
 }
@@ -54,11 +56,13 @@ export const createStudyWorkerPool = (
   let nextJobId = 0;
   const queue: QueuedJob[] = [];
   const slots: WorkerSlot[] = [];
+  const readyPromises: Promise<void>[] = [];
+  const readyResolvers: Array<() => void> = [];
 
   const dispatch = (): void => {
     if (closed) return;
     for (const slot of slots) {
-      if (slot.current || queue.length === 0) continue;
+      if (!slot.ready || slot.current || queue.length === 0) continue;
       const job = queue.shift();
       if (!job) continue;
       const worker = slot.worker;
@@ -80,9 +84,16 @@ export const createStudyWorkerPool = (
     const worker = new Worker(resolveWorkerModuleUrl().href, { type: 'module' });
     worker.onmessage = (event: MessageEvent<StudyWorkerResponse>) => {
       const slot = slots[slotId];
-      if (!slot?.current) return;
-      const current = slot.current;
+      if (!slot) return;
       const message = event.data;
+      if (message.type === 'ready') {
+        slot.ready = true;
+        readyResolvers[slotId]?.();
+        dispatch();
+        return;
+      }
+      if (!slot.current) return;
+      const current = slot.current;
       if (message.jobId !== current.request.jobId) return;
       if (message.type === 'log') {
         options.log(message.message);
@@ -104,6 +115,7 @@ export const createStudyWorkerPool = (
       const current = slot.current;
       slot.current = null;
       void slot.worker?.terminate();
+      slot.ready = false;
       slot.worker = spawnWorker(slotId);
       current?.reject(asError(event.error ?? event.message));
       dispatch();
@@ -112,12 +124,16 @@ export const createStudyWorkerPool = (
   };
 
   for (let index = 0; index < size; index += 1) {
-    const slot: WorkerSlot = { id: index, worker: null, current: null };
+    const slot: WorkerSlot = { id: index, worker: null, current: null, ready: false };
     slots.push(slot);
+    readyPromises.push(new Promise<void>((resolve) => readyResolvers.push(resolve)));
     slot.worker = spawnWorker(slot.id);
   }
 
   return {
+    async ready() {
+      await Promise.all(readyPromises);
+    },
     run(job) {
       if (closed) return Promise.reject(new Error('Study worker pool is closed'));
       return new Promise((resolve, reject) => {
@@ -150,6 +166,7 @@ export const createStudyWorkerPool = (
     async close() {
       if (closed) return;
       closed = true;
+      for (const resolveReady of readyResolvers) resolveReady();
       while (queue.length > 0)
         queue.shift()?.reject(new Error('Study worker pool closed before dispatch'));
       await Promise.all(
