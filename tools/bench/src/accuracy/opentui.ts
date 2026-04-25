@@ -61,6 +61,7 @@ export class BenchOpenTuiDashboard {
     readonly active: OpenTuiPanel;
     readonly slowest: OpenTuiPanel;
     readonly recent: OpenTuiPanel;
+    readonly legend: OpenTuiPanel;
     readonly filterModal: OpenTuiPanel;
     readonly footer: OpenTuiText;
   } | null = null;
@@ -224,9 +225,29 @@ export class BenchOpenTuiDashboard {
         title: isStudy ? 'Study events' : 'Recent scans',
         accent: THEME.purple,
         flexGrow: 1,
+        ...(isStudy ? { width: '68%' } : {}),
+      });
+      const legend = createPanel(BoxRenderable, TextRenderable, renderer, {
+        id: 'legend',
+        title: 'Study legend',
+        accent: THEME.cyan,
+        width: '32%',
+        flexGrow: 1,
+      });
+      const rightColumn = new BoxRenderable(renderer, {
+        id: 'bench-dashboard-right-column',
+        width: `${(1 - LEFT_COLUMN_RATIO) * 100}%`,
+        height: '100%',
+        flexDirection: 'row',
       });
       tablesRow.add(leftColumn);
-      tablesRow.add(recent.box);
+      if (isStudy) {
+        rightColumn.add(recent.box);
+        rightColumn.add(legend.box);
+        tablesRow.add(rightColumn);
+      } else {
+        tablesRow.add(recent.box);
+      }
 
       const filterModal = createPanel(BoxRenderable, TextRenderable, renderer, {
         id: 'filter-modal',
@@ -290,6 +311,7 @@ export class BenchOpenTuiDashboard {
         active,
         slowest,
         recent,
+        legend,
         filterModal,
         footer,
       };
@@ -489,7 +511,13 @@ export class BenchOpenTuiDashboard {
       ? Math.max(40, contentWidth - studyViewChartWidth - 8)
       : Math.max(40, contentWidth - 4);
     const leftWidth = Math.max(34, Math.floor(contentWidth * LEFT_COLUMN_RATIO) - 4);
-    const recentWidth = Math.max(40, contentWidth - leftWidth - 8);
+    const rightWidth = Math.max(40, contentWidth - leftWidth - 8);
+    const legendWidth =
+      this.dashboard.commandName === 'study' ? Math.max(24, Math.floor(rightWidth * 0.32) - 4) : 0;
+    const recentWidth =
+      this.dashboard.commandName === 'study'
+        ? Math.max(40, rightWidth - legendWidth - 8)
+        : rightWidth;
     const fallbackTableRows = Math.max(4, Math.floor((height - TABLE_LAYOUT_RESERVED_ROWS) / 2));
     const fallbackRecentRows = Math.max(4, height - RECENT_LAYOUT_RESERVED_ROWS);
     const tableRows = fallbackTableRows;
@@ -567,6 +595,11 @@ export class BenchOpenTuiDashboard {
       this.dashboard.commandName === 'study'
         ? renderStudyEvents(this.dashboard, { width: recentWidth })
         : renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
+      recentRows + 1,
+    );
+    panels.legend.box.visible = this.dashboard.commandName === 'study';
+    panels.legend.body.content = panelBody(
+      this.dashboard.commandName === 'study' ? renderStudyLegend({ width: legendWidth }) : [],
       recentRows + 1,
     );
     const footerStatus =
@@ -926,6 +959,31 @@ const formatStudyTiming = (
   outputCount: number,
   cachedCount: number,
 ): string => `${formatCompactDuration(averageMs)} p=${outputCount} jobs=${count} c=${cachedCount}`;
+
+const renderStudyLegend = (options: { readonly width: number }): readonly string[] =>
+  [
+    'study legend',
+    'ids',
+    'inline = inline-flood',
+    'run-map = run-map matcher',
+    'dense = dense-stats',
+    'spatial = spatial-bin',
+    'run-length = run-length-ccl',
+    'run-pattern = run-pattern',
+    'axis-x = axis-intersect',
+    'shared-runs = shared-runs',
+    '',
+    'families',
+    'f=flood m=matcher',
+    'r=row d=dedupe',
+    '',
+    'views',
+    'o=otsu s=sauvola h=hybrid',
+    'n=normal i=inverted',
+    '',
+    'bars',
+    'p=outputs jobs=rows c=cached',
+  ].map((line) => truncateLine(line, options.width));
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,
