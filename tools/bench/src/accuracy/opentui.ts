@@ -61,6 +61,7 @@ export class BenchOpenTuiDashboard {
     readonly active: OpenTuiPanel;
     readonly slowest: OpenTuiPanel;
     readonly recent: OpenTuiPanel;
+    readonly filterModal: OpenTuiPanel;
     readonly footer: OpenTuiText;
   } | null = null;
   private startPromise: Promise<void> | null = null;
@@ -227,6 +228,19 @@ export class BenchOpenTuiDashboard {
       tablesRow.add(leftColumn);
       tablesRow.add(recent.box);
 
+      const filterModal = createPanel(BoxRenderable, TextRenderable, renderer, {
+        id: 'filter-modal',
+        title: 'Study filters',
+        accent: THEME.white,
+        width: '80%',
+        height: 18,
+        position: 'absolute',
+        top: 5,
+        left: '10%',
+        zIndex: 10,
+      });
+      filterModal.box.visible = false;
+
       const footerBox = new BoxRenderable(renderer, {
         id: 'bench-dashboard-footer',
         width: '100%',
@@ -264,10 +278,21 @@ export class BenchOpenTuiDashboard {
       root.add(scorecard.box);
       root.add(tablesRow);
       root.add(footerBox);
+      root.add(filterModal.box);
       renderer.root.add(root);
       renderer.start();
 
-      this.panels = { header, chart, detectorChart, scorecard, active, slowest, recent, footer };
+      this.panels = {
+        header,
+        chart,
+        detectorChart,
+        scorecard,
+        active,
+        slowest,
+        recent,
+        filterModal,
+        footer,
+      };
       this.render();
     } catch (error) {
       this.cleanup();
@@ -509,17 +534,22 @@ export class BenchOpenTuiDashboard {
     }
     panels.scorecard.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? this.filterModalOpen
-          ? renderStudyFilterModal({
-              width: contentWidth,
-              focus: this.focusedStudyWidget,
-              filters: this.studyFilters[this.focusedStudyWidget],
-              cursor: this.filterCursor,
-            })
-          : renderStudyEvents(this.dashboard, { width: contentWidth })
+        ? renderStudyEvents(this.dashboard, { width: contentWidth })
         : renderScorecard(this.dashboard, { width: contentWidth }),
       panelBodyRows(SCORECARD_PANEL_ROWS),
     );
+    panels.filterModal.box.visible = this.dashboard.commandName === 'study' && this.filterModalOpen;
+    panels.filterModal.body.content = this.filterModalOpen
+      ? panelBody(
+          renderStudyFilterModal({
+            width: Math.max(40, Math.floor(contentWidth * 0.8) - 4),
+            focus: this.focusedStudyWidget,
+            filters: this.studyFilters[this.focusedStudyWidget],
+            cursor: this.filterCursor,
+          }),
+          panelBodyRows(18),
+        )
+      : '';
     panels.active.body.content = panelBody(
       renderActiveWorkers(this.dashboard, {
         width: leftWidth,
@@ -611,6 +641,10 @@ const createPanel = (
     readonly height?: number;
     readonly flexGrow?: number;
     readonly width?: number | 'auto' | `${number}%`;
+    readonly position?: 'absolute' | 'relative' | 'static';
+    readonly top?: number | 'auto' | `${number}%`;
+    readonly left?: number | 'auto' | `${number}%`;
+    readonly zIndex?: number;
   },
 ): OpenTuiPanel => {
   const boxOptions = {
@@ -624,6 +658,10 @@ const createPanel = (
     backgroundColor: THEME.panel,
     paddingLeft: 1,
     paddingRight: 1,
+    ...(options.position === undefined ? {} : { position: options.position }),
+    ...(options.top === undefined ? {} : { top: options.top }),
+    ...(options.left === undefined ? {} : { left: options.left }),
+    ...(options.zIndex === undefined ? {} : { zIndex: options.zIndex }),
   } as const;
   const box = new BoxRenderable(renderer, {
     ...boxOptions,
