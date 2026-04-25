@@ -33,6 +33,9 @@ const RECENT_LAYOUT_RESERVED_ROWS = 24;
 const PROGRESS_BAR_WIDTH = 56;
 const DASHBOARD_REFRESH_INTERVAL_MS = 250;
 const TABLE_ROW_FILL_SLACK = 6;
+const FILTER_MODAL_MIN_ROWS = 12;
+const FILTER_MODAL_MAX_ROWS = 22;
+const FILTER_MODAL_WIDTH_RATIO = 0.7;
 
 const panelBodyRows = (panelRows: number): number =>
   Math.max(0, panelRows - PANEL_BORDER_ROWS - PANEL_TITLE_ROWS - PANEL_BODY_BOTTOM_GUTTER_ROWS);
@@ -79,6 +82,7 @@ export class BenchOpenTuiDashboard {
   private focusedStudyWidget: 'views' | 'detectors' = 'views';
   private filterModalOpen = false;
   private filterCursor = 0;
+  private filterOffset = 0;
   private studySlowestMetric: StudySlowestMetric = 'p95';
   private readonly studyFilters: Record<'views' | 'detectors', StudyChartFilters> = {
     views: createStudyChartFilters(),
@@ -257,10 +261,10 @@ export class BenchOpenTuiDashboard {
         title: 'Study filters',
         accent: THEME.white,
         width: '80%',
-        height: 18,
+        height: FILTER_MODAL_MIN_ROWS,
         position: 'absolute',
-        top: 5,
-        left: '10%',
+        top: '25%',
+        left: '15%',
         zIndex: 10,
       });
       filterModal.box.visible = false;
@@ -365,6 +369,7 @@ export class BenchOpenTuiDashboard {
       if (this.dashboard.commandName === 'study' && (key.name === 'f' || key.sequence === 'f')) {
         this.filterModalOpen = true;
         this.filterCursor = 0;
+        this.filterOffset = 0;
         this.renderNow();
         return;
       }
@@ -438,13 +443,52 @@ export class BenchOpenTuiDashboard {
   }
 
   private moveFilterCursor(delta: number): void {
-    const count = filterRows().length;
+    const count = selectableFilterRows().length;
     this.filterCursor = (this.filterCursor + delta + count) % count;
+    this.ensureFilterCursorVisible();
     this.renderNow();
   }
 
+  private ensureFilterCursorVisible(): void {
+    const visibleRows = filterVisibleRows(this.filterModalBodyRows());
+    const maxOffset = Math.max(0, selectableFilterRows().length - visibleRows);
+    this.filterOffset = Math.min(this.filterOffset, maxOffset);
+    if (this.filterCursor < this.filterOffset) {
+      this.filterOffset = this.filterCursor;
+      return;
+    }
+    if (this.filterCursor >= this.filterOffset + visibleRows) {
+      this.filterOffset = Math.min(maxOffset, Math.max(0, this.filterCursor - visibleRows + 1));
+    }
+  }
+
+  private filterModalRows(): number {
+    const terminalHeight = this.renderer?.terminalHeight ?? FILTER_MODAL_MAX_ROWS + 8;
+    return Math.min(FILTER_MODAL_MAX_ROWS, Math.max(FILTER_MODAL_MIN_ROWS, terminalHeight - 8));
+  }
+
+  private filterModalBodyRows(): number {
+    return panelBodyRows(this.filterModalRows());
+  }
+
+  private centerFilterModal(): void {
+    if (!this.panels || !this.renderer) return;
+    const width = Math.max(48, Math.floor(this.renderer.terminalWidth * FILTER_MODAL_WIDTH_RATIO));
+    const height = this.filterModalRows();
+    this.panels.filterModal.box.width = width;
+    this.panels.filterModal.box.height = height;
+    this.panels.filterModal.box.left = Math.max(
+      0,
+      Math.floor((this.renderer.terminalWidth - width) / 2),
+    );
+    this.panels.filterModal.box.top = Math.max(
+      0,
+      Math.floor((this.renderer.terminalHeight - height) / 2),
+    );
+  }
+
   private toggleSelectedFilter(): void {
-    const row = filterRows()[this.filterCursor];
+    const row = selectableFilterRows()[this.filterCursor];
     if (!row) return;
     if (row.group === 'metric') {
       this.studySlowestMetric = row.value as StudySlowestMetric;
@@ -510,6 +554,10 @@ export class BenchOpenTuiDashboard {
     const width = process.stdout.columns ?? process.stderr.columns ?? 120;
     const height = process.stdout.rows ?? process.stderr.rows ?? 40;
     const contentWidth = Math.max(36, width - ROOT_HORIZONTAL_PADDING);
+    if (this.filterModalOpen) {
+      this.centerFilterModal();
+      this.ensureFilterCursorVisible();
+    }
     const showStudyViewChart = this.dashboard.commandName !== 'study' || this.hasStudyViewTimings();
     if (this.dashboard.commandName === 'study' && !showStudyViewChart) {
       this.focusedStudyWidget = 'detectors';
@@ -585,13 +633,15 @@ export class BenchOpenTuiDashboard {
     panels.filterModal.body.content = this.filterModalOpen
       ? panelBody(
           renderStudyFilterModal({
-            width: Math.max(40, Math.floor(contentWidth * 0.8) - 4),
+            width: Math.max(40, panels.filterModal.box.width - 4),
             focus: this.focusedStudyWidget,
             filters: this.studyFilters[this.focusedStudyWidget],
             cursor: this.filterCursor,
             slowestMetric: this.studySlowestMetric,
+            offset: this.filterOffset,
+            maxRows: this.filterModalBodyRows(),
           }),
-          panelBodyRows(18),
+          this.filterModalBodyRows(),
         )
       : '';
     panels.active.body.content = panelBody(
@@ -673,18 +723,66 @@ const createStudyChartFilters = (): StudyChartFilters => ({
   cache: new Set(),
 });
 
-const FILTER_ROWS: readonly { readonly group: StudyFilterGroup; readonly value: string }[] = [
-  ...['avg', 'p95', 'max'].map((value) => ({ group: 'metric' as const, value })),
-  ...['r', 'f', 'm', 'd'].map((value) => ({ group: 'families' as const, value })),
+type StudyFilterRow =
+  | { readonly kind: 'heading'; readonly label: string }
+  | { readonly kind: 'option'; readonly group: StudyFilterGroup; readonly value: string };
+
+const FILTER_ROWS: readonly StudyFilterRow[] = [
+  { kind: 'heading', label: 'slowest metric' },
+  ...['avg', 'p85', 'p95', 'p98', 'p99', 'max'].map((value) => ({
+    kind: 'option' as const,
+    group: 'metric' as const,
+    value,
+  })),
+  { kind: 'heading', label: 'detector families' },
+  ...['r', 'f', 'm', 'd'].map((value) => ({
+    kind: 'option' as const,
+    group: 'families' as const,
+    value,
+  })),
+  { kind: 'heading', label: 'scalar channels' },
   ...['gray', 'oklab-l', 'oklab+a', 'oklab-a', 'oklab+b', 'oklab-b', 'r', 'g', 'b'].map(
-    (value) => ({ group: 'scalars' as const, value }),
+    (value) => ({ kind: 'option' as const, group: 'scalars' as const, value }),
   ),
-  ...['o', 's', 'h'].map((value) => ({ group: 'thresholds' as const, value })),
-  ...['n', 'i'].map((value) => ({ group: 'polarities' as const, value })),
-  ...['fresh', 'cached', 'mixed'].map((value) => ({ group: 'cache' as const, value })),
+  { kind: 'heading', label: 'thresholds' },
+  ...['o', 's', 'h'].map((value) => ({
+    kind: 'option' as const,
+    group: 'thresholds' as const,
+    value,
+  })),
+  { kind: 'heading', label: 'polarity' },
+  ...['n', 'i'].map((value) => ({ kind: 'option' as const, group: 'polarities' as const, value })),
+  { kind: 'heading', label: 'cache state' },
+  ...['fresh', 'cached', 'mixed'].map((value) => ({
+    kind: 'option' as const,
+    group: 'cache' as const,
+    value,
+  })),
 ];
 
-const filterRows = (): typeof FILTER_ROWS => FILTER_ROWS;
+const selectableFilterRows = (): readonly Extract<StudyFilterRow, { readonly kind: 'option' }>[] =>
+  FILTER_ROWS.filter(
+    (row): row is Extract<StudyFilterRow, { readonly kind: 'option' }> => row.kind === 'option',
+  );
+
+const filterVisibleRows = (bodyRows: number): number => Math.max(1, Math.floor((bodyRows - 2) / 2));
+
+const filterGroupLabel = (group: StudyFilterGroup): string => {
+  switch (group) {
+    case 'metric':
+      return 'slowest metric';
+    case 'families':
+      return 'detector families';
+    case 'scalars':
+      return 'scalar channels';
+    case 'thresholds':
+      return 'thresholds';
+    case 'polarities':
+      return 'polarity';
+    case 'cache':
+      return 'cache state';
+  }
+};
 
 const createPanel = (
   BoxRenderable: OpenTuiCore['BoxRenderable'],
@@ -945,6 +1043,8 @@ const renderStudyFilterModal = (options: {
   readonly filters: StudyChartFilters;
   readonly cursor: number;
   readonly slowestMetric: StudySlowestMetric;
+  readonly offset: number;
+  readonly maxRows: number;
 }): readonly string[] => {
   const lines = [
     'study filters',
@@ -953,7 +1053,14 @@ const renderStudyFilterModal = (options: {
       options.width,
     ),
   ];
-  for (const [index, row] of filterRows().entries()) {
+  let previousGroup: StudyFilterGroup | null = null;
+  for (const [index, row] of selectableFilterRows().entries()) {
+    if (index < options.offset || index >= options.offset + filterVisibleRows(options.maxRows))
+      continue;
+    if (row.group !== previousGroup) {
+      lines.push(truncateLine(filterGroupLabel(row.group), options.width));
+      previousGroup = row.group;
+    }
     const selected =
       row.group === 'metric'
         ? options.slowestMetric === row.value
@@ -964,6 +1071,13 @@ const renderStudyFilterModal = (options: {
         `${cursor} ${selected ? '[x]' : '[ ]'} ${row.group}:${row.value}`,
         options.width,
       ),
+    );
+  }
+  const visibleRows = filterVisibleRows(options.maxRows);
+  if (selectableFilterRows().length > visibleRows) {
+    lines[0] = truncateLine(
+      `study filters ${options.offset + 1}-${Math.min(selectableFilterRows().length, options.offset + visibleRows)}/${selectableFilterRows().length}`,
+      options.width,
     );
   }
   return lines;

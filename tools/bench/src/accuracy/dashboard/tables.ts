@@ -1,7 +1,7 @@
 import { formatCompactDuration, padLeft, padRight, truncate } from './format.js';
 import type { BenchDashboardModel, RecentScan, SlowScan } from './model.js';
 
-export type StudySlowestMetric = 'avg' | 'p95' | 'max';
+export type StudySlowestMetric = 'avg' | 'p85' | 'p95' | 'p98' | 'p99' | 'max';
 
 export interface TableWidgetOptions {
   readonly width: number;
@@ -139,6 +139,9 @@ const studyTimingMetric = (
 ): number => {
   if (metric === 'avg') return row.totalMs / Math.max(1, row.count);
   if (metric === 'max') return row.maxMs;
+  if (metric === 'p85') return percentile(row.samples, 0.85);
+  if (metric === 'p98') return percentile(row.samples, 0.98);
+  if (metric === 'p99') return percentile(row.samples, 0.99);
   return percentile(row.samples, 0.95);
 };
 
