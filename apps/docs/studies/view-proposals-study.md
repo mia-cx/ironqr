@@ -25,6 +25,7 @@ Run `bench study view-proposals` against the approved corpus with:
 - all 54 binary view identities enabled;
 - scan `allowMultiple: true` so study execution does not stop after the first result;
 - `maxProposals: 10_000` so the study does not impose the old 24-cluster cap;
+- `maxClusterRepresentatives: 10_000`, `maxClusterStructuralFailures: 10_000`, and `continueAfterDecode: true` so successful decodes do not hide later rescue/cluster behavior;
 - full IronQR trace collection;
 - timing spans for scalar view materialization, binary plane materialization, binary view wrapper creation, proposal generation, ranking, clustering, structure screening, geometry, module sampling, decode attempts, and decode cascade.
 
@@ -33,6 +34,8 @@ The report is expected at:
 ```text
 tools/bench/reports/study-view-proposals.json
 ```
+
+Production scan behavior may stop after a cluster decodes because each cluster is treated as one potential QR code. The study intentionally does not stop: it probes the remaining cluster representatives so budget decisions can be inferred from complete path evidence.
 
 The report should include:
 

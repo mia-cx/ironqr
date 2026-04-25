@@ -250,6 +250,9 @@ export const viewProposalsStudyPlugin: StudyPlugin<
     const results = await scanFrame(image, {
       allowMultiple: true,
       maxProposals: 10_000,
+      maxClusterRepresentatives: 10_000,
+      maxClusterStructuralFailures: 10_000,
+      continueAfterDecode: true,
       proposalViewIds: listDefaultBinaryViewIds(),
       traceSink,
       metricsSink,

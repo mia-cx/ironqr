@@ -49,6 +49,12 @@ export interface ScanRuntimeOptions extends ScanOptions {
   readonly proposalViewIds?: readonly BinaryViewId[];
   /** Optional low-overhead timing span sink for performance harnesses. */
   readonly metricsSink?: ScanMetricsSink;
+  /** Maximum proposal representatives to try inside one cluster. */
+  readonly maxClusterRepresentatives?: number;
+  /** Maximum structural failures tolerated inside one cluster before killing it. */
+  readonly maxClusterStructuralFailures?: number;
+  /** Continue probing cluster representatives after a successful decode. Used by exhaustive studies. */
+  readonly continueAfterDecode?: boolean;
   /** Optional cooperative scheduler used between proposal-view batches. */
   readonly scheduler?: ScanScheduler;
 }
@@ -441,6 +447,7 @@ const scanFrameExecutionOnce = (
       maxProposals,
       traceSink,
       options.metricsSink,
+      options.maxClusterRepresentatives,
     );
     let stopScanning = false;
     let earlyFrontierPasses = 0;
@@ -484,6 +491,9 @@ const scanFrameExecutionOnce = (
       const processed = yield* processFrontierClusters(latestSnapshot, viewBank, processingState, {
         allowMultiple: false,
         maxNewRepresentatives: 1,
+        maxStructuralFailures:
+          options.maxClusterStructuralFailures ?? MAX_CLUSTER_STRUCTURAL_FAILURES,
+        continueAfterDecode: options.continueAfterDecode === true,
         ...(traceSink === undefined ? {} : { traceSink }),
         ...(options.metricsSink === undefined ? {} : { metricsSink: options.metricsSink }),
       });
@@ -510,6 +520,9 @@ const scanFrameExecutionOnce = (
       const processed = yield* processFrontierClusters(latestSnapshot, viewBank, processingState, {
         allowMultiple: options.allowMultiple === true,
         maxNewRepresentatives: Number.POSITIVE_INFINITY,
+        maxStructuralFailures:
+          options.maxClusterStructuralFailures ?? MAX_CLUSTER_STRUCTURAL_FAILURES,
+        continueAfterDecode: options.continueAfterDecode === true,
         ...(traceSink === undefined ? {} : { traceSink }),
         ...(options.metricsSink === undefined ? {} : { metricsSink: options.metricsSink }),
       });
@@ -617,6 +630,7 @@ const buildFrontierSnapshot = (
   maxProposals: number,
   traceSink?: TraceSink,
   metricsSink?: ScanMetricsSink,
+  maxClusterRepresentatives?: number,
 ): FrontierSnapshot => {
   const rankingStartedAt = nowMs();
   const rankedProposalCandidates = rankProposalCandidates(
@@ -637,7 +651,7 @@ const buildFrontierSnapshot = (
 
   const clusteringStartedAt = nowMs();
   const allClusters = clusterRankedProposals(viableProposals, {
-    maxRepresentatives: MAX_CLUSTER_REPRESENTATIVES,
+    maxRepresentatives: maxClusterRepresentatives ?? MAX_CLUSTER_REPRESENTATIVES,
   });
   const clusters = allClusters.slice(0, maxProposals);
   const clusteringMs = nowMs() - clusteringStartedAt;
@@ -719,6 +733,8 @@ const processFrontierClusters = (
   options: {
     readonly allowMultiple: boolean;
     readonly maxNewRepresentatives: number;
+    readonly maxStructuralFailures: number;
+    readonly continueAfterDecode: boolean;
     readonly traceSink?: TraceSink;
     readonly metricsSink?: ScanMetricsSink;
   },
@@ -800,7 +816,7 @@ const processFrontierClusters = (
         if (!structure.passed) {
           structuralFailures += 1;
           state.structuralFailuresByClusterId.set(cluster.id, structuralFailures);
-          if (structuralFailures >= MAX_CLUSTER_STRUCTURAL_FAILURES) {
+          if (structuralFailures >= options.maxStructuralFailures) {
             clusterOutcome = 'killed';
             state.killedClusterCount += 1;
             break;
@@ -848,7 +864,8 @@ const processFrontierClusters = (
         const ranked = toRankedResult(success.result, proposal, success.attempt);
         if (!pushUniqueRankedResult(state.results, state.seenResults, ranked)) {
           clusterOutcome = 'duplicate';
-          break;
+          if (!options.continueAfterDecode) break;
+          continue;
         }
         clusterOutcome = 'decoded';
         winningProposalId = proposal.id;
@@ -864,7 +881,7 @@ const processFrontierClusters = (
           );
           return { stopScanning: true };
         }
-        break;
+        if (!options.continueAfterDecode) break;
       }
 
       emitClusterFinished(
