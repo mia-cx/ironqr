@@ -9,6 +9,7 @@ import {
   getOklabPlanes,
 } from '../../../../packages/ironqr/src/pipeline/frame.js';
 import {
+  detectFinderEvidenceWithSummary,
   detectMatcherFinders,
   detectMatcherFindersWithRunMapVariant,
   type FinderEvidence,
@@ -798,9 +799,11 @@ const detectorStudyViewIds = (config: ImageProcessingConfig): readonly BinaryVie
 const FLOOD_CONTROL_ID = 'scanline-squared';
 
 const activeDetectorPatternIds = (): readonly string[] => [
+  'row-scan',
   FLOOD_CONTROL_ID,
   ...ACTIVE_FLOOD_CANDIDATES.map((candidate) => candidate.id),
   ...activeMatcherPatternIds(),
+  'dedupe',
 ];
 
 const activeMatcherPatternIds = (): readonly string[] => [
@@ -859,14 +862,21 @@ const readCachedDetectorAssetResult = async (
 
   for (const viewId of viewIds) {
     await yieldToDashboard();
+    const rowScan = await readVariantMeasurement(asset, cache, 'row-scan', viewId);
+    if (!rowScan) return null;
     const floodControl = await readVariantMeasurement(asset, cache, FLOOD_CONTROL_ID, viewId);
     if (!floodControl) return null;
     const matcherControl = measureMatchers
       ? await readVariantMeasurement(asset, cache, 'run-map', viewId)
       : null;
     if (measureMatchers && !matcherControl) return null;
+    const dedupe = await readVariantMeasurement(asset, cache, 'dedupe', viewId);
+    if (!dedupe) return null;
     floodControlMs += floodControl.durationMs;
     if (matcherControl) matcherControlMs += matcherControl.durationMs;
+    const rowScanId = detectorTimingId(viewId, 'row-scan', 'row');
+    matcherUnits.push(detectorUnit(rowScanId, 'row-scan', 'row', rowScan, true, true));
+    logStudyTiming(log, rowScanId, rowScan.durationMs, 'detector', rowScan.outputCount, true);
     const floodControlId = detectorTimingId(viewId, FLOOD_CONTROL_ID, 'flood');
     floodUnits.push(
       detectorUnit(floodControlId, FLOOD_CONTROL_ID, 'flood', floodControl, true, true),
@@ -893,6 +903,9 @@ const readCachedDetectorAssetResult = async (
       floodControl.outputCount,
       true,
     );
+    const dedupeId = detectorTimingId(viewId, 'dedupe', 'dedupe');
+    matcherUnits.push(detectorUnit(dedupeId, 'dedupe', 'dedupe', dedupe, true, true));
+    logStudyTiming(log, dedupeId, dedupe.durationMs, 'detector', dedupe.outputCount, true);
 
     for (const candidate of ACTIVE_FLOOD_CANDIDATES) {
       const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
@@ -1232,6 +1245,30 @@ const createFloodScheduler = (): VariantScheduler | undefined => {
 const floodSchedulerLimit = (): number => {
   const value = Reflect.get(globalThis, '__BENCH_STUDY_FLOOD_CONCURRENCY_LIMIT__');
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+};
+
+const measureKnownDurationVariant = async (
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
+  variantId: string,
+  viewId: BinaryViewId,
+  preloadedRows: ReadonlySet<string>,
+  produce: () => VariantCacheMeasurement,
+): Promise<{
+  readonly measurement: VariantCacheMeasurement;
+  readonly cached: boolean;
+  readonly preloaded: boolean;
+}> => {
+  const cached = await readVariantMeasurement(asset, cache, variantId, viewId);
+  if (cached)
+    return {
+      measurement: cached,
+      cached: true,
+      preloaded: preloadedRows.has(detectorRowKey(asset.id, variantId, viewId)),
+    };
+  const measurement = produce();
+  await cache.write(asset, detectorVariantCacheKey(variantId, viewId), measurement);
+  return { measurement, cached: false, preloaded: false };
 };
 
 const measureVariant = async (
@@ -2194,6 +2231,78 @@ const measureFloodCandidateVariants = async (
   return { controlMs: round(controlMs), variants: [...variants.values()], units };
 };
 
+const measureFinderFamilyRows = async (
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
+  view: BinaryView,
+  viewId: BinaryViewId,
+  preloadedRows: ReadonlySet<string>,
+  log: (message: string) => void,
+): Promise<{ readonly units: readonly DetectorUnitMeasurement[] }> => {
+  let detection: ReturnType<typeof detectFinderEvidenceWithSummary> | null = null;
+  const getDetection = (): ReturnType<typeof detectFinderEvidenceWithSummary> => {
+    detection ??= detectFinderEvidenceWithSummary(view);
+    return detection;
+  };
+  const rowScan = await measureKnownDurationVariant(
+    asset,
+    cache,
+    'row-scan',
+    viewId,
+    preloadedRows,
+    () => {
+      const result = getDetection();
+      return {
+        durationMs: round(result.summary.rowScanDurationMs),
+        outputCount: result.summary.rowScanCount,
+        signature: [],
+      };
+    },
+  );
+  const dedupe = await measureKnownDurationVariant(
+    asset,
+    cache,
+    'dedupe',
+    viewId,
+    preloadedRows,
+    () => {
+      const result = getDetection();
+      return {
+        durationMs: round(result.summary.dedupeDurationMs),
+        outputCount: result.summary.dedupedCount,
+        signature: finderSignature(result.evidence),
+      };
+    },
+  );
+  const rows = [
+    { variantId: 'row-scan', area: 'row' as const, measurement: rowScan },
+    { variantId: 'dedupe', area: 'dedupe' as const, measurement: dedupe },
+  ];
+  for (const row of rows) {
+    if (row.measurement.preloaded) continue;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, row.variantId, row.area),
+      row.measurement.measurement.durationMs,
+      'detector',
+      row.measurement.measurement.outputCount,
+      row.measurement.cached,
+    );
+  }
+  return {
+    units: rows.map((row) =>
+      detectorUnit(
+        detectorTimingId(viewId, row.variantId, row.area),
+        row.variantId,
+        row.area,
+        row.measurement.measurement,
+        row.measurement.cached,
+        true,
+      ),
+    ),
+  };
+};
+
 const mergeDetectorVariant = (
   variants: Map<string, DetectorVariantMeasurement>,
   next: DetectorVariantMeasurement,
@@ -2233,6 +2342,15 @@ const measureMatcherCandidateVariants = async (
   for (const viewId of viewIds) {
     throwIfStudyAborted(signal);
     const view = viewBank.getBinaryView(viewId);
+    const finderDetection = await measureFinderFamilyRows(
+      asset,
+      cache,
+      view,
+      viewId,
+      preloadedRows,
+      log,
+    );
+    units.push(...finderDetection.units);
     const control = await measureVariant(asset, cache, 'run-map', viewId, preloadedRows, () =>
       detectMatcherFinders(view, view.width, view.height),
     );

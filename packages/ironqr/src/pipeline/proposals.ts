@@ -210,7 +210,7 @@ export interface ProposalViewBatch {
   readonly summary: ProposalViewGenerationSummary;
 }
 
-interface FinderEvidenceDetection {
+export interface FinderEvidenceDetection {
   readonly evidence: readonly FinderEvidence[];
   readonly summary: FinderEvidenceSummary;
 }
@@ -466,7 +466,9 @@ const emitProposalViewGenerated = (
   });
 };
 
-const detectFinderEvidenceWithSummary = (binaryView: BinaryView): FinderEvidenceDetection => {
+export const detectFinderEvidenceWithSummary = (
+  binaryView: BinaryView,
+): FinderEvidenceDetection => {
   const rowScanStartedAt = nowMs();
   const rowScan = detectRowScanFinders(binaryView, binaryView.width, binaryView.height);
   const rowScanDurationMs = nowMs() - rowScanStartedAt;
