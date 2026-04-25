@@ -368,6 +368,7 @@ interface ImageProcessingTotals {
   readonly binaryReadByteMs: number;
   readonly binaryReadDirectMs: number;
   readonly binaryReadPixels: number;
+  readonly rowScanControlMs: number;
   readonly matcherControlMs: number;
   readonly matcherLegacyControlMs: number;
   readonly matcherLegacyControlOutputsEqual: boolean;
@@ -3311,8 +3312,12 @@ const summarizeImageProcessingStudy = ({
       }
     }
     if (result.matcherCandidates) {
+      const rowScanControlMs = result.matcherCandidates.units
+        .filter((unit) => unit.variantId === 'row-scan')
+        .reduce((sum, unit) => sum + unit.durationMs, 0);
+      totals.rowScanControlMs += rowScanControlMs;
       totals.matcherControlMs += result.matcherCandidates.controlMatcherMs;
-      totals.detectorMs += result.matcherCandidates.controlMatcherMs;
+      totals.detectorMs += rowScanControlMs + result.matcherCandidates.controlMatcherMs;
       totals.matcherLegacyControlMs += result.matcherCandidates.legacyControlMs;
       totals.matcherRunMapMs += result.matcherCandidates.runMapMs;
       totals.matcherPrunedCenterMs += result.matcherCandidates.prunedCenterMs;
@@ -3506,6 +3511,7 @@ const emptyTotals = (): MutableTotals => ({
   binaryReadByteMs: 0,
   binaryReadDirectMs: 0,
   binaryReadPixels: 0,
+  rowScanControlMs: 0,
   matcherControlMs: 0,
   matcherLegacyControlMs: 0,
   matcherRunMapMs: 0,
@@ -3612,6 +3618,7 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   binaryReadByteMs: round(totals.binaryReadByteMs),
   binaryReadDirectMs: round(totals.binaryReadDirectMs),
   binaryReadPixels: totals.binaryReadPixels,
+  rowScanControlMs: round(totals.rowScanControlMs),
   matcherControlMs: round(totals.matcherControlMs),
   matcherLegacyControlMs: round(totals.matcherLegacyControlMs),
   matcherRunMapMs: round(totals.matcherRunMapMs),
@@ -3682,8 +3689,14 @@ const summarizeDetectorVariants = (
   totals: ImageProcessingTotals,
 ): readonly DetectorVariantSummary[] =>
   [...variants.values()].map((variant) => {
-    const controlId = variant.area === 'flood' ? FLOOD_CONTROL_ID : 'run-map';
-    const controlMs = variant.area === 'flood' ? totals.floodControlMs : totals.matcherControlMs;
+    const controlId =
+      variant.area === 'flood' ? FLOOD_CONTROL_ID : variant.area === 'row' ? 'row-scan' : 'run-map';
+    const controlMs =
+      variant.area === 'flood'
+        ? totals.floodControlMs
+        : variant.area === 'row'
+          ? totals.rowScanControlMs
+          : totals.matcherControlMs;
     return {
       ...variant,
       ...latencySummary(variant.samples),
