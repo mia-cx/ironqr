@@ -288,11 +288,11 @@ export class BenchOpenTuiDashboard {
         return;
       }
       if (this.dashboard.commandName === 'study' && isScrollDownKey(key)) {
-        this.scrollFocusedStudyWidget(1, key.shift);
+        this.scrollFocusedStudyWidget(1, isSingleRowScrollKey(key));
         return;
       }
       if (this.dashboard.commandName === 'study' && isScrollUpKey(key)) {
-        this.scrollFocusedStudyWidget(-1, key.shift);
+        this.scrollFocusedStudyWidget(-1, isSingleRowScrollKey(key));
         return;
       }
       if ((key.name === 'c' && key.ctrl) || key.sequence === '\u0003') {
@@ -319,8 +319,8 @@ export class BenchOpenTuiDashboard {
     this.renderNow();
   }
 
-  private scrollFocusedStudyWidget(delta: number, page: boolean): void {
-    const step = page ? this.studyPageScrollSize() : 1;
+  private scrollFocusedStudyWidget(delta: number, singleRow: boolean): void {
+    const step = singleRow ? 1 : this.studyPageScrollSize();
     const scrollDelta = delta * step;
     if (this.focusedStudyWidget === 'detectors') {
       const maxOffset = Math.max(0, this.dashboard.studyDetectorTimings.size - 1);
@@ -447,7 +447,7 @@ export class BenchOpenTuiDashboard {
       renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
       recentRows + 1,
     );
-    panels.footer.content = `${renderRunFooter(this.dashboard)} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | ↑/↓ j/k=scroll | shift+↑/↓=page` : ''}`;
+    panels.footer.content = `${renderRunFooter(this.dashboard)} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
     this.renderer?.requestRender();
   }
 }
@@ -456,10 +456,18 @@ const isTabKey = (key: OpenTuiKeyEvent): boolean =>
   (key.name === 'tab' || key.sequence === '\t') && !key.ctrl && !key.meta;
 
 const isScrollDownKey = (key: OpenTuiKeyEvent): boolean =>
-  (key.name === 'down' || key.name === 'j' || key.sequence === 'j') && !key.ctrl && !key.meta;
+  (key.name === 'down' || key.name === 'j' || key.sequence === 'j') && !key.ctrl;
 
 const isScrollUpKey = (key: OpenTuiKeyEvent): boolean =>
-  (key.name === 'up' || key.name === 'k' || key.sequence === 'k') && !key.ctrl && !key.meta;
+  (key.name === 'up' || key.name === 'k' || key.sequence === 'k') && !key.ctrl;
+
+const isSingleRowScrollKey = (key: OpenTuiKeyEvent): boolean =>
+  key.name === 'j' ||
+  key.sequence === 'j' ||
+  key.name === 'k' ||
+  key.sequence === 'k' ||
+  key.option ||
+  key.meta;
 
 const createPanel = (
   BoxRenderable: OpenTuiCore['BoxRenderable'],
