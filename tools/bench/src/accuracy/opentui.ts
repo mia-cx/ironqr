@@ -44,6 +44,8 @@ const FILTER_MODAL_MAX_WIDTH = 80;
 const panelBodyRows = (panelRows: number): number =>
   Math.max(0, panelRows - PANEL_BORDER_ROWS - PANEL_TITLE_ROWS - PANEL_BODY_BOTTOM_GUTTER_ROWS);
 
+const FRACTIONAL_BAR_SEGMENTS = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'] as const;
+
 const THEME = {
   background: '#07111f',
   panel: '#0f172a',
@@ -1066,8 +1068,7 @@ const renderStudyTimingBars = (
     ),
     ...visibleRows.map((row) => {
       const average = averageStudyTimingMs(row);
-      const filled = Math.max(1, Math.round((average / maxAverage) * barWidth));
-      const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, barWidth - filled))}`;
+      const bar = fractionalBar(average / maxAverage, barWidth, { minVisible: average > 0 });
       return truncateLine(
         `${padStudyCell(row.id, labelWidth)} ${bar} ${formatStudyTiming(average, row.count, row.outputCount, row.cachedCount)}`,
         options.width,
@@ -1307,13 +1308,34 @@ const headerText = (dashboard: BenchDashboardModel, width: number): string => {
   const suffix = dashboard.commandName === 'study' ? '' : `  ${dashboard.message}`;
   const countText = `  ${completed}/${total} jobs${suffix}`;
   const dynamicBarWidth = Math.max(PROGRESS_BAR_WIDTH, width - labelWidth - countText.length - 1);
-  const completeWidth = Math.round(percent * dynamicBarWidth);
-  const progress = `${'█'.repeat(completeWidth)}${'░'.repeat(dynamicBarWidth - completeWidth)}`;
+  const progress = fractionalBar(percent, dynamicBarWidth);
   return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}${countText}`;
 };
 
 const studyJobProgress = (dashboard: BenchDashboardModel): string =>
   `${dashboard.studyCompletedUnits}/${dashboard.studyTotalUnits || '-'}`;
+
+const fractionalBar = (
+  ratio: number,
+  width: number,
+  options: { readonly minVisible?: boolean } = {},
+): string => {
+  const normalizedWidth = Math.max(0, Math.floor(width));
+  if (normalizedWidth === 0) return '';
+  const normalizedRatio = clamp01(Number.isFinite(ratio) ? ratio : 0);
+  const totalEighths = Math.min(
+    normalizedWidth * 8,
+    Math.max(
+      options.minVisible && normalizedRatio > 0 ? 1 : 0,
+      Math.round(normalizedRatio * normalizedWidth * 8),
+    ),
+  );
+  const fullCells = Math.floor(totalEighths / 8);
+  const partialEighths = totalEighths % 8;
+  const partial = partialEighths === 0 ? '' : (FRACTIONAL_BAR_SEGMENTS[partialEighths - 1] ?? '');
+  const filledWidth = fullCells + (partial ? 1 : 0);
+  return `${'█'.repeat(fullCells)}${partial}${'░'.repeat(Math.max(0, normalizedWidth - filledWidth))}`;
+};
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
