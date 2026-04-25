@@ -913,10 +913,12 @@ const readCachedDetectorAssetResult = async (
   const matcherVariants = new Map<string, DetectorVariantMeasurement>();
   const floodUnits: DetectorUnitMeasurement[] = [];
   const matcherUnits: DetectorUnitMeasurement[] = [];
+  const detectorOverlapRows: DetectorFamilyOverlapMeasurement[] = [];
   const measureRows = ACTIVE_ROW_CANDIDATES.length > 0;
   const measureFlood = activeFloodPatternIds().length > 0;
   const measureMatchers = activeMatcherPatternIds().length > 0;
   const measureDedupe = ACTIVE_DEDUPE_FAMILY;
+  const measureFinderSide = measureRows || measureMatchers || measureDedupe;
 
   for (const viewId of viewIds) {
     await yieldToDashboard();
@@ -992,6 +994,9 @@ const readCachedDetectorAssetResult = async (
       matcherUnits.push(detectorUnit(dedupeId, 'dedupe', 'dedupe', dedupe, true, true));
       logStudyTiming(log, dedupeId, dedupe.durationMs, 'detector', dedupe.outputCount, true);
     }
+    detectorOverlapRows.push(
+      cachedDetectorOverlapMeasurement(viewId, rowScan, floodControl, matcherControl, dedupe),
+    );
 
     if (floodControl) {
       for (const candidate of ACTIVE_FLOOD_CANDIDATES) {
@@ -1055,8 +1060,14 @@ const readCachedDetectorAssetResult = async (
     scalarStats: [],
     scalarFusion: emptyScalarFusionMeasurement(),
     sharedArtifacts: emptySharedArtifactMeasurement(),
-    matcherCandidates: measureMatchers
-      ? cachedMatcherMeasurement(matcherControlMs, viewIds, matcherVariants, matcherUnits)
+    matcherCandidates: measureFinderSide
+      ? cachedMatcherMeasurement(
+          matcherControlMs,
+          viewIds,
+          matcherVariants,
+          matcherUnits,
+          detectorOverlapRows,
+        )
       : null,
     floodCandidates: measureFlood
       ? {
@@ -1070,6 +1081,63 @@ const readCachedDetectorAssetResult = async (
     decode: null,
   };
 };
+
+const cachedDetectorOverlapMeasurement = (
+  viewId: BinaryViewId,
+  rowScan: VariantCacheMeasurement,
+  flood: VariantCacheMeasurement | null,
+  matcher: VariantCacheMeasurement | null,
+  dedupe: VariantCacheMeasurement | null,
+): DetectorFamilyOverlapMeasurement => {
+  const rowScanFinders = parseFinderSignature(rowScan.signature);
+  const floodFinders = flood ? parseFinderSignature(flood.signature) : [];
+  const matcherFinders = matcher ? parseFinderSignature(matcher.signature) : [];
+  const dedupedSignature = dedupe?.signature ?? rowScan.signature;
+  const floodOverlap = summarizeFloodOverlap(floodFinders, rowScanFinders, matcherFinders);
+  return {
+    viewId,
+    rowScanCount: rowScan.outputCount,
+    floodCount: flood?.outputCount ?? 0,
+    matcherCount: matcher?.outputCount ?? 0,
+    dedupedCount: dedupe?.outputCount ?? rowScan.outputCount,
+    rowScanRetainedCount: countSignatureSource(dedupedSignature, 'row-scan'),
+    floodRetainedCount: countSignatureSource(dedupedSignature, 'flood'),
+    matcherRetainedCount: countSignatureSource(dedupedSignature, 'matcher'),
+    dedupeRemovedCount: dedupe
+      ? rowScan.outputCount +
+        (flood?.outputCount ?? 0) +
+        (matcher?.outputCount ?? 0) -
+        dedupe.outputCount
+      : 0,
+    ...floodOverlap,
+    rowScanOverlapsMatcherCount: countOverlappingFinders(rowScanFinders, matcherFinders),
+  };
+};
+
+const parseFinderSignature = (signature: readonly string[]): FinderEvidence[] =>
+  signature.flatMap((entry) => {
+    const [source, centerX, centerY, moduleSize, hModuleSize, vModuleSize, score] =
+      entry.split(':');
+    if (source !== 'row-scan' && source !== 'flood' && source !== 'matcher' && source !== 'quad') {
+      return [];
+    }
+    return [
+      {
+        source,
+        centerX: Number(centerX),
+        centerY: Number(centerY),
+        moduleSize: Number(moduleSize),
+        hModuleSize: Number(hModuleSize),
+        vModuleSize: Number(vModuleSize),
+        score: Number(score),
+      },
+    ];
+  });
+
+const countSignatureSource = (
+  signature: readonly string[],
+  source: FinderEvidence['source'],
+): number => signature.filter((entry) => entry.startsWith(`${source}:`)).length;
 
 const replayCachedDetectorRows = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
@@ -1171,9 +1239,10 @@ const cachedMatcherMeasurement = (
   viewIds: readonly BinaryViewId[],
   variants: ReadonlyMap<string, DetectorVariantMeasurement>,
   units: readonly DetectorUnitMeasurement[],
+  detectorOverlap: readonly DetectorFamilyOverlapMeasurement[],
 ): MatcherCandidateMeasurement => ({
   variants: [...variants.values()],
-  detectorOverlap: [],
+  detectorOverlap,
   units,
   controlMatcherMs: round(controlMatcherMs),
   legacyControlMs: 0,
