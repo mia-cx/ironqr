@@ -255,7 +255,7 @@ export class BenchOpenTuiDashboard {
       }
       if (key.name === 'p' && !key.ctrl && !key.meta) {
         this.renderPaused = !this.renderPaused;
-        this.render(true);
+        this.renderNow();
         return;
       }
       if (this.dashboard.commandName === 'study' && isScrollDownKey(key)) {
@@ -288,7 +288,7 @@ export class BenchOpenTuiDashboard {
   private scrollStudyTimings(delta: number): void {
     const maxOffset = Math.max(0, this.dashboard.studyTimings.size - 1);
     this.studyTimingOffset = Math.min(maxOffset, Math.max(0, this.studyTimingOffset + delta));
-    this.render(true);
+    this.renderNow();
   }
 
   private cleanup(): void {
@@ -308,6 +308,11 @@ export class BenchOpenTuiDashboard {
     this.panels = null;
     this.renderer = null;
     renderer?.destroy();
+  }
+
+  private renderNow(): void {
+    this.render(true);
+    this.renderer?.requestRender();
   }
 
   private render(force = false): void {
