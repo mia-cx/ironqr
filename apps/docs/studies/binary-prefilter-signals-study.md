@@ -84,12 +84,12 @@ Run metadata:
 
 Report fitness notes:
 
-- The run is suitable as a smoke-test checkpoint for detector timing, passive signal overhead, and the two current performance variants because cache hits were zero.
+- The run is suitable as a smoke-test checkpoint for detector timing, passive signal overhead, and the retired materialized-inverted/shared-run performance variants because cache hits were zero.
 - The run covered all 54 binary view identities on a seeded 25-asset sample, not the full 203-asset corpus.
 - The run is not a decode-capability or prefilter-safety proof because `decode=false`; it cannot report lost positives or false positives for a future gating policy.
 - The run still does not fully match the original designed experiment because signal rows are not joined to exhaustive `view-proposals` trace outcomes. It lacks ranked proposal score, structure pass/fail, decode success, and false-positive outcomes per signal row.
 - Inverted entries are polarity paths/signals over shared threshold planes, not separately materialized inverted planes.
-- The next study iteration removes the old materialized-inverted (`a`) and shared-run-artifact (`b`) candidates; those answered the XOR/polarity-read question. The active candidate set now targets matcher speedups directly and expands to legacy/run-map controls plus legacy/run-map versions of center pruning, row/flood seeding, and fused-polarity traversal.
+- The current study revision removed the old materialized-inverted (`a`) and shared-run-artifact (`b`) candidates; those answered the XOR/polarity-read question. The active candidate set now targets matcher speedups directly and expands to legacy/run-map controls plus legacy/run-map versions of center pruning, row/flood seeding, and fused-polarity traversal.
 
 Question coverage:
 
@@ -101,7 +101,7 @@ Question coverage:
 | Do signals predict false-positive risk? | Unanswered | `decode=false` | No false-positive evidence was collected. |
 | Is signal collection cheap enough for study observability? | Answered for this sample | signalMs vs detectorMs | Yes. Total signal overhead was ~1.15% of detector time; p95 per-asset overhead was ~2.41%, under the 3% rule. |
 | Does materializing inverted buffers beat polarity-proxy reads? | Answered for this smoke sample | retired `materialized-inverted-detector` variant | The old candidate improved total inverted detector+materialization time by 3.5% with equal finder/proposal counts, below the 5% checkpoint threshold; polarity-read/XOR overhead is not the main target. |
-| Is shared polarity-neutral detector structure promising? | Partially answered | retired `shared-run-artifact-prototype` variant | The old candidate showed headroom but was too broad. The active study now decomposes matcher-specific run maps, center pruning, seeded rescue, and fused polarity traversal. |
+| Is shared polarity-neutral detector structure promising? | Partially answered | retired `shared-run-artifact-prototype` variant plus active fused-polarity variants | The old candidate showed headroom but was too broad. The active study now decomposes matcher-specific legacy/run-map controls, center pruning, seeded rescue, and fused polarity traversal. |
 | Are component counts/percentiles useful? | Unanswered | not collected | Component stats were optional and not present. |
 | Are duplicate/redundant sibling-view signals useful? | Unanswered | not collected | Similarity to sibling views was not present. |
 
@@ -128,6 +128,16 @@ Retired variant results:
 | --- | ---: | ---: | ---: | ---: | --- | --- |
 | materialized inverted detector | 118,662.49 ms | 114,504.65 ms | 4,157.84 ms | 3.5% | proposal/finder counts equal | Below the <5% checkpoint threshold; polarity-read/XOR overhead is unlikely to be the main inverted cost. |
 | shared run artifact prototype | 204,322.80 ms | 1,143.55 ms | 203,179.25 ms | 99.44% | not behavior-equivalent | Strong headroom signal, but too broad to identify the matcher implementation shape. Replaced by matcher-specific candidates. |
+
+Current processed report contract:
+
+The final/processed report is written to `tools/bench/reports/study/study-binary-prefilter-signals.summary.json`. It must preserve enough evidence to answer the current matcher question without requiring readers to open the ignored full report:
+
+- `headline`: detector/flood/run-map matcher/legacy matcher timing plus legacy-vs-run-map output equality.
+- `variants`: the eight legacy/run-map control and candidate rows.
+- `matcherMatrix`: compact control comparison and legacy/run-map candidate matrix with timings, saved ms, improvement %, output equality, and mismatch counts.
+- `detectorBreakdown`: row-scan/flood/matcher/dedupe totals.
+- `questionCoverage`: explicitly calls out run-map promotion regression evidence, matcher candidate preservation, and the still-unanswered decode/false-positive gating questions.
 
 Active matcher-candidate study revision:
 
@@ -315,5 +325,5 @@ Do not ship production prefilter gating from this run. Required next evidence:
 - rerun `binary-prefilter-signals` after the matcher variant expansion to compare legacy and run-map controls across the full corpus;
 - rerun `view-proposals` so proposal ranking, structure, cluster, and decode outcomes are measured against the faster matcher default;
 - if center pruning is revisited, report both a fast-first candidate and a fallback-to-full-matcher candidate so speed and output equivalence are evaluated together;
-- make fused polarity traversal output-producing before using it for a production decision: it must emit finder lists for normal and inverted views and prove equality against the default matcher;
+- keep fused polarity traversal output-producing and compare both legacy and run-map fused outputs against the default matcher before using it for a production decision;
 - verify any candidate prefilter thresholds against unique positive successes and false-positive risk.
