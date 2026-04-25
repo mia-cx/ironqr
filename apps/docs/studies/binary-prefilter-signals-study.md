@@ -167,8 +167,35 @@ Interpretation:
 
 - Run-map cross-checks are the right default: they preserve matcher output while removing most of the matcher cost.
 - Center pruning is too aggressive as a hard gate. It rejected enough candidate centers to change outputs in most views. If revisited, it should likely become prioritization plus fallback, not an exclusion filter.
-- Fused polarity traversal and row/flood seeded rescue stayed non-output-producing because they only count/classify possible work. They do not yet emit matcher `FinderEvidence[]`, so they cannot prove equivalence.
+- Fused polarity traversal and row/flood seeded rescue stayed non-output-producing in this checkpoint because they only counted/classified possible work. Later study code made both output-producing so they can be checked against the default matcher.
 - Future study runs are expected to be faster because the production matcher control now uses run maps by default.
+
+## Post-run-map matcher checkpoint
+
+A later 25-asset run after promoting run-map cross-checks to the default matcher was generated at `2026-04-25T02:45:45.044Z` on commit `0fe421beeddb7a05be1a86854b573e4ebaa96748`:
+
+| Measurement | Value |
+| --- | ---: |
+| Assets | 25 (`8` positive, `17` negative) |
+| View rows | 1,350 (`25 × 54`) |
+| Detector time | 75,513.75 ms |
+| Flood-fill time | 43,885.96 ms |
+| Matcher control time | 22,973.80 ms |
+| Row-scan time | 8,643.08 ms |
+| Center-pruned run-map matcher time | 30,889.20 ms |
+| Center-pruned output equality | `false` (`1,097` mismatched views) |
+| Row/flood seeded matcher time | 8,084.02 ms |
+| Row/flood seeded output equality | `false` (`1,104` mismatched views) |
+| Fused normal+inverted matcher time | 24,184.30 ms |
+| Fused normal+inverted output equality | `true` (`0` mismatched polarity views) |
+
+Interpretation:
+
+- The bottleneck moved from matcher to flood-fill. Flood is now ~58% of detector time in this sample (`43.9s / 75.5s`).
+- The run-map matcher remains the right control: center pruning is slower than control and still wrong, while seeded rescue is faster but misses control output.
+- Fused normal+inverted traversal is behavior-equivalent in this run, but slightly slower than separate run-map matcher passes (`24.2s` vs `23.0s`). It is not worth production adoption without further implementation changes that actually reuse more shared work.
+- Hybrid and Otsu now dominate aggregate detector time, while the hottest individual views are still mostly normal gray/Otsu and inverted Sauvola/hybrid paths.
+- Next detector optimization should target flood/component labeling and component matching rather than matcher pruning.
 
 Detector hotspots by view:
 
