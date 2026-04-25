@@ -288,11 +288,11 @@ export class BenchOpenTuiDashboard {
         return;
       }
       if (this.dashboard.commandName === 'study' && isScrollDownKey(key)) {
-        this.scrollFocusedStudyWidget(1);
+        this.scrollFocusedStudyWidget(1, key.shift);
         return;
       }
       if (this.dashboard.commandName === 'study' && isScrollUpKey(key)) {
-        this.scrollFocusedStudyWidget(-1);
+        this.scrollFocusedStudyWidget(-1, key.shift);
         return;
       }
       if ((key.name === 'c' && key.ctrl) || key.sequence === '\u0003') {
@@ -319,12 +319,14 @@ export class BenchOpenTuiDashboard {
     this.renderNow();
   }
 
-  private scrollFocusedStudyWidget(delta: number): void {
+  private scrollFocusedStudyWidget(delta: number, page: boolean): void {
+    const step = page ? this.studyPageScrollSize() : 1;
+    const scrollDelta = delta * step;
     if (this.focusedStudyWidget === 'detectors') {
       const maxOffset = Math.max(0, this.dashboard.studyDetectorTimings.size - 1);
       this.studyDetectorTimingOffset = Math.min(
         maxOffset,
-        Math.max(0, this.studyDetectorTimingOffset + delta),
+        Math.max(0, this.studyDetectorTimingOffset + scrollDelta),
       );
       this.renderNow();
       return;
@@ -332,9 +334,13 @@ export class BenchOpenTuiDashboard {
     const maxOffset = Math.max(0, this.dashboard.studyTimings.size - 1);
     this.studyViewTimingOffset = Math.min(
       maxOffset,
-      Math.max(0, this.studyViewTimingOffset + delta),
+      Math.max(0, this.studyViewTimingOffset + scrollDelta),
     );
     this.renderNow();
+  }
+
+  private studyPageScrollSize(): number {
+    return Math.max(1, panelBodyRows(CHART_PANEL_ROWS) - 4);
   }
 
   private cleanup(): void {
@@ -441,7 +447,7 @@ export class BenchOpenTuiDashboard {
       renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
       recentRows + 1,
     );
-    panels.footer.content = `${renderRunFooter(this.dashboard)} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | ↑/↓ j/k=scroll focused` : ''}`;
+    panels.footer.content = `${renderRunFooter(this.dashboard)} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | ↑/↓ j/k=scroll | shift+↑/↓=page` : ''}`;
     this.renderer?.requestRender();
   }
 }
