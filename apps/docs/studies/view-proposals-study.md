@@ -32,7 +32,8 @@ Run `bench study view-proposals` against the approved corpus with:
 The report is expected at:
 
 ```text
-tools/bench/reports/studies/study-view-proposals.json
+tools/bench/reports/full/study/study-view-proposals.json
+tools/bench/reports/study/study-view-proposals.summary.json
 ```
 
 Production scan behavior may stop after a cluster decodes because each cluster is treated as one potential QR code. The study intentionally does not stop: it probes the remaining cluster representatives so budget decisions can be inferred from complete path evidence.

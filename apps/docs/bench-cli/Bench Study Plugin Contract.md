@@ -103,8 +103,9 @@ Top-level flags shared by all studies:
 Recommended default paths:
 
 ```txt
-tools/bench/reports/studies/study-<plugin-id>.json
-tools/bench/reports/studies/runs/<timestamp>-<short-sha>/study-<plugin-id>.json
+tools/bench/reports/full/study/study-<plugin-id>.json
+tools/bench/reports/full/study/runs/<timestamp>-<short-sha>/study-<plugin-id>.json
+tools/bench/reports/study/study-<plugin-id>.summary.json
 tools/bench/.cache/studies/<plugin-id>.json
 ```
 
@@ -323,7 +324,7 @@ Current study OpenTUI behavior:
 
 ### Slice 5 — first real plugin
 - Rebuild the view study as `view-proposals` with `view-order` as a compatibility alias.
-- Produce `tools/bench/reports/studies/study-view-proposals.json` plus timestamped snapshots.
+- Produce a full raw report at `tools/bench/reports/full/study/study-view-proposals.json` plus timestamped snapshots, then write a compact processed summary under `tools/bench/reports/study/`.
 - Keep production source of truth in `packages/ironqr/src/pipeline/views.ts`.
 
 ## Open questions

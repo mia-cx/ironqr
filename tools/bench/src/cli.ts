@@ -471,7 +471,8 @@ const runStudy = async (
     : options.reportDir
       ? path.join(
           path.resolve(repoRoot, options.reportDir),
-          'studies',
+          'full',
+          'study',
           `study-${options.studyId}.json`,
         )
       : undefined;

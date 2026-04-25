@@ -66,7 +66,8 @@ Do not adopt production skipping from this study alone. A follow-up gating study
 Source report:
 
 ```text
-tools/bench/reports/studies/study-binary-prefilter-signals.json
+tools/bench/reports/full/study/study-binary-prefilter-signals.json
+tools/bench/reports/study/study-binary-prefilter-signals.summary.json
 ```
 
 Run metadata:

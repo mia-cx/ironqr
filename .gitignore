@@ -19,6 +19,7 @@ corpus/generated/
 tools/corpus-cli/tests/.tmp/
 tools/perfbench/tests/.tmp/
 tools/bench/.cache/
+tools/bench/reports/full/
 tools/bench/reports/studies/
 tools/bench/reports/runs/
 tools/bench/reports/study-*.json

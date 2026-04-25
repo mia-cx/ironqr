@@ -13,6 +13,7 @@ import {
   passedVerdict,
   REPORT_SCHEMA_VERSION,
   readRepoMetadata,
+  writeJsonReport,
   writeReportWithSnapshot,
 } from '../core/reports.js';
 import { mapConcurrentPartial } from '../core/runner.js';
@@ -37,7 +38,9 @@ import type {
 import { viewOrderStudyPlugin, viewProposalsStudyPlugin } from './view-order.js';
 
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
-const STUDY_REPORTS_DIRECTORY = path.join(REPORTS_DIRECTORY, 'studies');
+const FULL_REPORTS_DIRECTORY = path.join(REPORTS_DIRECTORY, 'full');
+const STUDY_REPORTS_DIRECTORY = path.join(FULL_REPORTS_DIRECTORY, 'study');
+const PROCESSED_STUDY_REPORTS_DIRECTORY = path.join(REPORTS_DIRECTORY, 'study');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
 const MAX_STUDY_WORKERS = 8;
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
@@ -92,6 +95,9 @@ export const createDefaultStudyRegistry = () =>
 
 export const getDefaultStudyReportPath = (repoRoot: string, studyId: string): string =>
   path.join(repoRoot, STUDY_REPORTS_DIRECTORY, `study-${studyId}.json`);
+
+export const getDefaultProcessedStudyReportPath = (repoRoot: string, studyId: string): string =>
+  path.join(repoRoot, PROCESSED_STUDY_REPORTS_DIRECTORY, `study-${studyId}.summary.json`);
 
 export const getDefaultStudyCachePath = (repoRoot: string, studyId: string): string =>
   path.join(repoRoot, STUDY_CACHE_DIRECTORY, `${studyId}.json`);
@@ -218,11 +224,114 @@ export const runStudyBenchmark = async (
     };
 
     await writeReportWithSnapshot(reportFile, report);
+    await writeProcessedStudyReport(repoRoot, studyId, report);
     return { reportFile, report };
   } finally {
     progress.stop();
   }
 };
+
+const writeProcessedStudyReport = async (
+  repoRoot: string,
+  studyId: string,
+  report: StudyReport,
+): Promise<void> => {
+  const processedPath = getDefaultProcessedStudyReportPath(repoRoot, studyId);
+  await writeJsonReport(processedPath, buildProcessedStudyReport(report));
+};
+
+const buildProcessedStudyReport = (report: StudyReport): Record<string, unknown> => {
+  const summary = report.summary as Record<string, unknown>;
+  const detectorBreakdown = buildDetectorBreakdown(summary);
+  return {
+    kind: 'processed-study-report',
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    source: {
+      generatedAt: report.generatedAt,
+      pluginId: report.details.plugin.id,
+      pluginVersion: report.details.plugin.version,
+      command: report.command,
+      repo: report.repo,
+      corpus: report.corpus,
+      cache: report.details.cache,
+      config: report.details.config,
+    },
+    headline: buildStudyHeadline(report.details.plugin.id, summary, detectorBreakdown),
+    variants: summary.variants ?? [],
+    recommendations: summary.recommendations ?? [],
+    topViews: Array.isArray(summary.perView) ? summary.perView.slice(0, 20) : [],
+    topScalars: Array.isArray(summary.perScalar) ? summary.perScalar.slice(0, 20) : [],
+    totals: summary.totals ?? null,
+    detectorBreakdown,
+    questionCoverage: buildQuestionCoverage(report.details.plugin.id, summary),
+  };
+};
+
+const buildStudyHeadline = (
+  studyId: string,
+  summary: Record<string, unknown>,
+  detectorBreakdown: Record<string, number>,
+): string => {
+  if (studyId !== 'binary-prefilter-signals')
+    return 'See variants, recommendations, and summary fields.';
+  const totals = (summary.totals ?? {}) as Record<string, unknown>;
+  const detectorMs = numberField(totals, 'detectorMs');
+  const floodMs = detectorBreakdown.floodMs ?? 0;
+  const matcherMs = numberField(totals, 'matcherControlMs');
+  const fusedEqual = Boolean(totals.matcherFusedPolarityOutputsEqual);
+  return `Detector=${formatMs(detectorMs)}; matcher=${formatMs(matcherMs)}; flood=${formatMs(floodMs)}. Fused polarity equal=${fusedEqual}.`;
+};
+
+const buildDetectorBreakdown = (summary: Record<string, unknown>): Record<string, number> => {
+  const rows = Array.isArray(summary.perView) ? summary.perView : [];
+  return rows.reduce(
+    (totals, row) => {
+      if (!isRecord(row)) return totals;
+      totals.rowScanMs += numberField(row, 'rowScanMs');
+      totals.floodMs += numberField(row, 'floodMs');
+      totals.matcherMs += numberField(row, 'matcherMs');
+      totals.dedupeMs += numberField(row, 'dedupeMs');
+      return totals;
+    },
+    { rowScanMs: 0, floodMs: 0, matcherMs: 0, dedupeMs: 0 },
+  );
+};
+
+const buildQuestionCoverage = (
+  studyId: string,
+  summary: Record<string, unknown>,
+): readonly Record<string, string>[] => {
+  if (studyId !== 'binary-prefilter-signals') return [];
+  const totals = (summary.totals ?? {}) as Record<string, unknown>;
+  return [
+    {
+      question: 'Do cheap signals identify detector hotspots?',
+      status: 'answered-for-sample',
+      evidence: `detector=${formatMs(numberField(totals, 'detectorMs'))}; matcher=${formatMs(numberField(totals, 'matcherControlMs'))}`,
+    },
+    {
+      question: 'Do matcher candidates preserve finder evidence?',
+      status: 'answered-for-candidates',
+      evidence: `prunedEqual=${String(totals.matcherPrunedCenterOutputsEqual)} seededEqual=${String(totals.matcherSeededOutputsEqual)} fusedEqual=${String(totals.matcherFusedPolarityOutputsEqual)}`,
+    },
+    {
+      question: 'Do signals predict decode success or false positives?',
+      status: 'unanswered',
+      evidence: 'decode=false in this study run',
+    },
+  ];
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const numberField = (value: Record<string, unknown>, key: string): number => {
+  const field = value[key];
+  return typeof field === 'number' && Number.isFinite(field) ? field : 0;
+};
+
+const formatMs = (value: number): string => `${value.toFixed(2)}ms`;
 
 const runPlugin = async (input: {
   readonly repoRoot: string;
