@@ -2797,12 +2797,13 @@ const measureMatcherCandidateVariants = async (
 const detectorVariantCacheKey = (variantId: string, viewId: BinaryViewId): string =>
   JSON.stringify({
     kind: 'detector-pattern',
-    version: 2,
+    version: variantId === 'row-scan' ? 3 : 2,
     patternId: detectorPatternId(variantId, viewId),
   });
 
 const detectorVariantCacheKeys = (variantId: string, viewId: BinaryViewId): readonly string[] => {
   const keys = new Set<string>([detectorVariantCacheKey(variantId, viewId)]);
+  if (variantId === 'row-scan') return [...keys];
   for (const legacyId of [variantId, ...(LEGACY_VARIANT_IDS[variantId] ?? [])]) {
     keys.add(
       JSON.stringify({
