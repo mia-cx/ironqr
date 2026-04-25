@@ -15,6 +15,7 @@ type OpenTuiRenderer = Awaited<ReturnType<OpenTuiCore['createCliRenderer']>>;
 type OpenTuiBox = InstanceType<OpenTuiCore['BoxRenderable']>;
 type OpenTuiText = InstanceType<OpenTuiCore['TextRenderable']>;
 type OpenTuiKeyEvent = import('@opentui/core').KeyEvent;
+type StudyFocusWidget = 'views' | 'detectors' | 'active' | 'slowest' | 'events' | 'legend';
 
 type OpenTuiPanel = {
   readonly box: OpenTuiBox;
@@ -81,7 +82,11 @@ export class BenchOpenTuiDashboard {
   private refreshTimer: NodeJS.Timeout | null = null;
   private studyViewTimingOffset = 0;
   private studyDetectorTimingOffset = 0;
-  private focusedStudyWidget: 'views' | 'detectors' = 'views';
+  private activeStudyWorkOffset = 0;
+  private slowestStudyUnitsOffset = 0;
+  private studyEventsOffset = 0;
+  private studyLegendOffset = 0;
+  private focusedStudyWidget: StudyFocusWidget = 'views';
   private filterModalOpen = false;
   private filterCursor = 0;
   private filterOffset = 0;
@@ -407,13 +412,20 @@ export class BenchOpenTuiDashboard {
   }
 
   private focusNextStudyWidget(): void {
-    if (!this.hasStudyViewTimings()) {
-      this.focusedStudyWidget = 'detectors';
-      this.renderNow();
-      return;
-    }
-    this.focusedStudyWidget = this.focusedStudyWidget === 'views' ? 'detectors' : 'views';
+    const widgets = this.focusableStudyWidgets();
+    const index = widgets.indexOf(this.focusedStudyWidget);
+    this.focusedStudyWidget = widgets[(index + 1 + widgets.length) % widgets.length] ?? 'detectors';
     this.renderNow();
+  }
+
+  private focusableStudyWidgets(): readonly StudyFocusWidget[] {
+    return this.hasStudyViewTimings()
+      ? ['views', 'detectors', 'active', 'slowest', 'events', 'legend']
+      : ['detectors', 'active', 'slowest', 'events', 'legend'];
+  }
+
+  private focusedFilterTarget(): 'views' | 'detectors' {
+    return this.focusedStudyWidget === 'views' ? 'views' : 'detectors';
   }
 
   private hasStudyViewTimings(): boolean {
@@ -423,21 +435,53 @@ export class BenchOpenTuiDashboard {
   private scrollFocusedStudyWidget(delta: number, singleRow: boolean): void {
     const step = singleRow ? 1 : this.studyPageScrollSize();
     const scrollDelta = delta * step;
-    if (this.focusedStudyWidget === 'detectors') {
-      const maxOffset = Math.max(0, this.dashboard.studyDetectorTimings.size - 1);
-      this.studyDetectorTimingOffset = Math.min(
-        maxOffset,
-        Math.max(0, this.studyDetectorTimingOffset + scrollDelta),
-      );
-      this.renderNow();
-      return;
+    switch (this.focusedStudyWidget) {
+      case 'views':
+        this.studyViewTimingOffset = clampOffset(
+          this.studyViewTimingOffset + scrollDelta,
+          this.dashboard.studyTimings.size,
+        );
+        break;
+      case 'detectors':
+        this.studyDetectorTimingOffset = clampOffset(
+          this.studyDetectorTimingOffset + scrollDelta,
+          this.dashboard.studyDetectorTimings.size,
+        );
+        break;
+      case 'active':
+        this.activeStudyWorkOffset = clampOffset(
+          this.activeStudyWorkOffset + scrollDelta,
+          this.dashboard.activeScans.size,
+        );
+        break;
+      case 'slowest':
+        this.slowestStudyUnitsOffset = clampOffset(
+          this.slowestStudyUnitsOffset + scrollDelta,
+          this.studySlowestRowCount(),
+        );
+        break;
+      case 'events':
+        this.studyEventsOffset = clampOffset(
+          this.studyEventsOffset + scrollDelta,
+          this.dashboard.studyEvents.length,
+        );
+        break;
+      case 'legend':
+        this.studyLegendOffset = clampOffset(
+          this.studyLegendOffset + scrollDelta,
+          studyLegendLineCount(),
+        );
+        break;
     }
-    const maxOffset = Math.max(0, this.dashboard.studyTimings.size - 1);
-    this.studyViewTimingOffset = Math.min(
-      maxOffset,
-      Math.max(0, this.studyViewTimingOffset + scrollDelta),
-    );
     this.renderNow();
+  }
+
+  private studySlowestRowCount(): number {
+    return [
+      ...this.dashboard.studyDetectorTimings.values(),
+      ...this.dashboard.studyTimings.values(),
+    ].filter((row) => matchesStudyFilters(row, this.studyFilters[this.focusedFilterTarget()]))
+      .length;
   }
 
   private studyPageScrollSize(): number {
@@ -511,7 +555,7 @@ export class BenchOpenTuiDashboard {
       this.renderNow();
       return;
     }
-    const filters = this.studyFilters[this.focusedStudyWidget];
+    const filters = this.studyFilters[this.focusedFilterTarget()];
     const values = filters[row.group];
     if (values.has(row.value)) values.delete(row.value);
     else values.add(row.value);
@@ -521,7 +565,7 @@ export class BenchOpenTuiDashboard {
   }
 
   private clearFocusedFilters(): void {
-    const filters = this.studyFilters[this.focusedStudyWidget];
+    const filters = this.studyFilters[this.focusedFilterTarget()];
     filters.families.clear();
     filters.scalars.clear();
     filters.thresholds.clear();
@@ -557,10 +601,18 @@ export class BenchOpenTuiDashboard {
   }
 
   private updateStudyFocusBorders(panels: NonNullable<BenchOpenTuiDashboard['panels']>): void {
-    if (this.dashboard.commandName !== 'study' || !panels.detectorChart) return;
+    if (this.dashboard.commandName !== 'study') return;
     panels.chart.box.borderColor = this.focusedStudyWidget === 'views' ? THEME.white : THEME.cyan;
-    panels.detectorChart.box.borderColor =
-      this.focusedStudyWidget === 'detectors' ? THEME.white : THEME.purple;
+    if (panels.detectorChart) {
+      panels.detectorChart.box.borderColor =
+        this.focusedStudyWidget === 'detectors' ? THEME.white : THEME.purple;
+    }
+    panels.active.box.borderColor = this.focusedStudyWidget === 'active' ? THEME.white : THEME.blue;
+    panels.slowest.box.borderColor =
+      this.focusedStudyWidget === 'slowest' ? THEME.white : THEME.amber;
+    panels.recent.box.borderColor =
+      this.focusedStudyWidget === 'events' ? THEME.white : THEME.purple;
+    panels.legend.box.borderColor = this.focusedStudyWidget === 'legend' ? THEME.white : THEME.cyan;
   }
 
   private render(force = false): void {
@@ -575,7 +627,11 @@ export class BenchOpenTuiDashboard {
       this.ensureFilterCursorVisible();
     }
     const showStudyViewChart = this.dashboard.commandName !== 'study' || this.hasStudyViewTimings();
-    if (this.dashboard.commandName === 'study' && !showStudyViewChart) {
+    if (
+      this.dashboard.commandName === 'study' &&
+      !showStudyViewChart &&
+      this.focusedStudyWidget === 'views'
+    ) {
       this.focusedStudyWidget = 'detectors';
     }
     const studyViewChartWidth = Math.max(34, Math.floor(contentWidth * 0.42) - 4);
@@ -650,8 +706,8 @@ export class BenchOpenTuiDashboard {
       ? panelBody(
           renderStudyFilterModal({
             width: Math.max(40, panels.filterModal.box.width - 4),
-            focus: this.focusedStudyWidget,
-            filters: this.studyFilters[this.focusedStudyWidget],
+            focus: this.focusedFilterTarget(),
+            filters: this.studyFilters[this.focusedFilterTarget()],
             cursor: this.filterCursor,
             slowestMetric: this.studySlowestMetric,
             offset: this.filterOffset,
@@ -665,30 +721,42 @@ export class BenchOpenTuiDashboard {
         width: leftWidth,
         nowMs: Date.now(),
         maxRows: tableRows,
+        offset: this.activeStudyWorkOffset,
       }),
-      tableRows + 1,
+      tableRows,
     );
     panels.slowest.body.content = panelBody(
       renderSlowestFreshScans(this.dashboard, {
         width: leftWidth,
         maxRows: tableRows,
+        offset: this.slowestStudyUnitsOffset,
         studySlowestMetric: this.studySlowestMetric,
         ...(this.dashboard.commandName === 'study'
-          ? { studyTimingFilters: this.studyFilters[this.focusedStudyWidget] }
+          ? { studyTimingFilters: this.studyFilters[this.focusedFilterTarget()] }
           : {}),
       }),
-      tableRows + 1,
+      tableRows,
     );
     panels.recent.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? renderStudyEvents(this.dashboard, { width: recentWidth, maxRows: recentRows })
+        ? renderStudyEvents(this.dashboard, {
+            width: recentWidth,
+            maxRows: recentRows,
+            offset: this.studyEventsOffset,
+          })
         : renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
-      recentRows + 1,
+      recentRows,
     );
     panels.legend.box.visible = this.dashboard.commandName === 'study';
     panels.legend.body.content = panelBody(
-      this.dashboard.commandName === 'study' ? renderStudyLegend({ width: legendWidth }) : [],
-      recentRows + 1,
+      this.dashboard.commandName === 'study'
+        ? renderStudyLegend({
+            width: legendWidth,
+            maxRows: recentRows,
+            offset: this.studyLegendOffset,
+          })
+        : [],
+      recentRows,
     );
     const footerStatus =
       this.dashboard.commandName === 'study'
@@ -701,6 +769,9 @@ export class BenchOpenTuiDashboard {
     this.renderer?.requestRender();
   }
 }
+
+const clampOffset = (offset: number, rowCount: number): number =>
+  Math.min(Math.max(0, rowCount - 1), Math.max(0, offset));
 
 const isTabKey = (key: OpenTuiKeyEvent): boolean =>
   (key.name === 'tab' || key.sequence === '\t') && !key.ctrl && !key.meta;
@@ -1134,36 +1205,54 @@ const formatStudyTiming = (
   cachedCount: number,
 ): string => `${formatCompactDuration(averageMs)} p=${outputCount} jobs=${count} c=${cachedCount}`;
 
-const renderStudyLegend = (options: { readonly width: number }): readonly string[] =>
-  [
-    'study legend',
-    'ids',
-    'inline = inline-flood',
-    'run-map = run-map matcher',
-    'dense = dense-stats',
-    'spatial = spatial-bin',
-    'run-length = run-length-ccl',
-    'run-pattern = run-pattern',
-    'axis-x = axis-intersect',
-    'shared-runs = shared-runs',
-    '',
-    'families',
-    'f=flood m=matcher',
-    'r=row d=dedupe',
-    '',
-    'views',
-    'o=otsu s=sauvola h=hybrid',
-    'n=normal i=inverted',
-    '',
-    'bars',
-    'p=outputs jobs=rows c=cached',
-  ].map((line) => truncateLine(line, options.width));
+const studyLegendLines = (): readonly string[] => [
+  'study legend',
+  'ids',
+  'inline = inline-flood',
+  'run-map = run-map matcher',
+  'dense = dense-stats',
+  'spatial = spatial-bin',
+  'run-length = run-length-ccl',
+  'run-pattern = run-pattern',
+  'axis-x = axis-intersect',
+  'shared-runs = shared-runs',
+  '',
+  'families',
+  'f=flood m=matcher',
+  'r=row d=dedupe',
+  '',
+  'views',
+  'o=otsu s=sauvola h=hybrid',
+  'n=normal i=inverted',
+  '',
+  'bars',
+  'p=outputs jobs=rows c=cached',
+];
+
+const studyLegendLineCount = (): number => Math.max(0, studyLegendLines().length - 1);
+
+const renderStudyLegend = (options: {
+  readonly width: number;
+  readonly maxRows: number;
+  readonly offset: number;
+}): readonly string[] => {
+  const [title = 'study legend', ...rows] = studyLegendLines();
+  return [
+    title,
+    ...rows
+      .slice(options.offset, options.offset + options.maxRows)
+      .map((line) => truncateLine(line, options.width)),
+  ];
+};
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,
-  options: { readonly width: number; readonly maxRows: number },
+  options: { readonly width: number; readonly maxRows: number; readonly offset?: number },
 ): readonly string[] => {
-  const rows = dashboard.studyEvents.slice(-Math.max(1, options.maxRows)).reverse();
+  const offset = Math.max(0, options.offset ?? 0);
+  const rows = [...dashboard.studyEvents]
+    .reverse()
+    .slice(offset, offset + Math.max(1, options.maxRows));
   const lines = ['study events'];
   if (rows.length === 0) {
     lines.push('none yet');

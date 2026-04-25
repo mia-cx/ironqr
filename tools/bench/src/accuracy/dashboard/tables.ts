@@ -15,6 +15,7 @@ export interface TableWidgetOptions {
   readonly width: number;
   readonly nowMs?: number;
   readonly maxRows?: number;
+  readonly offset?: number;
   readonly studySlowestMetric?: StudySlowestMetric;
   readonly studyTimingFilters?: StudyTimingFilters;
 }
@@ -25,9 +26,10 @@ export const renderActiveWorkers = (
 ): readonly string[] => {
   const width = options.width;
   const nowMs = options.nowMs ?? Date.now();
+  const offset = Math.max(0, options.offset ?? 0);
   const rows = [...model.activeScans.values()].slice(
-    0,
-    normalizeMaxRows(options.maxRows, Math.max(1, model.workerCount || 8)),
+    offset,
+    offset + normalizeMaxRows(options.maxRows, Math.max(1, model.workerCount || 8)),
   );
   const lines = [
     'active workers',
@@ -42,7 +44,7 @@ export const renderActiveWorkers = (
     const elapsed = formatCompactDuration(nowMs - scan.startedAtMs);
     lines.push(
       truncate(
-        `${padLeft(String(index + 1), 2)}      ${padRight(scan.engineId, 9)}  ${padRight(truncate(scan.assetId, 18), 18)} ${padRight(scan.label ? labelText(scan.label) : '-', 5)}  ${padLeft(elapsed, 7)}  ${scan.phase}`,
+        `${padLeft(String(offset + index + 1), 2)}      ${padRight(scan.engineId, 9)}  ${padRight(truncate(scan.assetId, 18), 18)} ${padRight(scan.label ? labelText(scan.label) : '-', 5)}  ${padLeft(elapsed, 7)}  ${scan.phase}`,
         width,
       ),
     );
@@ -55,7 +57,8 @@ export const renderSlowestFreshScans = (
   options: TableWidgetOptions,
 ): readonly string[] => {
   const width = options.width;
-  const rows = model.slowestFreshScans.slice(0, normalizeMaxRows(options.maxRows, 8));
+  const offset = Math.max(0, options.offset ?? 0);
+  const rows = model.slowestFreshScans.slice(offset, offset + normalizeMaxRows(options.maxRows, 8));
   const lines = [
     model.commandName === 'study' ? 'slowest study units' : 'slowest fresh scans',
     truncate(
@@ -70,7 +73,7 @@ export const renderSlowestFreshScans = (
     const studyRows = [...model.studyDetectorTimings.values(), ...model.studyTimings.values()]
       .filter((row) => matchesStudyTimingFilters(row, options.studyTimingFilters))
       .sort((left, right) => studyTimingMetric(right, metric) - studyTimingMetric(left, metric))
-      .slice(0, normalizeMaxRows(options.maxRows, 8));
+      .slice(offset, offset + normalizeMaxRows(options.maxRows, 8));
     if (studyRows.length === 0) {
       lines.push(truncate('none yet', width));
       return lines;
@@ -79,7 +82,7 @@ export const renderSlowestFreshScans = (
       const metricMs = studyTimingMetric(row, metric);
       lines.push(
         truncate(
-          `${padLeft(String(index + 1), 2)} ${padRight(row.id, 35)} ${padLeft(formatCompactDuration(metricMs), 7)} ${row.count} c=${row.cachedCount}`,
+          `${padLeft(String(offset + index + 1), 2)} ${padRight(row.id, 35)} ${padLeft(formatCompactDuration(metricMs), 7)} ${row.count} c=${row.cachedCount}`,
           width,
         ),
       );
@@ -92,7 +95,7 @@ export const renderSlowestFreshScans = (
   }
 
   for (const [index, scan] of rows.entries()) {
-    lines.push(truncate(renderSlowScan(index + 1, scan), width));
+    lines.push(truncate(renderSlowScan(offset + index + 1, scan), width));
   }
   return lines;
 };
