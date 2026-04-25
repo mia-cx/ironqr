@@ -67,6 +67,7 @@ The report should include:
 - Include every view that uniquely decodes at least one QR-positive asset.
 - Order remaining candidate views by marginal positive coverage per measured cost, with confidence and false-positive behavior as tie-breakers.
 - Do not introduce a default cluster budget unless the first-success cluster-rank distribution shows the chosen budget retains the agreed recall target.
+- Future production policy should expose an explicit scanner effort mode. Low/cheap effort can intentionally trade recall for very fast easy-code detection, while balanced/high effort can spend more of the proposal/decode search space. Study mode remains exhaustive so those effort budgets are evidence-backed rather than guessed.
 - If the p95 or max successful cluster rank is high, document the budget as a product tradeoff rather than an algorithmic invariant.
 - Treat timing hotspots as optimization candidates only after separating nested decode timings from independent wall-clock timings.
 
