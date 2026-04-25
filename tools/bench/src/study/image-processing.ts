@@ -706,8 +706,8 @@ const detectorStudyViewIds = (config: ImageProcessingConfig): readonly BinaryVie
   config.viewSet === 'all' ? listDefaultBinaryViewIds() : listDefaultProposalViewIds();
 
 const activeDetectorPatternIds = (): readonly string[] => [
-  'inline-flood-control',
-  'run-map-matcher-control',
+  'inline-flood',
+  'run-map',
   ...FLOOD_CANDIDATES.map((candidate) => candidate.id),
   ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
 ];
@@ -742,13 +742,8 @@ const readCachedDetectorAssetResult = async (
   const matcherVariants = new Map<string, DetectorVariantMeasurement>();
 
   for (const viewId of viewIds) {
-    const floodControl = await readVariantMeasurement(asset, cache, 'inline-flood-control', viewId);
-    const matcherControl = await readVariantMeasurement(
-      asset,
-      cache,
-      'run-map-matcher-control',
-      viewId,
-    );
+    const floodControl = await readVariantMeasurement(asset, cache, 'inline-flood', viewId);
+    const matcherControl = await readVariantMeasurement(asset, cache, 'run-map', viewId);
     if (!floodControl || !matcherControl) return null;
     floodControlMs += floodControl.durationMs;
     matcherControlMs += matcherControl.durationMs;
@@ -792,7 +787,7 @@ const readCachedDetectorAssetResult = async (
         matcherVariants,
         compareVariant(
           candidate.id,
-          candidate.id === 'shared-run-length-detector-artifacts' ? 'flood+matcher' : 'matcher',
+          candidate.id === 'shared-runs' ? 'flood+matcher' : 'matcher',
           matcherControl.signature,
           measured,
           candidate.note,
@@ -844,14 +839,22 @@ const purgeRedundantDetectorCacheRows = async (
   log: (message: string) => void,
 ): Promise<void> => {
   const activeIds = new Set(activeDetectorPatternIds());
+  const activeVariantIds = [...activeIds].flatMap((variantId) => [
+    variantId,
+    ...(LEGACY_VARIANT_IDS[variantId] ?? []),
+  ]);
   const activePatternPrefixes = new Set(
-    [...activeIds].map((variantId) => detectorPatternPrefix(variantId)),
+    activeVariantIds.flatMap((variantId) => [
+      detectorPatternPrefix(variantId),
+      legacyDetectorPatternPrefix(variantId),
+      `${legacyShortVariantId(variantId)}:${detectorAreaId(variantId)}:`,
+    ]),
   );
   const startedAt = performance.now();
   const purged = await cache.purge((cacheKey) => {
     const parsed = parseDetectorCacheKey(cacheKey);
     if (!parsed) return false;
-    if (parsed.kind === 'detector-variant') return !activeIds.has(parsed.variantId);
+    if (parsed.kind === 'detector-variant') return !activeVariantIds.includes(parsed.variantId);
     return ![...activePatternPrefixes].some((prefix) => parsed.patternId.startsWith(prefix));
   });
   const elapsed = round(performance.now() - startedAt);
@@ -947,27 +950,27 @@ const emptyTimingSummary = (): ImageProcessingTimingSummary => ({
 
 const FLOOD_CANDIDATES = [
   {
-    id: 'dense-typed-array-component-stats',
+    id: 'dense-stats',
     note: 'Typed-array stats and no per-pixel neighbor allocation.',
   },
   {
-    id: 'spatial-binned-component-lookup',
+    id: 'spatial-bin',
     note: 'Typed-array stats plus spatially indexed contained-component lookup.',
   },
-  { id: 'run-length-connected-components', note: 'Run-length connected components prototype.' },
+  { id: 'run-length-ccl', note: 'Run-length connected components prototype.' },
 ] as const;
 
 const MATCHER_CANDIDATES = [
   {
-    id: 'run-pattern-center-matcher',
+    id: 'run-pattern',
     note: 'Centers enumerated from horizontal 1:1:3:1:1 run patterns.',
   },
   {
-    id: 'axis-run-intersection-matcher',
+    id: 'axis-intersect',
     note: 'Centers enumerated from intersecting horizontal and vertical run patterns.',
   },
   {
-    id: 'shared-run-length-detector-artifacts',
+    id: 'shared-runs',
     note: 'Shared run-pattern artifact prototype feeding matcher enumeration.',
   },
 ] as const;
@@ -1372,7 +1375,7 @@ const measureFloodCandidateVariants = async (
 
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
-    const control = await measureVariant(asset, cache, 'inline-flood-control', viewId, () =>
+    const control = await measureVariant(asset, cache, 'inline-flood', viewId, () =>
       detectFloodFinders(view, view.width, view.height),
     );
     controlMs += control.measurement.durationMs;
@@ -1387,10 +1390,10 @@ const measureFloodCandidateVariants = async (
 
     for (const candidate of FLOOD_CANDIDATES) {
       const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
-        if (candidate.id === 'spatial-binned-component-lookup') {
+        if (candidate.id === 'spatial-bin') {
           return floodWithSpatialBins(labelDenseComponents(view));
         }
-        if (candidate.id === 'run-length-connected-components') {
+        if (candidate.id === 'run-length-ccl') {
           return floodWithRunLengthComponents(view);
         }
         return floodFromComponents(labelDenseComponents(view));
@@ -1454,7 +1457,7 @@ const measureMatcherCandidateVariants = async (
 
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
-    const control = await measureVariant(asset, cache, 'run-map-matcher-control', viewId, () =>
+    const control = await measureVariant(asset, cache, 'run-map', viewId, () =>
       detectMatcherFinders(view, view.width, view.height),
     );
     controlMatcherMs += control.measurement.durationMs;
@@ -1469,7 +1472,7 @@ const measureMatcherCandidateVariants = async (
 
     for (const candidate of MATCHER_CANDIDATES) {
       const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
-        if (candidate.id === 'axis-run-intersection-matcher') {
+        if (candidate.id === 'axis-intersect') {
           return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));
         }
         return matcherFromCenters(view, matcherPatternCenters(view, 'horizontal'));
@@ -1478,7 +1481,7 @@ const measureMatcherCandidateVariants = async (
         variants,
         compareVariant(
           candidate.id,
-          candidate.id === 'shared-run-length-detector-artifacts' ? 'flood+matcher' : 'matcher',
+          candidate.id === 'shared-runs' ? 'flood+matcher' : 'matcher',
           control.measurement.signature,
           measured.measurement,
           candidate.note,
@@ -1542,15 +1545,27 @@ const detectorVariantCacheKey = (variantId: string, viewId: BinaryViewId): strin
     patternId: detectorPatternId(variantId, viewId),
   });
 
-const detectorVariantCacheKeys = (variantId: string, viewId: BinaryViewId): readonly string[] => [
-  detectorVariantCacheKey(variantId, viewId),
-  JSON.stringify({
-    kind: 'detector-pattern',
-    version: 1,
-    patternId: legacyDetectorPatternId(variantId, viewId),
-  }),
-  JSON.stringify({ kind: 'detector-variant', version: 1, variantId, viewId }),
-];
+const detectorVariantCacheKeys = (variantId: string, viewId: BinaryViewId): readonly string[] => {
+  const keys = new Set<string>([detectorVariantCacheKey(variantId, viewId)]);
+  for (const legacyId of [variantId, ...(LEGACY_VARIANT_IDS[variantId] ?? [])]) {
+    keys.add(
+      JSON.stringify({
+        kind: 'detector-pattern',
+        version: 1,
+        patternId: legacyDetectorPatternId(legacyId, viewId),
+      }),
+    );
+    keys.add(
+      JSON.stringify({
+        kind: 'detector-pattern',
+        version: 2,
+        patternId: `${legacyShortVariantId(legacyId)}:${detectorAreaId(legacyId)}:${shortBinaryViewId(viewId)}`,
+      }),
+    );
+    keys.add(JSON.stringify({ kind: 'detector-variant', version: 1, variantId: legacyId, viewId }));
+  }
+  return [...keys];
+};
 
 const detectorPatternId = (variantId: string, viewId: BinaryViewId): string =>
   `${detectorPatternPrefix(variantId)}${shortBinaryViewId(viewId)}`;
@@ -1558,18 +1573,21 @@ const detectorPatternId = (variantId: string, viewId: BinaryViewId): string =>
 const detectorPatternPrefix = (variantId: string): string =>
   `${shortVariantId(variantId)}:${detectorAreaId(variantId)}:`;
 
-const legacyDetectorPatternId = (variantId: string, viewId: BinaryViewId): string => {
+const legacyDetectorPatternId = (variantId: string, viewId: BinaryViewId): string =>
+  `${legacyDetectorPatternPrefix(variantId)}${viewId}`;
+
+const legacyDetectorPatternPrefix = (variantId: string): string => {
   const area = detectorAreaId(variantId) === 'f' ? 'flood' : 'matcher';
   const shortId = variantId
     .replace(/-control$/, '')
     .replace(/-candidate$/, '')
     .replace(/-components?/, '')
     .replace(/-connected-/, '-ccl-');
-  return `${shortId}:${area}:${viewId}`;
+  return `${shortId}:${area}:`;
 };
 
 const detectorAreaId = (variantId: string): 'f' | 'm' =>
-  variantId.includes('flood') || variantId.includes('component') ? 'f' : 'm';
+  FLOOD_DETECTOR_IDS.has(variantId) ? 'f' : 'm';
 
 const shortVariantId = (variantId: string): string =>
   VARIANT_ID_ALIASES[variantId] ??
@@ -1590,6 +1608,28 @@ const shortBinaryViewId = (viewId: BinaryViewId): string => {
 const shortBinaryViewPart = (part: string): string => BINARY_VIEW_PART_ALIASES[part] ?? part;
 
 const VARIANT_ID_ALIASES: Record<string, string> = {
+  'inline-flood': 'inline',
+  'run-map': 'run-map',
+  'dense-stats': 'dense',
+  'spatial-bin': 'spatial',
+  'run-length-ccl': 'run-length',
+  'run-pattern': 'run-pattern',
+  'axis-intersect': 'axis-x',
+  'shared-runs': 'shared-runs',
+};
+
+const LEGACY_VARIANT_IDS: Record<string, readonly string[]> = {
+  'inline-flood': ['inline-flood-control'],
+  'run-map': ['run-map-matcher-control'],
+  'dense-stats': ['dense-typed-array-component-stats'],
+  'spatial-bin': ['spatial-binned-component-lookup'],
+  'run-length-ccl': ['run-length-connected-components'],
+  'run-pattern': ['run-pattern-center-matcher'],
+  'axis-intersect': ['axis-run-intersection-matcher'],
+  'shared-runs': ['shared-run-length-detector-artifacts'],
+};
+
+const LEGACY_VARIANT_ALIASES: Record<string, string> = {
   'inline-flood-control': 'in',
   'run-map-matcher-control': 'rm',
   'dense-typed-array-component-stats': 'dta',
@@ -1599,6 +1639,20 @@ const VARIANT_ID_ALIASES: Record<string, string> = {
   'axis-run-intersection-matcher': 'ari',
   'shared-run-length-detector-artifacts': 'srla',
 };
+
+const FLOOD_DETECTOR_IDS = new Set([
+  'inline-flood',
+  'dense-stats',
+  'spatial-bin',
+  'run-length-ccl',
+  'inline-flood-control',
+  'dense-typed-array-component-stats',
+  'spatial-binned-component-lookup',
+  'run-length-connected-components',
+]);
+
+const legacyShortVariantId = (variantId: string): string =>
+  LEGACY_VARIANT_ALIASES[variantId] ?? shortVariantId(variantId);
 
 const DETECTOR_FAMILY_ALIASES: Record<string, string> = {
   flood: 'f',
@@ -2265,7 +2319,7 @@ const summarizeDetectorVariants = (
   totals: ImageProcessingTotals,
 ): readonly DetectorVariantSummary[] =>
   [...variants.values()].map((variant) => {
-    const controlId = variant.area === 'flood' ? 'inline-flood-control' : 'run-map-matcher-control';
+    const controlId = variant.area === 'flood' ? 'inline-flood' : 'run-map';
     const controlMs = variant.area === 'flood' ? totals.floodControlMs : totals.matcherControlMs;
     return {
       ...variant,
@@ -2284,7 +2338,7 @@ const buildVariantSummaries = (
   const variants: ImageProcessingVariantSummary[] = [];
   if (config.focus === 'binary-prefilter-signals' && totals.floodControlMs > 0) {
     variants.push({
-      id: 'inline-flood-control',
+      id: 'inline-flood',
       title: 'Inline component-stats flood detector control',
       controlMetric: 'inline component-stats flood duration',
       candidateMetric: 'inline component-stats flood duration',

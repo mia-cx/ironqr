@@ -391,35 +391,35 @@ const buildExploredAvenues = (
       candidateMs: inlineFloodMs,
     },
     {
-      id: 'run-length-connected-components',
+      id: 'run-length-ccl',
       area: 'flood',
       status: 'active-candidate',
       finding:
         'Replace pixel BFS with run-length component labeling; likely next large architecture candidate if inline flood remains hot.',
     },
     {
-      id: 'dense-typed-array-component-stats',
+      id: 'dense-stats',
       area: 'flood',
       status: 'active-candidate',
       finding:
         'Use dense typed arrays for component stats to reduce object/Map allocation after inline stats.',
     },
     {
-      id: 'spatial-binned-component-lookup',
+      id: 'spatial-bin',
       area: 'flood',
       status: 'active-candidate',
       finding:
         'Use component spatial bins/ranges to reduce ring/gap/stone search if nested matching dominates after inline stats.',
     },
     {
-      id: 'run-pattern-center-matcher',
+      id: 'run-pattern',
       area: 'matcher',
       status: 'active-candidate',
       finding:
         'Enumerate matcher centers from 1:1:3:1:1 run patterns, then verify with run-map cross-checks instead of sampling arbitrary grid centers.',
     },
     {
-      id: 'axis-run-intersection-matcher',
+      id: 'axis-intersect',
       area: 'matcher',
       status: 'active-candidate',
       finding:
@@ -433,7 +433,7 @@ const buildExploredAvenues = (
         'Priority-first coarse probing with control fallback preserved safety but made several views average above 400ms; fallback cost overwhelms any easy-view benefit.',
     },
     {
-      id: 'shared-run-length-detector-artifacts',
+      id: 'shared-runs',
       area: 'flood+matcher',
       status: 'active-candidate',
       finding:
@@ -461,7 +461,7 @@ const buildStudyConclusions = (
     'No exhausted legacy flood, filtered flood, or center-signal matcher variants are active in this study phase.',
   );
   conclusions.push(
-    'Active runnable candidates are run-length CCL, dense typed-array stats, spatial-binned component lookup, run-pattern matcher centers, axis-run matcher intersections, and shared run-length detector artifacts.',
+    'Active runnable candidates are run-length-ccl, dense-stats, spatial-bin, run-pattern, axis-intersect, and shared-runs.',
   );
   conclusions.push(
     'Decode success and false-positive impact remain out of scope for this detector-evidence report.',

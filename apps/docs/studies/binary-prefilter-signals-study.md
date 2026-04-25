@@ -4,14 +4,14 @@
 
 This study tracks detector-only experiments for IronQR finder evidence. It compares detector `FinderEvidence[]` signatures and timing over the approved corpus; it does **not** run proposal generation, clustering, structure, module sampling, or decode.
 
-Settled controls:
+Settled leads:
 
 1. **Run-map matcher is canonical.** Full-corpus legacy-vs-run-map matcher comparison found `0` mismatched asset/view rows and an `88.93%` matcher-time reduction.
 2. **Inline component-stats flood is canonical.** Full-corpus legacy-vs-inline flood comparison found `0` mismatched asset/view rows and a `64.72%` flood-time reduction.
 
-The active study should contain only the current controls plus genuinely new candidates that could beat them. Exhausted references like legacy flood, filtered flood, and center-signal matcher are not active variants.
+The active study should contain only the current leads plus genuinely new candidates that could beat them. Exhausted references like legacy flood, filtered flood, and center-signal matcher are not active variants.
 
-The study uses detector-pattern cache keys (`patternId + viewId + asset hash`) instead of one coarse whole-asset cache entry. Pattern ids are stable strings like `inline:flood:gray:otsu:normal`, so adding a new detector pattern only queues that pattern for each asset/view while cached controls are reused. On startup, the study checks whether all active pattern/view rows for an asset already exist; fully cached assets are reported as cache hits and skip image loading/materialization entirely. Partially cached assets run only missing pattern/view rows. Adding a pattern or adding a view naturally creates missing cache rows; removing a view or binning a pattern stops requiring those rows without deleting historical cache. Asset content changes are invalidated by asset SHA. Retired variants stay in the historical evidence ledger but are excluded from active summary matrices.
+The study uses detector-pattern cache keys (`patternId + viewId + asset hash`) instead of one coarse whole-asset cache entry. Pattern ids are stable strings like `inline:f:gray:o:n`, so adding a new detector pattern only queues that pattern for each asset/view while cached leads are reused. On startup, the study checks whether all active pattern/view rows for an asset already exist; fully cached assets are reported as cache hits and skip image loading/materialization entirely. Partially cached assets run only missing pattern/view rows. Adding a pattern or adding a view naturally creates missing cache rows; removing a view or binning a pattern stops requiring those rows without deleting historical cache. Asset content changes are invalidated by asset SHA. Retired variants stay in the historical evidence ledger but are excluded from active summary matrices.
 
 ## Scope and safety bar
 
@@ -25,7 +25,7 @@ A candidate can only move toward production if a full-corpus run reports:
 
 - `outputsEqual === true`
 - `mismatchCount === 0`
-- runtime improves enough over the current control to justify the implementation
+- runtime improves enough over the current lead to justify the implementation
 
 A faster candidate with mismatches is design input only. Decode pass/fail and false-positive behavior are out of scope for this detector-only study.
 
@@ -44,7 +44,7 @@ Detector candidates should be judged by whether their savings can materially mov
 For each selected asset/view:
 
 1. materialize the binary view;
-2. run canonical detector controls;
+2. run canonical detector leads;
 3. run only new candidate detector variants;
 4. sort and compare finder signatures:
    - `source`
@@ -64,7 +64,7 @@ The first implementation was intentionally broad and exploratory: passive binary
 | 1. Matcher exploration        | Run-map, center-pruned, seeded, and fused matcher candidates.                                                                 | Prototype variants mixed correctness and headroom; run-map needed a clean legacy comparison. | Center/seed variants mismatched; run-map looked promising.                                                     | Narrowed to legacy matcher vs run-map matcher.                              |
 | 2. Matcher equivalence        | Only legacy matcher vs run-map matcher.                                                                                       | Needed a direct regression proof for the default matcher.                                    | `0` mismatches over `10,962` comparisons; `88.93%` faster.                                                     | Run-map matcher canonized; legacy matcher removed.                          |
 | 3. Flood equivalence          | Legacy two-pass flood vs inline stats vs filtered component matching.                                                         | Needed to distinguish the large pass-fusion win from smaller matching-filter effects.        | Inline stats: `0` mismatches, `64.72%` faster. Filtered: `0` mismatches, only `1.66%` faster over old control. | Inline flood canonized; legacy/filtered variants retired from active study. |
-| 4. Current phase              | Inline flood and run-map matcher controls plus queued, non-exhausted flood/matcher candidates.                                | Avoid wasting runtime on exhausted controls/candidates without losing the candidate backlog. | Variant-level cache runs only missing measurements; summaries exclude empirically binned variants.             | Implement queued candidates one by one against cached controls.             |
+| 4. Current phase              | Inline flood and run-map matcher leads plus queued, non-exhausted flood/matcher candidates.                                   | Avoid wasting runtime on exhausted candidates without losing the candidate backlog.          | Variant-level cache runs only missing measurements; summaries exclude empirically binned variants.             | Implement queued candidates one by one against cached leads.                |
 
 ## Evidence ledger
 
@@ -103,16 +103,16 @@ The first implementation was intentionally broad and exploratory: passive binary
 
 | Variant id                             | Area          | Control                   | Status                                               |
 | -------------------------------------- | ------------- | ------------------------- | ---------------------------------------------------- |
-| `inline-flood-control`                 | Flood         | —                         | Current running flood lead.                          |
-| `run-map-matcher-control`              | Matcher       | —                         | Current running matcher lead.                        |
-| `run-length-connected-components`      | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
-| `dense-typed-array-component-stats`    | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
-| `spatial-binned-component-lookup`      | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
-| `run-pattern-center-matcher`           | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
-| `axis-run-intersection-matcher`        | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
-| `shared-run-length-detector-artifacts` | Flood+Matcher | both controls             | Wired runnable prototype; measured by variant cache. |
+| `inline-flood`    | Flood         | —              | Current running flood lead.                          |
+| `run-map`         | Matcher       | —              | Current running matcher lead.                        |
+| `run-length-ccl`  | Flood         | `inline-flood` | Wired runnable prototype; measured by variant cache. |
+| `dense-stats`     | Flood         | `inline-flood` | Wired runnable prototype; measured by variant cache. |
+| `spatial-bin`     | Flood         | `inline-flood` | Wired runnable prototype; measured by variant cache. |
+| `run-pattern`     | Matcher       | `run-map`      | Wired runnable prototype; measured by variant cache. |
+| `axis-intersect`  | Matcher       | `run-map`      | Wired runnable prototype; measured by variant cache. |
+| `shared-runs`     | Flood+Matcher | both leads     | Wired runnable prototype; measured by variant cache. |
 
-Active candidate means “included in the default detector-study run and summary matrices.” The variant cache lets each candidate be measured independently while cached controls are reused.
+Active candidate means “included in the default detector-study run and summary matrices.” These are canonical study ids, not just display labels; they intentionally avoid `control` because today's lead can be replaced by a faster equivalent variant. Dashboard/cache pattern ids additionally abbreviate detector family and view parts: `flood→f`, `matcher→m`, `otsu→o`, `sauvola→s`, `hybrid→h`, `normal→n`, and `inverted→i`. The variant cache lets each candidate be measured independently while cached leads are reused.
 
 ## Binned / empirically exhausted variants
 
@@ -153,9 +153,9 @@ tools/bench/reports/study/study-binary-prefilter-signals.summary.json
 
 Processed summaries should include:
 
-- `headline` — control timing and equality summary;
-- `variants` — current controls and genuinely new active candidates only;
-- `floodMatrix` — current flood control and active flood candidates only;
+- `headline` — lead timing and equality summary;
+- `variants` — current leads and genuinely new active candidates only;
+- `floodMatrix` — current flood lead and active flood candidates only;
 - `exploredAvenues` — durable ledger of tested/proposed optimization paths;
 - `conclusions` — evidence-backed decisions;
 - `questionCoverage` — what the run answers and what remains out of scope.
@@ -167,7 +167,7 @@ bun run --cwd tools/bench bench study binary-prefilter-signals \
   --view-set all
 ```
 
-Use `--refresh-cache` only when intentionally invalidating all detector-pattern rows for the selected assets. It defeats the normal workflow of reusing cached controls and running only newly added patterns.
+Use `--refresh-cache` only when intentionally invalidating all detector-pattern rows for the selected assets. It defeats the normal workflow of reusing cached leads and running only newly added patterns.
 
 ## Out of scope
 
