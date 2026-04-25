@@ -1576,12 +1576,20 @@ const finderSignature = (evidence: readonly FinderEvidence[]): readonly string[]
 const signaturesEqual = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((entry, index) => entry === right[index]);
 
-const isVariantCacheMeasurement = (value: unknown): value is VariantCacheMeasurement =>
-  typeof value === 'object' &&
-  value !== null &&
-  typeof (value as { durationMs?: unknown }).durationMs === 'number' &&
-  typeof (value as { outputCount?: unknown }).outputCount === 'number' &&
-  Array.isArray((value as { signature?: unknown }).signature);
+const isVariantCacheMeasurement = (value: unknown): value is VariantCacheMeasurement => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { durationMs?: unknown }).durationMs !== 'number' ||
+    typeof (value as { outputCount?: unknown }).outputCount !== 'number' ||
+    !Array.isArray((value as { signature?: unknown }).signature)
+  ) {
+    return false;
+  }
+
+  const measurement = value as VariantCacheMeasurement;
+  return measurement.outputCount === 0 || measurement.signature.length > 0;
+};
 
 const floodCandidateOutput = async (
   variantId: string,
