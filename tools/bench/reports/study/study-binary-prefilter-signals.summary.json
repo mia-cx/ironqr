@@ -1,7 +1,7 @@
 {
   "kind": "processed-study-report",
   "schemaVersion": 1,
-  "generatedAt": "2026-04-25T04:59:52.957Z",
+  "generatedAt": "2026-04-25T05:08:36.254Z",
   "source": {
     "generatedAt": "2026-04-25T04:53:22.049Z",
     "pluginId": "binary-prefilter-signals",
@@ -247,56 +247,34 @@
       "decode": false
     }
   },
-  "headline": "Detector=443090.70ms; flood control=443090.70ms; inlineStatsEqual=true mismatches=0; filteredEqual=true mismatches=0.",
+  "headline": "Inline flood control baseline=156305.84ms from prior full run; activeCandidates=0.",
   "variants": [
     {
-      "id": "legacy-flood-control",
-      "title": "Legacy flood-fill finder detector control",
-      "controlMetric": "legacy flood-fill detector duration",
-      "candidateMetric": "legacy flood-fill detector duration",
-      "controlMs": 443090.7,
-      "candidateMs": 443090.7,
+      "id": "inline-flood-control",
+      "title": "Inline component-stats flood detector control",
+      "controlMetric": "inline component-stats flood duration",
+      "candidateMetric": "inline component-stats flood duration",
+      "controlMs": 156305.84,
+      "candidateMs": 156305.84,
       "deltaMs": 0,
       "improvementPct": 0,
-      "evidence": "production flood-fill control; finder outputs equal=true; mismatched views=0."
-    },
-    {
-      "id": "inline-component-stats-flood-prototype",
-      "title": "Inline connected-component stats flood prototype",
-      "controlMetric": "legacy flood-fill detector duration",
-      "candidateMetric": "single-pass component labeling plus stats duration",
-      "controlMs": 443090.7,
-      "candidateMs": 156305.84,
-      "deltaMs": 286784.86,
-      "improvementPct": 64.72,
-      "evidence": "finder outputs equal=true; mismatched views=0."
-    },
-    {
-      "id": "filtered-components-flood-prototype",
-      "title": "Filtered component candidate flood prototype",
-      "controlMetric": "legacy flood-fill detector duration",
-      "candidateMetric": "component prefilter before nested ring/gap/stone matching",
-      "controlMs": 443090.7,
-      "candidateMs": 435716.1,
-      "deltaMs": 7374.6,
-      "improvementPct": 1.66,
-      "evidence": "finder outputs equal=true; mismatched views=0."
+      "evidence": "canonical flood-fill control; no active flood candidates in this study phase."
     }
   ],
   "recommendations": [
-    "Hottest detector view: none (0ms).",
-    "Largest scalar integral cost: none (0ms).",
-    "Shared polarity-neutral run artifacts could save about 0ms in this run."
+    "Inline component-stats flood is the current canonical flood control.",
+    "No exhausted legacy flood, filtered flood, or center-signal matcher variants are active in this study phase.",
+    "Next detector-study run should add only new candidates that plausibly beat inline flood or run-map matcher controls."
   ],
   "topViews": [],
   "topScalars": [],
   "totals": {
     "pixelCount": 118173433,
     "proposalGenerationMs": 5370645.93,
-    "detectorMs": 443090.7,
-    "scalarViewMs": 12926.34,
-    "binaryPlaneMs": 34443.47,
-    "binaryViewMs": 60.04,
+    "detectorMs": 156305.84,
+    "scalarViewMs": 319.3,
+    "binaryPlaneMs": 712.02,
+    "binaryViewMs": 1.78,
     "proposalViewMs": 0,
     "signalMs": 0,
     "histogramMs": 0,
@@ -346,13 +324,17 @@
     "matcherFusedDarkCenterCount": 0,
     "matcherFusedLightCenterCount": 0,
     "matcherSharedPlaneCount": 0,
-    "floodControlMs": 443090.7,
-    "floodInlineStatsMs": 156305.84,
-    "floodFilteredComponentsMs": 435716.1,
-    "floodInlineStatsOutputsEqual": true,
+    "floodControlMs": 156305.84,
+    "floodLegacyMs": 0,
+    "floodFilteredComponentsMs": 0,
+    "floodMatcherControlMs": 0,
+    "floodMatcherCenterSignalMs": 0,
+    "floodLegacyOutputsEqual": true,
     "floodFilteredComponentsOutputsEqual": true,
-    "floodInlineStatsMismatchCount": 0,
-    "floodFilteredComponentsMismatchCount": 0
+    "floodMatcherCenterSignalOutputsEqual": true,
+    "floodLegacyMismatchCount": 0,
+    "floodFilteredComponentsMismatchCount": 0,
+    "floodMatcherCenterSignalMismatchCount": 0
   },
   "detectorBreakdown": {
     "rowScanMs": 0,
@@ -363,52 +345,16 @@
   "matcherMatrix": null,
   "floodMatrix": {
     "control": {
-      "legacyFloodMs": 443090.7
+      "inlineFloodMs": 156305.84
     },
-    "variants": {
-      "inlineStats": {
-        "controlMs": 443090.7,
-        "candidateMs": 156305.84,
-        "savedMs": 286784.86,
-        "improvementPct": 64.72,
-        "outputsEqual": true,
-        "mismatchCount": 0
-      },
-      "filteredComponents": {
-        "controlMs": 443090.7,
-        "candidateMs": 435716.1,
-        "savedMs": 7374.6,
-        "improvementPct": 1.66,
-        "outputsEqual": true,
-        "mismatchCount": 0
-      }
-    }
+    "variants": {}
   },
-  "questionCoverage": [
-    {
-      "question": "Which flood-fill implementation preserves legacy flood finder evidence?",
-      "status": "answered-for-candidates",
-      "evidence": "inlineEqual=true inlineMismatchViews=0 filteredEqual=true filteredMismatchViews=0"
-    },
-    {
-      "question": "Which flood-fill implementation is faster than legacy flood?",
-      "status": "answered-for-candidates",
-      "evidence": "legacyFlood=443090.70ms inlineStats=156305.84ms filteredComponents=435716.10ms"
-    },
-    {
-      "question": "Do flood variants prove decode success or false positives?",
-      "status": "unanswered",
-      "evidence": "decode=false in this study run"
-    }
-  ],
   "exploredAvenues": [
     {
       "id": "run-map-matcher",
       "area": "matcher",
       "status": "canonized-control",
-      "finding": "Run-map cross-check matcher preserved legacy matcher finder evidence across the full corpus and is now canonical.",
-      "outputsEqual": true,
-      "mismatchCount": 0
+      "finding": "Run-map cross-check matcher preserved legacy matcher finder evidence across the full corpus and is now canonical."
     },
     {
       "id": "inline-component-stats-flood",
@@ -420,23 +366,6 @@
       "improvementPct": 64.72,
       "outputsEqual": true,
       "mismatchCount": 0
-    },
-    {
-      "id": "filtered-components-flood",
-      "area": "flood",
-      "status": "safe-small-win",
-      "finding": "Prefilters component candidates before ring/gap/stone matching; prior full run was equivalent but only a small win over the old two-pass flood path.",
-      "controlMs": 443090.7,
-      "candidateMs": 435716.1,
-      "improvementPct": 1.66,
-      "outputsEqual": true,
-      "mismatchCount": 0
-    },
-    {
-      "id": "center-signal-matcher",
-      "area": "matcher",
-      "status": "exploratory-risky",
-      "finding": "Earlier center-pruned matcher variants mismatched many views; only keep as a study candidate if it proves full-corpus equivalence against run-map matcher."
     },
     {
       "id": "run-length-connected-components",
@@ -455,12 +384,35 @@
       "area": "flood",
       "status": "proposed-future",
       "finding": "Use component spatial bins/ranges to reduce ring/gap/stone search if nested matching dominates after inline stats."
+    },
+    {
+      "id": "new-matcher-center-enumeration",
+      "area": "matcher",
+      "status": "proposed-future",
+      "finding": "Explore a new center source that can beat run-map matcher without hard filtering away finder evidence."
     }
   ],
   "conclusions": [
     "Inline component-stats flood is canonical: 156305.84ms vs 443090.70ms legacy, 64.72% faster, 0 mismatches.",
-    "Filtered component matching was equivalent but only 1.66% faster over the old control; re-test against inline flood before promoting.",
-    "Run-map matcher remains canonical; legacy matcher comparison is no longer part of the active study.",
+    "Legacy flood, filtered flood, and center-signal matcher are retired from active tracking.",
+    "Next detector-study runs should add only new candidates that plausibly beat inline flood or run-map matcher controls.",
     "Decode success and false-positive impact remain out of scope for this detector-evidence report."
+  ],
+  "questionCoverage": [
+    {
+      "question": "What is the current detector control baseline?",
+      "status": "answered-for-control",
+      "evidence": "inlineFlood=156305.84ms activeCandidates=0"
+    },
+    {
+      "question": "Are exhausted variants still active?",
+      "status": "no",
+      "evidence": "legacy flood, filtered flood, and center-signal matcher are retained only as historical doc evidence, not active study variants."
+    },
+    {
+      "question": "Do detector studies prove decode success or false positives?",
+      "status": "unanswered",
+      "evidence": "decode=false in this study family"
+    }
   ]
 }

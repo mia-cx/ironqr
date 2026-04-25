@@ -852,22 +852,6 @@ const detectMatcherFindersWithRunMaps = (
   );
 };
 
-export const detectMatcherFindersWithCenterSignal = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): FinderEvidence[] => {
-  const runs = buildAxisRuns(binary, width, height);
-  return detectMatcherFindersWithCrossCheck(
-    binary,
-    width,
-    height,
-    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-    hasMatcherCenterSignal,
-  );
-};
-
 const detectMatcherFindersWithCrossCheck = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -932,23 +916,6 @@ export const detectFloodFinders = (
   height: number,
 ): FinderEvidence[] =>
   floodFindersFromComponents(labelConnectedComponentsWithStats(binary, width, height));
-
-export const detectFloodFindersLegacy = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): FinderEvidence[] => {
-  const labels = labelConnectedComponents(binary, width, height);
-  const components = collectComponentStats(labels, binary, width, height);
-  return floodFindersFromComponents(components);
-};
-
-export const detectFloodFindersWithFilteredComponents = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): FinderEvidence[] =>
-  floodFindersFromFilteredComponents(labelConnectedComponentsWithStats(binary, width, height));
 
 const floodFindersFromComponents = (components: readonly ComponentStats[]): FinderEvidence[] => {
   const dark = components.filter((component) => component.color === 0);
@@ -1034,36 +1001,6 @@ const isDarkCenter = (
   x: number,
   y: number,
 ): boolean => pixel(binary, width, x, y) === 0;
-
-const hasMatcherCenterSignal = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  x: number,
-  y: number,
-): boolean => {
-  if (!isDarkCenter(binary, width, x, y)) return false;
-  const horizontalTransitions = countMatcherCenterTransitions(binary, width, x, y, 1, 0);
-  const verticalTransitions = countMatcherCenterTransitions(binary, width, x, y, 0, 1);
-  return horizontalTransitions >= 2 && verticalTransitions >= 2;
-};
-
-const countMatcherCenterTransitions = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  x: number,
-  y: number,
-  dx: number,
-  dy: number,
-): number => {
-  let transitions = 0;
-  let previous = pixel(binary, width, x - dx * 2, y - dy * 2);
-  for (let offset = -1; offset <= 2; offset += 1) {
-    const value = pixel(binary, width, x + dx * offset, y + dy * offset);
-    if (value !== previous) transitions += 1;
-    previous = value;
-  }
-  return transitions;
-};
 
 const crossCheck = (
   binary: Uint8Array | BinaryView,
