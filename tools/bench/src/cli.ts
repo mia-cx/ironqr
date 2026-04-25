@@ -476,9 +476,22 @@ const runStudy = async (
           `study-${options.studyId}.json`,
         )
       : undefined;
+  const processedReportFile = options.reportFile
+    ? path.join(
+        path.dirname(path.resolve(repoRoot, options.reportFile)),
+        `${path.basename(path.resolve(repoRoot, options.reportFile), '.json')}.summary.json`,
+      )
+    : options.reportDir
+      ? path.join(
+          path.resolve(repoRoot, options.reportDir),
+          'study',
+          `study-${options.studyId}.summary.json`,
+        )
+      : undefined;
   const cacheFile = options.cacheFile ? path.resolve(repoRoot, options.cacheFile) : undefined;
   const result = await runStudyBenchmark(repoRoot, options.studyId, {
     ...(reportFile === undefined ? {} : { reportFile }),
+    ...(processedReportFile === undefined ? {} : { processedReportFile }),
     ...(cacheFile === undefined ? {} : { cacheFile }),
     progressEnabled: options.progressEnabled,
     cacheEnabled: options.cacheEnabled,
@@ -491,7 +504,9 @@ const runStudy = async (
     ...(options.seed === undefined ? {} : { seed: options.seed }),
     ...(control === undefined ? {} : { signal: control.signal, requestStop: control.requestStop }),
   });
-  console.log(`studyReport: ${JSON.stringify(result.reportFile)}`);
+  process.stdout.write(
+    `\nfullStudyReport: ${JSON.stringify(result.reportFile)}\nsummaryStudyReport: ${JSON.stringify(result.processedReportFile)}\n`,
+  );
 };
 
 const runSuite = async (

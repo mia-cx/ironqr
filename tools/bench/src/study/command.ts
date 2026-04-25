@@ -66,6 +66,7 @@ interface StudyOptions {
   readonly seed?: string;
   readonly cacheFile?: string;
   readonly reportFile?: string;
+  readonly processedReportFile?: string;
   readonly progressEnabled?: boolean;
   readonly cacheEnabled?: boolean;
   readonly refreshCache?: boolean;
@@ -77,6 +78,7 @@ interface StudyOptions {
 
 export interface StudyBenchmarkResult {
   readonly reportFile: string;
+  readonly processedReportFile: string;
   readonly report: StudyReport;
 }
 
@@ -127,8 +129,11 @@ export const runStudyBenchmark = async (
   const registry = createDefaultStudyRegistry();
   const plugin = registry.get(studyId);
   const reportFile = options.reportFile ?? getDefaultStudyReportPath(repoRoot, studyId);
+  const processedReportFile =
+    options.processedReportFile ?? getDefaultProcessedStudyReportPath(repoRoot, studyId);
   const cacheFile = options.cacheFile ?? getDefaultStudyCachePath(repoRoot, studyId);
   await mkdir(path.dirname(reportFile), { recursive: true });
+  await mkdir(path.dirname(processedReportFile), { recursive: true });
   await mkdir(path.dirname(cacheFile), { recursive: true });
 
   const workerCount = resolveStudyWorkerCount(options.workers);
@@ -224,19 +229,17 @@ export const runStudyBenchmark = async (
     };
 
     await writeReportWithSnapshot(reportFile, report);
-    await writeProcessedStudyReport(repoRoot, studyId, report);
-    return { reportFile, report };
+    await writeProcessedStudyReport(processedReportFile, report);
+    return { reportFile, processedReportFile, report };
   } finally {
     progress.stop();
   }
 };
 
 const writeProcessedStudyReport = async (
-  repoRoot: string,
-  studyId: string,
+  processedPath: string,
   report: StudyReport,
 ): Promise<void> => {
-  const processedPath = getDefaultProcessedStudyReportPath(repoRoot, studyId);
   await writeJsonReport(processedPath, buildProcessedStudyReport(report));
 };
 
