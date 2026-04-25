@@ -923,17 +923,6 @@ const floodFindersFromComponents = (components: readonly ComponentStats[]): Find
   return floodFindersFromComponentSets(dark, light, dark);
 };
 
-const floodFindersFromFilteredComponents = (
-  components: readonly ComponentStats[],
-): FinderEvidence[] => {
-  const dark = components.filter((component) => component.color === 0);
-  const light = components.filter((component) => component.color === 255);
-  const rings = dark.filter(isPossibleFloodRing);
-  const gaps = light.filter((component) => component.pixelCount >= 4);
-  const stones = dark.filter((component) => component.pixelCount >= 1);
-  return floodFindersFromComponentSets(rings, gaps, stones);
-};
-
 const floodFindersFromComponentSets = (
   rings: readonly ComponentStats[],
   gaps: readonly ComponentStats[],
@@ -1507,57 +1496,6 @@ interface ComponentStats {
   readonly centroidY: number;
 }
 
-const labelConnectedComponents = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): Int32Array => {
-  const labels = new Int32Array(width * height);
-  let nextLabel = 1;
-  const queueX = new Int32Array(width * height);
-  const queueY = new Int32Array(width * height);
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = y * width + x;
-      if (labels[index] !== 0) continue;
-      const color = pixelAtIndex(binary, index);
-      let head = 0;
-      let tail = 0;
-      queueX[tail] = x;
-      queueY[tail] = y;
-      tail += 1;
-      labels[index] = nextLabel;
-
-      while (head < tail) {
-        const cx = queueX[head] ?? 0;
-        const cy = queueY[head] ?? 0;
-        head += 1;
-        const neighbors = [
-          [cx - 1, cy],
-          [cx + 1, cy],
-          [cx, cy - 1],
-          [cx, cy + 1],
-        ] as const;
-        for (const [nx, ny] of neighbors) {
-          if (!inside(nx, ny, width, height)) continue;
-          const neighborIndex = ny * width + nx;
-          if (labels[neighborIndex] !== 0 || pixelAtIndex(binary, neighborIndex) !== color)
-            continue;
-          labels[neighborIndex] = nextLabel;
-          queueX[tail] = nx;
-          queueY[tail] = ny;
-          tail += 1;
-        }
-      }
-
-      nextLabel += 1;
-    }
-  }
-
-  return labels;
-};
-
 const labelConnectedComponentsWithStats = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -1636,67 +1574,6 @@ const labelConnectedComponentsWithStats = (
   }
 
   return components;
-};
-
-const collectComponentStats = (
-  labels: Int32Array,
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): readonly ComponentStats[] => {
-  const map = new Map<
-    number,
-    {
-      color: number;
-      pixelCount: number;
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      sumX: number;
-      sumY: number;
-    }
-  >();
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = y * width + x;
-      const id = labels[index] ?? 0;
-      const existing = map.get(id);
-      if (existing) {
-        existing.pixelCount += 1;
-        existing.minX = Math.min(existing.minX, x);
-        existing.minY = Math.min(existing.minY, y);
-        existing.maxX = Math.max(existing.maxX, x);
-        existing.maxY = Math.max(existing.maxY, y);
-        existing.sumX += x;
-        existing.sumY += y;
-      } else {
-        map.set(id, {
-          color: pixelAtIndex(binary, index),
-          pixelCount: 1,
-          minX: x,
-          minY: y,
-          maxX: x,
-          maxY: y,
-          sumX: x,
-          sumY: y,
-        });
-      }
-    }
-  }
-
-  return [...map.entries()].map(([id, value]) => ({
-    id,
-    color: value.color,
-    pixelCount: value.pixelCount,
-    minX: value.minX,
-    minY: value.minY,
-    maxX: value.maxX,
-    maxY: value.maxY,
-    centroidX: value.sumX / value.pixelCount,
-    centroidY: value.sumY / value.pixelCount,
-  }));
 };
 
 const pixel = (binary: Uint8Array | BinaryView, width: number, x: number, y: number): number => {
