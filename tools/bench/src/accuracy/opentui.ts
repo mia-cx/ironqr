@@ -1441,7 +1441,7 @@ const headerText = (dashboard: BenchDashboardModel, width: number): string => {
       ? `  eta=${studyFreshEta(dashboard, studyTimingCacheTotals(dashboard))}`
       : '';
   const suffix = dashboard.commandName === 'study' ? '' : `  ${dashboard.message}`;
-  const countText = `${etaText}  ${completed}/${total} jobs${suffix}`;
+  const countText = `  ${completed}/${total} jobs${etaText}${suffix}`;
   const dynamicBarWidth = Math.max(PROGRESS_BAR_WIDTH, width - labelWidth - countText.length - 1);
   const progress = fractionalBar(percent, dynamicBarWidth);
   return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}${countText}`;
