@@ -72,6 +72,7 @@ export interface StudyTimingStats {
   maxMs: number;
   lastMs: number;
   outputCount: number;
+  samples: number[];
 }
 
 export interface BenchDashboardModel {
@@ -367,6 +368,7 @@ export const onDashboardStudyTiming = (
     existing.maxMs = Math.max(existing.maxMs, event.durationMs);
     existing.lastMs = event.durationMs;
     existing.outputCount += outputCount;
+    existing.samples.push(event.durationMs);
     return;
   }
   timings.set(event.id, {
@@ -378,6 +380,7 @@ export const onDashboardStudyTiming = (
     maxMs: event.durationMs,
     lastMs: event.durationMs,
     outputCount,
+    samples: [event.durationMs],
   });
 };
 

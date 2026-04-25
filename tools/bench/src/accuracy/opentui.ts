@@ -6,6 +6,7 @@ import {
   renderActiveWorkers,
   renderRecentScans,
   renderSlowestFreshScans,
+  type StudySlowestMetric,
 } from './dashboard/tables.js';
 import { renderTimingChart } from './dashboard/timing-chart.js';
 
@@ -78,6 +79,7 @@ export class BenchOpenTuiDashboard {
   private focusedStudyWidget: 'views' | 'detectors' = 'views';
   private filterModalOpen = false;
   private filterCursor = 0;
+  private studySlowestMetric: StudySlowestMetric = 'p95';
   private readonly studyFilters: Record<'views' | 'detectors', StudyChartFilters> = {
     views: createStudyChartFilters(),
     detectors: createStudyChartFilters(),
@@ -444,6 +446,11 @@ export class BenchOpenTuiDashboard {
   private toggleSelectedFilter(): void {
     const row = filterRows()[this.filterCursor];
     if (!row) return;
+    if (row.group === 'metric') {
+      this.studySlowestMetric = row.value as StudySlowestMetric;
+      this.renderNow();
+      return;
+    }
     const filters = this.studyFilters[this.focusedStudyWidget];
     const values = filters[row.group];
     if (values.has(row.value)) values.delete(row.value);
@@ -582,6 +589,7 @@ export class BenchOpenTuiDashboard {
             focus: this.focusedStudyWidget,
             filters: this.studyFilters[this.focusedStudyWidget],
             cursor: this.filterCursor,
+            slowestMetric: this.studySlowestMetric,
           }),
           panelBodyRows(18),
         )
@@ -595,7 +603,11 @@ export class BenchOpenTuiDashboard {
       tableRows + 1,
     );
     panels.slowest.body.content = panelBody(
-      renderSlowestFreshScans(this.dashboard, { width: leftWidth, maxRows: tableRows }),
+      renderSlowestFreshScans(this.dashboard, {
+        width: leftWidth,
+        maxRows: tableRows,
+        studySlowestMetric: this.studySlowestMetric,
+      }),
       tableRows + 1,
     );
     panels.recent.body.content = panelBody(
@@ -616,7 +628,7 @@ export class BenchOpenTuiDashboard {
     const focusHint = this.hasStudyViewTimings()
       ? ` | tab=focus ${this.focusedStudyWidget}`
       : ' | focus detectors';
-    panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? `${focusHint} | f=filters | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
+    panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? `${focusHint} | metric=${this.studySlowestMetric} | f=filters | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
     this.renderer?.requestRender();
   }
 }
@@ -643,7 +655,7 @@ const isSpaceKey = (key: OpenTuiKeyEvent): boolean => key.name === 'space' || ke
 const isFilterCloseKey = (key: OpenTuiKeyEvent): boolean =>
   key.name === 'escape' || key.sequence === '\u001b' || key.name === 'f' || key.sequence === 'f';
 
-type StudyFilterGroup = 'families' | 'scalars' | 'thresholds' | 'polarities' | 'cache';
+type StudyFilterGroup = 'families' | 'scalars' | 'thresholds' | 'polarities' | 'cache' | 'metric';
 
 interface StudyChartFilters {
   readonly families: Set<string>;
@@ -662,6 +674,7 @@ const createStudyChartFilters = (): StudyChartFilters => ({
 });
 
 const FILTER_ROWS: readonly { readonly group: StudyFilterGroup; readonly value: string }[] = [
+  ...['avg', 'p95', 'max'].map((value) => ({ group: 'metric' as const, value })),
   ...['r', 'f', 'm', 'd'].map((value) => ({ group: 'families' as const, value })),
   ...['gray', 'oklab-l', 'oklab+a', 'oklab-a', 'oklab+b', 'oklab-b', 'r', 'g', 'b'].map(
     (value) => ({ group: 'scalars' as const, value }),
@@ -931,6 +944,7 @@ const renderStudyFilterModal = (options: {
   readonly focus: 'views' | 'detectors';
   readonly filters: StudyChartFilters;
   readonly cursor: number;
+  readonly slowestMetric: StudySlowestMetric;
 }): readonly string[] => {
   const lines = [
     'study filters',
@@ -940,7 +954,10 @@ const renderStudyFilterModal = (options: {
     ),
   ];
   for (const [index, row] of filterRows().entries()) {
-    const selected = options.filters[row.group].has(row.value);
+    const selected =
+      row.group === 'metric'
+        ? options.slowestMetric === row.value
+        : options.filters[row.group].has(row.value);
     const cursor = index === options.cursor ? '›' : ' ';
     lines.push(
       truncateLine(

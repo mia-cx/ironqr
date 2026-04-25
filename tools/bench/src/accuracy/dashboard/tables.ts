@@ -1,10 +1,13 @@
 import { formatCompactDuration, padLeft, padRight, truncate } from './format.js';
 import type { BenchDashboardModel, RecentScan, SlowScan } from './model.js';
 
+export type StudySlowestMetric = 'avg' | 'p95' | 'max';
+
 export interface TableWidgetOptions {
   readonly width: number;
   readonly nowMs?: number;
   readonly maxRows?: number;
+  readonly studySlowestMetric?: StudySlowestMetric;
 }
 
 export const renderActiveWorkers = (
@@ -48,27 +51,25 @@ export const renderSlowestFreshScans = (
     model.commandName === 'study' ? 'slowest study units' : 'slowest fresh scans',
     truncate(
       model.commandName === 'study'
-        ? '#  detector/view                         avg     jobs'
+        ? `#  detector/view                         ${options.studySlowestMetric ?? 'p95'}     jobs`
         : '#  engine     time      outcome      asset',
       width,
     ),
   ];
   if (model.commandName === 'study') {
+    const metric = options.studySlowestMetric ?? 'p95';
     const studyRows = [...model.studyDetectorTimings.values(), ...model.studyTimings.values()]
-      .sort(
-        (left, right) =>
-          right.totalMs / Math.max(1, right.count) - left.totalMs / Math.max(1, left.count),
-      )
+      .sort((left, right) => studyTimingMetric(right, metric) - studyTimingMetric(left, metric))
       .slice(0, normalizeMaxRows(options.maxRows, 8));
     if (studyRows.length === 0) {
       lines.push(truncate('none yet', width));
       return lines;
     }
     for (const [index, row] of studyRows.entries()) {
-      const averageMs = row.totalMs / Math.max(1, row.count);
+      const metricMs = studyTimingMetric(row, metric);
       lines.push(
         truncate(
-          `${padLeft(String(index + 1), 2)} ${padRight(row.id, 35)} ${padLeft(formatCompactDuration(averageMs), 7)} ${row.count} c=${row.cachedCount}`,
+          `${padLeft(String(index + 1), 2)} ${padRight(row.id, 35)} ${padLeft(formatCompactDuration(metricMs), 7)} ${row.count} c=${row.cachedCount}`,
           width,
         ),
       );
@@ -125,6 +126,27 @@ export const renderSideBySide = (
     const rightLine = truncate(right[index] ?? '', rightWidth);
     return `${padRight(leftLine, leftWidth)}${' '.repeat(gap)}${rightLine}`;
   });
+};
+
+const studyTimingMetric = (
+  row: {
+    readonly totalMs: number;
+    readonly count: number;
+    readonly maxMs: number;
+    readonly samples: readonly number[];
+  },
+  metric: StudySlowestMetric,
+): number => {
+  if (metric === 'avg') return row.totalMs / Math.max(1, row.count);
+  if (metric === 'max') return row.maxMs;
+  return percentile(row.samples, 0.95);
+};
+
+const percentile = (values: readonly number[], quantile: number): number => {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1);
+  return sorted[index] ?? 0;
 };
 
 const renderSlowScan = (rank: number, scan: SlowScan): string => {
