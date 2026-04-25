@@ -469,7 +469,11 @@ const runStudy = async (
   const reportFile = options.reportFile
     ? path.resolve(repoRoot, options.reportFile)
     : options.reportDir
-      ? path.join(path.resolve(repoRoot, options.reportDir), `study-${options.studyId}.json`)
+      ? path.join(
+          path.resolve(repoRoot, options.reportDir),
+          'studies',
+          `study-${options.studyId}.json`,
+        )
       : undefined;
   const cacheFile = options.cacheFile ? path.resolve(repoRoot, options.cacheFile) : undefined;
   const result = await runStudyBenchmark(repoRoot, options.studyId, {

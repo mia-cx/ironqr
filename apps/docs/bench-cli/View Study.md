@@ -62,8 +62,8 @@ bun run --cwd tools/bench bench study view-proposals --asset asset-123 --top-k 1
 `view-order` remains as a compatibility alias for `view-proposals`; new runs should use `view-proposals`.
 
 ## Files
-- latest report output: `tools/bench/reports/study-view-proposals.json`
-- timestamped report snapshots: `tools/bench/reports/runs/<timestamp>-<short-sha>/study-view-proposals.json`
+- latest report output: `tools/bench/reports/studies/study-view-proposals.json`
+- timestamped report snapshots: `tools/bench/reports/studies/runs/<timestamp>-<short-sha>/study-view-proposals.json`
 - resumable cache: `tools/bench/.cache/studies/view-proposals.json`
 
 ## Current adopted fast path

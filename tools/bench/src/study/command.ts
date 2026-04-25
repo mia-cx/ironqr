@@ -37,6 +37,7 @@ import type {
 import { viewOrderStudyPlugin, viewProposalsStudyPlugin } from './view-order.js';
 
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
+const STUDY_REPORTS_DIRECTORY = path.join(REPORTS_DIRECTORY, 'studies');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
 const MAX_STUDY_WORKERS = 8;
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
@@ -90,7 +91,7 @@ export const createDefaultStudyRegistry = () =>
   ]);
 
 export const getDefaultStudyReportPath = (repoRoot: string, studyId: string): string =>
-  path.join(repoRoot, REPORTS_DIRECTORY, `study-${studyId}.json`);
+  path.join(repoRoot, STUDY_REPORTS_DIRECTORY, `study-${studyId}.json`);
 
 export const getDefaultStudyCachePath = (repoRoot: string, studyId: string): string =>
   path.join(repoRoot, STUDY_CACHE_DIRECTORY, `${studyId}.json`);

@@ -19,9 +19,10 @@ corpus/generated/
 tools/corpus-cli/tests/.tmp/
 tools/perfbench/tests/.tmp/
 tools/bench/.cache/
-tools/bench/reports/*
+tools/bench/reports/studies/
+tools/bench/reports/runs/
+tools/bench/reports/study-*.json
 !tools/bench/reports/
-!tools/bench/reports/accuracy.json
 tools/bench/tests/.tmp/
 
 .DS_Store
