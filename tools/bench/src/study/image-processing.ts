@@ -13,6 +13,7 @@ import {
   type BinaryViewId,
   createViewBank,
   readBinaryPixel,
+  type ViewBank,
 } from '../../../../packages/ironqr/src/pipeline/views.js';
 import { describeAccuracyEngine, getAccuracyEngineById } from '../core/engines.js';
 import { normalizeDecodedText } from '../shared/text.js';
@@ -52,6 +53,7 @@ interface ImageProcessingAssetResult {
   readonly scalarFusion: ScalarFusionMeasurement;
   readonly sharedArtifacts: SharedArtifactMeasurement;
   readonly binaryRead: BinaryReadMeasurement | null;
+  readonly materializedInverted: MaterializedInvertedMeasurement | null;
   readonly decode: DecodeMeasurement | null;
 }
 
@@ -111,6 +113,20 @@ interface BinaryReadMeasurement {
   readonly countsEqual: boolean;
 }
 
+interface MaterializedInvertedMeasurement {
+  readonly controlDetectorMs: number;
+  readonly candidateMaterializationMs: number;
+  readonly candidateDetectorMs: number;
+  readonly candidateTotalMs: number;
+  readonly deltaMs: number;
+  readonly improvementPct: number;
+  readonly viewCount: number;
+  readonly proposalCountsEqual: boolean;
+  readonly rowScanCountsEqual: boolean;
+  readonly matcherCountsEqual: boolean;
+  readonly floodCountsEqual: boolean;
+}
+
 interface DecodeMeasurement {
   readonly scanDurationMs: number;
   readonly moduleSamplingMs: number;
@@ -158,6 +174,11 @@ interface ImageProcessingTotals {
   readonly binaryReadByteMs: number;
   readonly binaryReadDirectMs: number;
   readonly binaryReadPixels: number;
+  readonly materializedInvertedControlMs: number;
+  readonly materializedInvertedMaterializationMs: number;
+  readonly materializedInvertedDetectorMs: number;
+  readonly materializedInvertedViews: number;
+  readonly materializedInvertedAllCountsEqual: boolean;
 }
 
 interface ImageProcessingVariantSummary {
@@ -370,6 +391,16 @@ function makeImageProcessingStudyPlugin(input: {
         config.focus === 'binary-bit-hot-path'
           ? await measureBinaryReadVariants(viewBank, viewIds, asset.id, log)
           : null;
+      const materializedInverted =
+        config.focus === 'binary-prefilter-signals'
+          ? await measureMaterializedInvertedVariant(
+              viewBank,
+              viewIds,
+              proposalSummaries,
+              asset.id,
+              log,
+            )
+          : null;
       const decode = config.decode ? await runDecodeMeasurement(image, viewIds, asset, log) : null;
       const expectedTexts = uniqueTexts(
         asset.expectedTexts.map(normalizeDecodedText).filter(Boolean),
@@ -400,6 +431,7 @@ function makeImageProcessingStudyPlugin(input: {
         scalarFusion,
         sharedArtifacts,
         binaryRead,
+        materializedInverted,
         decode: decode === null ? null : stripDecodedTexts(decode),
       };
     },
@@ -425,6 +457,7 @@ function makeImageProcessingStudyPlugin(input: {
         scalarFusion: result.scalarFusion,
         sharedArtifacts: result.sharedArtifacts,
         binaryRead: result.binaryRead,
+        materializedInverted: result.materializedInverted,
         decode: result.decode,
       })),
       rows: results.flatMap((result) =>
@@ -450,6 +483,83 @@ function makeImageProcessingStudyPlugin(input: {
 
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
   new Set(viewIds.map((viewId) => viewId.split(':').slice(0, 2).join(':'))).size;
+
+const measureMaterializedInvertedVariant = async (
+  viewBank: ViewBank,
+  viewIds: readonly BinaryViewId[],
+  controlSummaries: readonly ProposalViewGenerationSummary[],
+  assetId: string,
+  log: (message: string) => void,
+): Promise<MaterializedInvertedMeasurement> => {
+  const controlByView = new Map(controlSummaries.map((summary) => [summary.binaryViewId, summary]));
+  const invertedViewIds = viewIds.filter((viewId) => viewId.endsWith(':inverted'));
+  let controlDetectorMs = 0;
+  let candidateMaterializationMs = 0;
+  let candidateDetectorMs = 0;
+  let proposalCountsEqual = true;
+  let rowScanCountsEqual = true;
+  let matcherCountsEqual = true;
+  let floodCountsEqual = true;
+
+  for (const viewId of invertedViewIds) {
+    const control = controlByView.get(viewId);
+    if (control) controlDetectorMs += control.detectorDurationMs;
+    const materializedStartedAt = performance.now();
+    const materializedView = materializePolarityView(viewBank.getBinaryView(viewId));
+    candidateMaterializationMs += performance.now() - materializedStartedAt;
+    const materializedBank = createSingleBinaryViewBank(viewBank, materializedView);
+    const candidate = generateProposalBatchForView(materializedBank, viewId, {
+      maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
+    }).summary;
+    candidateDetectorMs += candidate.detectorDurationMs;
+    if (control) {
+      proposalCountsEqual &&= control.proposalCount === candidate.proposalCount;
+      rowScanCountsEqual &&=
+        control.finderEvidence.rowScanCount === candidate.finderEvidence.rowScanCount;
+      matcherCountsEqual &&=
+        control.finderEvidence.matcherCount === candidate.finderEvidence.matcherCount;
+      floodCountsEqual &&=
+        control.finderEvidence.floodCount === candidate.finderEvidence.floodCount;
+    }
+    log(`${assetId}: materialized inverted detector variant ${viewId}`);
+    await yieldToDashboard();
+  }
+
+  const candidateTotalMs = candidateMaterializationMs + candidateDetectorMs;
+  const deltaMs = controlDetectorMs - candidateTotalMs;
+  return {
+    controlDetectorMs: round(controlDetectorMs),
+    candidateMaterializationMs: round(candidateMaterializationMs),
+    candidateDetectorMs: round(candidateDetectorMs),
+    candidateTotalMs: round(candidateTotalMs),
+    deltaMs: round(deltaMs),
+    improvementPct: percent(deltaMs, controlDetectorMs),
+    viewCount: invertedViewIds.length,
+    proposalCountsEqual,
+    rowScanCountsEqual,
+    matcherCountsEqual,
+    floodCountsEqual,
+  };
+};
+
+const materializePolarityView = (view: BinaryView): BinaryView => {
+  const data = new Uint8Array(view.plane.data.length);
+  const invert = view.polarity === 'inverted' ? 1 : 0;
+  for (let index = 0; index < data.length; index += 1) {
+    data[index] = (view.plane.data[index] ?? 0) ^ invert;
+  }
+  const plane = { ...view.plane, data };
+  return { ...view, polarity: 'normal', plane, binary: data };
+};
+
+const createSingleBinaryViewBank = (viewBank: ViewBank, view: BinaryView): ViewBank => ({
+  getScalarView: (id) => viewBank.getScalarView(id),
+  getBinaryView: (id) => (id === view.id ? view : viewBank.getBinaryView(id)),
+  listScalarViewIds: () => viewBank.listScalarViewIds(),
+  listBinaryViewIds: () => viewBank.listBinaryViewIds(),
+  listProposalViewIds: () => viewBank.listProposalViewIds(),
+  getDecodeNeighborhood: (id) => viewBank.getDecodeNeighborhood(id),
+});
 
 const measureBinaryReadVariants = async (
   viewBank: ReturnType<typeof createViewBank>,
@@ -749,6 +859,18 @@ const summarizeImageProcessingStudy = ({
       totals.binaryReadDirectMs += result.binaryRead.directBitReaderMs;
       totals.binaryReadPixels += result.binaryRead.pixelReads;
     }
+    if (result.materializedInverted) {
+      totals.materializedInvertedControlMs += result.materializedInverted.controlDetectorMs;
+      totals.materializedInvertedMaterializationMs +=
+        result.materializedInverted.candidateMaterializationMs;
+      totals.materializedInvertedDetectorMs += result.materializedInverted.candidateDetectorMs;
+      totals.materializedInvertedViews += result.materializedInverted.viewCount;
+      totals.materializedInvertedAllCountsEqual &&=
+        result.materializedInverted.proposalCountsEqual &&
+        result.materializedInverted.rowScanCountsEqual &&
+        result.materializedInverted.matcherCountsEqual &&
+        result.materializedInverted.floodCountsEqual;
+    }
     if (result.decode) {
       totals.scanDurationMs += result.decode.scanDurationMs;
       totals.moduleSamplingMs += result.decode.moduleSamplingMs;
@@ -852,6 +974,11 @@ const emptyTotals = (): MutableTotals => ({
   binaryReadByteMs: 0,
   binaryReadDirectMs: 0,
   binaryReadPixels: 0,
+  materializedInvertedControlMs: 0,
+  materializedInvertedMaterializationMs: 0,
+  materializedInvertedDetectorMs: 0,
+  materializedInvertedViews: 0,
+  materializedInvertedAllCountsEqual: true,
 });
 
 const ensureViewRow = (
@@ -920,6 +1047,11 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   binaryReadByteMs: round(totals.binaryReadByteMs),
   binaryReadDirectMs: round(totals.binaryReadDirectMs),
   binaryReadPixels: totals.binaryReadPixels,
+  materializedInvertedControlMs: round(totals.materializedInvertedControlMs),
+  materializedInvertedMaterializationMs: round(totals.materializedInvertedMaterializationMs),
+  materializedInvertedDetectorMs: round(totals.materializedInvertedDetectorMs),
+  materializedInvertedViews: totals.materializedInvertedViews,
+  materializedInvertedAllCountsEqual: totals.materializedInvertedAllCountsEqual,
 });
 
 const finalizeViewRow = (row: MutableViewSummary): ImageProcessingViewSummary => ({
@@ -952,6 +1084,26 @@ const buildVariantSummaries = (
   totals: ImageProcessingTotals,
 ): readonly ImageProcessingVariantSummary[] => {
   const variants: ImageProcessingVariantSummary[] = [];
+  if (config.focus === 'binary-prefilter-signals' && totals.materializedInvertedViews > 0) {
+    const candidateMs = round(
+      totals.materializedInvertedMaterializationMs + totals.materializedInvertedDetectorMs,
+    );
+    variants.push({
+      id: 'materialized-inverted-detector',
+      title: 'Materialized inverted buffers vs polarity-proxy detector reads',
+      controlMetric: 'current inverted detector pass over polarity proxy',
+      candidateMetric:
+        'one materialized inverted bit buffer plus detector pass with normal polarity reads',
+      controlMs: totals.materializedInvertedControlMs,
+      candidateMs,
+      deltaMs: round(totals.materializedInvertedControlMs - candidateMs),
+      improvementPct: percent(
+        totals.materializedInvertedControlMs - candidateMs,
+        totals.materializedInvertedControlMs,
+      ),
+      evidence: `${totals.materializedInvertedViews} inverted view identities; proposal/finder counts equal=${totals.materializedInvertedAllCountsEqual}.`,
+    });
+  }
   if (config.focus === 'binary-bit-hot-path' && totals.binaryReadPixels > 0) {
     variants.push({
       id: 'direct-bit-reader',
