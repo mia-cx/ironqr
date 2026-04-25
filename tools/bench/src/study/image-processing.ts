@@ -1797,7 +1797,7 @@ const distancePoint = (x0: number, y0: number, x1: number, y1: number): number =
 const measureFloodCandidateVariants = async (
   viewBank: ViewBank,
   viewIds: readonly BinaryViewId[],
-  assetId: string,
+  _assetId: string,
   asset: Parameters<StudyCacheHandle['read']>[0],
   cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
   log: (message: string) => void,
@@ -1870,11 +1870,6 @@ const measureFloodCandidateVariants = async (
           measured.cached,
         );
       }
-      if (!measured.preloaded) {
-        log(
-          `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
-        );
-      }
       await yieldToDashboard();
     }
   }
@@ -1904,7 +1899,7 @@ const mergeDetectorVariant = (
 const measureMatcherCandidateVariants = async (
   viewBank: ViewBank,
   viewIds: readonly BinaryViewId[],
-  assetId: string,
+  _assetId: string,
   asset: Parameters<StudyCacheHandle['read']>[0],
   cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
   log: (message: string) => void,
@@ -1981,11 +1976,6 @@ const measureMatcherCandidateVariants = async (
           'detector',
           measured.measurement.outputCount,
           measured.cached,
-        );
-      }
-      if (!measured.preloaded) {
-        log(
-          `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
         );
       }
       await yieldToDashboard();

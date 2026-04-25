@@ -94,7 +94,7 @@ export class BenchOpenTuiDashboard {
   private startPromise: Promise<void> | null = null;
   private keyHandler: ((key: OpenTuiKeyEvent) => void) | null = null;
   private sigintHandler: (() => void) | null = null;
-  private renderQueued = false;
+  private renderDirty = true;
   private renderPaused = false;
   private stopped = false;
   private interruptCount = 0;
@@ -129,17 +129,12 @@ export class BenchOpenTuiDashboard {
 
   update(): void {
     if (this.stopped) return;
+    this.renderDirty = true;
     this.start();
-    if (this.renderQueued) return;
-    this.renderQueued = true;
-    queueMicrotask(() => {
-      this.renderQueued = false;
-      this.render();
-    });
   }
 
   stop(): void {
-    this.render();
+    this.render(true);
     this.cleanup();
     this.stopped = true;
   }
@@ -345,7 +340,7 @@ export class BenchOpenTuiDashboard {
         filterModal,
         footer,
       };
-      this.render();
+      this.render(true);
     } catch (error) {
       this.cleanup();
       this.stopped = true;
@@ -649,6 +644,8 @@ export class BenchOpenTuiDashboard {
   private render(force = false): void {
     const panels = this.panels;
     if (!panels || this.stopped || (this.renderPaused && !force)) return;
+    if (!force && !this.renderDirty) return;
+    this.renderDirty = false;
 
     const width = process.stdout.columns ?? process.stderr.columns ?? 120;
     const height = process.stdout.rows ?? process.stderr.rows ?? 40;
