@@ -563,7 +563,7 @@ export class BenchOpenTuiDashboard {
     }
     panels.scorecard.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? renderStudyEvents(this.dashboard, { width: recentWidth })
+        ? renderStudyEvents(this.dashboard, { width: recentWidth, maxRows: eventRows })
         : renderScorecard(this.dashboard, { width: contentWidth }),
       this.dashboard.commandName === 'study' ? eventRows + 1 : panelBodyRows(SCORECARD_PANEL_ROWS),
     );
@@ -593,7 +593,7 @@ export class BenchOpenTuiDashboard {
     );
     panels.recent.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? renderStudyEvents(this.dashboard, { width: recentWidth })
+        ? renderStudyEvents(this.dashboard, { width: recentWidth, maxRows: recentRows })
         : renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
       recentRows + 1,
     );
@@ -987,9 +987,9 @@ const renderStudyLegend = (options: { readonly width: number }): readonly string
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,
-  options: { readonly width: number },
+  options: { readonly width: number; readonly maxRows: number },
 ): readonly string[] => {
-  const rows = dashboard.studyEvents.slice(-8).reverse();
+  const rows = dashboard.studyEvents.slice(-Math.max(1, options.maxRows)).reverse();
   const lines = ['study events'];
   if (rows.length === 0) {
     lines.push('none yet');
