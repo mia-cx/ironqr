@@ -806,7 +806,7 @@ const activeMatcherPatternIds = (): readonly string[] => [
   ...ACTIVE_MATCHER_CANDIDATES.map((candidate) => candidate.id),
 ];
 
-const retainedDetectorPatternIds = (): readonly string[] => [FLOOD_CONTROL_ID, 'run-map'];
+const retainedDetectorPatternIds = (): readonly string[] => activeDetectorPatternIds();
 
 const readCachedDetectorAssetResult = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
@@ -1114,6 +1114,10 @@ const emptyTimingSummary = (): ImageProcessingTimingSummary => ({
 
 const FLOOD_CANDIDATES = [
   {
+    id: 'legacy-flood',
+    note: 'Historical two-pass connected-component flood detector retained as a control row.',
+  },
+  {
     id: 'dense-index',
     note: 'Dense stats plus min-x indexed containment lookup.',
   },
@@ -1148,9 +1152,14 @@ const FLOOD_CANDIDATES = [
   { id: 'run-length-ccl', note: 'Historical run-length connected components prototype.' },
 ] as const;
 
-const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = [];
+const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] =
+  FLOOD_CANDIDATES.filter((candidate) => candidate.id === 'legacy-flood');
 
 const MATCHER_CANDIDATES = [
+  {
+    id: 'legacy-matcher',
+    note: 'Historical pixel-walk cross-check matcher retained as a control row.',
+  },
   {
     id: 'run-map-u16',
     note: 'Run-map matcher with 16-bit axis maps when image dimensions fit.',
@@ -1181,7 +1190,8 @@ const MATCHER_CANDIDATES = [
   },
 ] as const satisfies readonly { id: MatcherRunMapVariant; note: string }[];
 
-const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] = [];
+const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] =
+  MATCHER_CANDIDATES.filter((candidate) => candidate.id === 'legacy-matcher');
 
 const throwIfStudyAborted = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
@@ -1341,6 +1351,7 @@ const floodCandidateOutput = async (
   variantId: string,
   view: BinaryView,
 ): Promise<FinderEvidence[]> => {
+  if (variantId === 'legacy-flood') return legacyFloodCandidateOutput(view);
   const options = floodVariantOptions(variantId);
   const yieldIfDue = createCooperativeYield();
   if (options.useScanline) {
@@ -1884,6 +1895,134 @@ const enqueueSame = (
 const floodFromComponents = (components: readonly BenchComponentStats[]): FinderEvidence[] =>
   floodFromComponentsWithOptions(components, { indexedLookup: false, squaredDistance: false });
 
+const legacyFloodCandidateOutput = (binary: BinaryView): FinderEvidence[] =>
+  floodFromComponents(legacyTwoPassComponents(binary));
+
+const legacyTwoPassComponents = (binary: BinaryView): readonly BenchComponentStats[] => {
+  const width = binary.width;
+  const height = binary.height;
+  const size = width * height;
+  const labels = new Int32Array(size);
+  const queue = new Int32Array(size);
+  const colors: number[] = [255];
+  let nextLabel = 1;
+
+  for (let start = 0; start < size; start += 1) {
+    if (labels[start] !== 0) continue;
+    const color = readBinaryPixel(binary, start);
+    colors[nextLabel] = color;
+    let head = 0;
+    let tail = 1;
+    labels[start] = nextLabel;
+    queue[0] = start;
+
+    while (head < tail) {
+      const index = queue[head] ?? 0;
+      head += 1;
+      const x = index % width;
+      if (x > 0)
+        tail = enqueueLegacyComponentPixel(
+          binary,
+          labels,
+          queue,
+          tail,
+          index - 1,
+          color,
+          nextLabel,
+        );
+      if (x + 1 < width)
+        tail = enqueueLegacyComponentPixel(
+          binary,
+          labels,
+          queue,
+          tail,
+          index + 1,
+          color,
+          nextLabel,
+        );
+      if (index >= width)
+        tail = enqueueLegacyComponentPixel(
+          binary,
+          labels,
+          queue,
+          tail,
+          index - width,
+          color,
+          nextLabel,
+        );
+      if (index + width < size)
+        tail = enqueueLegacyComponentPixel(
+          binary,
+          labels,
+          queue,
+          tail,
+          index + width,
+          color,
+          nextLabel,
+        );
+    }
+
+    nextLabel += 1;
+  }
+
+  const pixelCounts = new Int32Array(nextLabel);
+  const minX = new Int32Array(nextLabel);
+  const minY = new Int32Array(nextLabel);
+  const maxX = new Int32Array(nextLabel);
+  const maxY = new Int32Array(nextLabel);
+  const sumX = new Float64Array(nextLabel);
+  const sumY = new Float64Array(nextLabel);
+  minX.fill(width);
+  minY.fill(height);
+
+  for (let index = 0; index < size; index += 1) {
+    const label = labels[index] ?? 0;
+    if (label === 0) continue;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    pixelCounts[label] = (pixelCounts[label] ?? 0) + 1;
+    if (x < (minX[label] ?? width)) minX[label] = x;
+    if (y < (minY[label] ?? height)) minY[label] = y;
+    if (x > (maxX[label] ?? 0)) maxX[label] = x;
+    if (y > (maxY[label] ?? 0)) maxY[label] = y;
+    sumX[label] = (sumX[label] ?? 0) + x;
+    sumY[label] = (sumY[label] ?? 0) + y;
+  }
+
+  const components: BenchComponentStats[] = [];
+  for (let id = 1; id < nextLabel; id += 1) {
+    const pixelCount = pixelCounts[id] ?? 0;
+    if (pixelCount === 0) continue;
+    components.push({
+      id,
+      color: colors[id] ?? 255,
+      pixelCount,
+      minX: minX[id] ?? 0,
+      minY: minY[id] ?? 0,
+      maxX: maxX[id] ?? 0,
+      maxY: maxY[id] ?? 0,
+      centroidX: (sumX[id] ?? 0) / pixelCount,
+      centroidY: (sumY[id] ?? 0) / pixelCount,
+    });
+  }
+  return components;
+};
+
+const enqueueLegacyComponentPixel = (
+  binary: BinaryView,
+  labels: Int32Array,
+  queue: Int32Array,
+  tail: number,
+  index: number,
+  color: number,
+  label: number,
+): number => {
+  if (labels[index] !== 0 || readBinaryPixel(binary, index) !== color) return tail;
+  labels[index] = label;
+  queue[tail] = index;
+  return tail + 1;
+};
+
 const floodFromComponentSets = (
   rings: readonly BenchComponentStats[],
   gaps: readonly BenchComponentStats[],
@@ -2249,7 +2388,9 @@ const shortBinaryViewId = (viewId: BinaryViewId): string => {
 const shortBinaryViewPart = (part: string): string => BINARY_VIEW_PART_ALIASES[part] ?? part;
 
 const VARIANT_ID_ALIASES: Record<string, string> = {
+  'legacy-flood': 'legacy-flood',
   'inline-flood': 'inline',
+  'legacy-matcher': 'legacy-match',
   'run-map': 'run-map',
   'dense-stats': 'dense',
   'dense-index': 'dense-index',
@@ -2274,7 +2415,9 @@ const VARIANT_ID_ALIASES: Record<string, string> = {
 };
 
 const LEGACY_VARIANT_IDS: Record<string, readonly string[]> = {
+  'legacy-flood': ['legacy-two-pass-flood'],
   'inline-flood': ['inline-flood-control'],
+  'legacy-matcher': ['legacy-matcher-control'],
   'run-map': ['run-map-matcher-control'],
   'dense-stats': ['dense-typed-array-component-stats'],
   'dense-index': ['dense-indexed-component-lookup'],
@@ -2292,7 +2435,9 @@ const LEGACY_VARIANT_IDS: Record<string, readonly string[]> = {
 };
 
 const LEGACY_VARIANT_ALIASES: Record<string, string> = {
+  'legacy-two-pass-flood': 'legacy-flood',
   'inline-flood-control': 'in',
+  'legacy-matcher-control': 'legacy-match',
   'run-map-matcher-control': 'rm',
   'dense-typed-array-component-stats': 'dta',
   'dense-indexed-component-lookup': 'di',
@@ -2310,6 +2455,7 @@ const LEGACY_VARIANT_ALIASES: Record<string, string> = {
 };
 
 const FLOOD_DETECTOR_IDS = new Set([
+  'legacy-flood',
   'inline-flood',
   'dense-stats',
   'dense-index',
@@ -2332,6 +2478,7 @@ const FLOOD_DETECTOR_IDS = new Set([
   'scanline-indexed-squared-distance',
   'spatial-binned-component-lookup',
   'run-length-connected-components',
+  'legacy-two-pass-flood',
 ]);
 
 const legacyShortVariantId = (variantId: string): string =>

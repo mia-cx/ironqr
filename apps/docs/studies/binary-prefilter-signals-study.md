@@ -385,8 +385,10 @@ This was an incremental run, not a fresh timing confirmation. `run-map` and `sca
 | --- | --- | --- | --- |
 | `scanline-squared` | Flood | — | Canonical flood lead: `0` mismatches, `18.80%` faster than `dense-stats`, lower detector p98 and queued p98, and faster than `scanline-stats`. |
 | `run-map` | Matcher | — | Canonical matcher control, now backed by packed `u16` run maps plus scalar ratio scoring. Incremental bake-off evidence: `0` mismatches, candidate p98 `79.82 ms` vs cached old-control p98 `93.80 ms`, and `27.28%` faster overall. |
+| `legacy-flood` | Flood | `scanline-squared` | Active historical control for quantifying end-to-end flood gains over the original two-pass connected-component/stat path. |
+| `legacy-matcher` | Matcher | `run-map` | Active historical control for quantifying matcher gains over the original pixel-walk cross-check path. |
 
-No matcher candidates are currently active, but the canonical `run-map` control remains in the default detector-study run. The stable `run-map` id now refers to the packed/scalar implementation; use `--refresh-cache` for any timing run that needs fresh canonical matcher numbers. Horizontal-failure gating/staging variants remain deferred to a later early-abandon study.
+The default detector-study run now includes canonical controls plus historical controls: `scanline-squared`, `run-map`, `legacy-flood`, and `legacy-matcher`. The stable `run-map` id now refers to the packed/scalar implementation; use `--refresh-cache` for any timing run that needs fresh canonical matcher numbers. Horizontal-failure gating/staging variants remain deferred to a later early-abandon study.
 
 ## Inactive and binned variants
 
@@ -401,12 +403,12 @@ Disabled means implemented/cache-retained but not currently queued. Binned means
 | `scanline-stats` | Flood | Safe but slower than `scanline-squared` in the corrected confirmation. | Binned. |
 | `scanline-index` | Flood | Faster than old dense control but `17` mismatched views. | Binned. |
 | `scanline-index-squared` | Flood | Fastest old candidate but `17` mismatched views. | Binned. |
-| Legacy matcher pixel-walk cross-checks | Matcher | Run-map preserved output over `10,962` comparisons and was `88.93%` faster. | Retired reference. |
+| Legacy matcher pixel-walk cross-checks | Matcher | Run-map preserved output over `10,962` comparisons and was `88.93%` faster. | Temporarily active as `legacy-matcher` historical control; not a candidate for promotion. |
 | Center-signal / center-pruned matcher hard gate | Matcher | 25-asset post-run-map run had `1,097` mismatched views. | Binned; do not re-add as hard filtering. |
 | Row/flood seeded matcher replacement | Matcher | Latest run had `1,104` mismatched views. | Binned as replacement; may only return as prioritization with fallback accounting. |
 | Fused normal+inverted matcher traversal | Matcher | Output-equivalent in one run but not fast enough to keep active. | Binned until shared artifacts change the economics. |
 | Coarse-grid fallback matcher | Matcher | Several views averaged above `400 ms` even with cache replay. | Binned; fallback cost dominates. |
-| Legacy two-pass flood | Flood | Inline stats preserved output and was `64.72%` faster. | Retired reference. |
+| Legacy two-pass flood | Flood | Inline stats preserved output and was `64.72%` faster. | Temporarily active as `legacy-flood` historical control; not a candidate for promotion. |
 | Filtered-components flood over old path | Flood | Output-equivalent but only `1.66%` faster over old control. | Binned; not enough gain. |
 | `inline-flood` | Flood | Superseded by `dense-stats`; targeted `gray:h:i` check showed inline emitted fewer finders than legacy/dense. | Binned; not retained in active detector-pattern cache. |
 | `spatial-bin` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Binned; not retained in active detector-pattern cache. |
@@ -430,9 +432,9 @@ Disabled means implemented/cache-retained but not currently queued. Binned means
 | Dense squared-distance geometry tests | Flood | Removes `Math.hypot` from ring/gap/stone center checks while preserving thresholds. | Binned after losing to `scanline-squared`. |
 | Scanline component labeling | Flood | Processes horizontal spans in bulk while keeping dense-compatible component stats and finder semantics. | Binned after losing to `scanline-squared`. |
 | Scanline + indexed/squared hybrids | Flood | Tests span labeling with containment and geometry optimizations. | `scanline-squared` is canonical; indexed variants are binned until mismatches are fixed. |
-| Compact run-map arrays | Matcher | Current run maps use four `Uint32Array`s; most images fit axis coordinates in `Uint16Array`, reducing memory bandwidth and allocation size without changing whole-view processing. | Active processing-only candidate `run-map-u16`; latest incremental run showed `18.09%` improvement with `0` mismatches. |
-| Horizontal run-map fill | Matcher | Horizontal run-map construction writes contiguous row spans; `TypedArray.fill` can replace per-pixel JS writes without changing work performed. | Active processing-only candidate `run-map-u16-fill-horizontal`. |
-| Scalar ratio scoring | Matcher | Cross-check scoring currently uses tuple reduction and expected-array lookup; scalar arithmetic removes generic array operations while preserving the same formula. | Active processing-only candidates `run-map-scalar-score` and `run-map-u16-scalar-score`. |
+| Compact run-map arrays | Matcher | Current run maps used four `Uint32Array`s; most images fit axis coordinates in `Uint16Array`, reducing memory bandwidth and allocation size without changing whole-view processing. | Tested and safe, but weaker than packed/scalar; binned after canonization. |
+| Horizontal run-map fill | Matcher | Horizontal run-map construction writes contiguous row spans; `TypedArray.fill` can replace per-pixel JS writes without changing work performed. | Tested and safe, but weaker than packed/scalar; binned after canonization. |
+| Scalar ratio scoring | Matcher | Cross-check scoring used tuple reduction and expected-array lookup; scalar arithmetic removes generic array operations while preserving the same formula. | Canonized only as part of packed/scalar `run-map`; standalone scalar variants binned. |
 | Packed run-map representation | Matcher | Pack 16-bit start/end coordinates into one `Uint32Array` per axis, reducing four map streams to two while preserving full run-map processing. | `run-map-packed-u16-scalar-score` canonized behind stable `run-map`; other packed variants disabled as weaker. |
 | Horizontal-failure gating | Matcher | Skipping vertical checks after horizontal failure was faster in the mixed bake-off, but it is an early-abandon pattern rather than whole-processing optimization. | Deferred to a later early-exit study. |
 | Horizontal-first staging | Matcher | Building vertical maps only after horizontal survivors was faster in the mixed bake-off, but it changes processing order/gating semantics. | Deferred to a later early-exit/staging study. |
@@ -487,6 +489,7 @@ Use `--refresh-cache` only when intentionally invalidating all detector-pattern 
 ## Next work
 
 1. Promote `scanline-squared` behind the production flood control abstraction.
-2. Run the next fresh detector timing pass with `--refresh-cache` to repopulate stable `run-map` cache rows with the canonized packed/scalar implementation.
-3. Keep horizontal-failure gating/staging out of this phase; design it separately if early-abandon behavior becomes the next matcher question.
+2. Run the next fresh detector timing pass with `--refresh-cache` to repopulate stable `run-map` cache rows with the canonized packed/scalar implementation and measure `legacy-flood`/`legacy-matcher` historical controls.
+3. After the historical-control run, disable `legacy-flood` and `legacy-matcher` again so default studies only retain production candidates.
+4. Keep horizontal-failure gating/staging out of this phase; design it separately if early-abandon behavior becomes the next matcher question.
 4. Sweep flood scheduler limits (`4`, `6`, `8`, `10`, `12`) only after matcher profiling, because flood algorithm ranking is settled.

@@ -839,6 +839,7 @@ export const detectMatcherFinders = (
   detectMatcherFindersWithRunMapVariant(binary, width, height, 'run-map-packed-u16-scalar-score');
 
 export type MatcherRunMapVariant =
+  | 'legacy-matcher'
   | 'run-map-u16'
   | 'run-map-u16-fill-horizontal'
   | 'run-map-scalar-score'
@@ -853,6 +854,10 @@ export const detectMatcherFindersWithRunMapVariant = (
   height: number,
   variant: MatcherRunMapVariant,
 ): FinderEvidence[] => {
+  if (variant === 'legacy-matcher') {
+    return detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck);
+  }
+
   const compactRuns = variant.includes('u16');
   const fillHorizontal = variant.includes('fill-horizontal');
   const scalarScore = variant.includes('scalar-score');
