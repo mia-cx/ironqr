@@ -351,21 +351,43 @@ The run measured `scanline-squared` as the fixed flood control, `run-map` as the
 
 **Conclusion.** The compact run-map representation is the processing-only lead. `run-map-u16` preserved signatures over all `10,962` comparisons, reduced matcher p98 from `93.80 ms` to `86.25 ms`, and cut total matcher-control-equivalent time by `40,972.20 ms` (`15.69%`). The gating/staged variants were faster, but they answer a later early-abandon question and must not drive the current confirmation. Narrow the next confirmation run to `run-map` and `run-map-u16`.
 
+### Experiment I — processing-only matcher representation bake-off
+
+**Question.** Which whole-path matcher representation change best reduces `run-map` matcher cost without changing matcher finder signatures?
+
+**Report.** `tools/bench/reports/study/study-binary-prefilter-signals.summary.json`, generated `2026-04-25T19:16:34.752Z` from full report `tools/bench/reports/full/study/study-binary-prefilter-signals.json` at `3a9efb99180589f47119d4ffa355544e0915c0b7`, dirty=`true`.
+
+**Corpus and command.** `203` assets (`60` positive, `143` negative), all `54` binary view identities, `10,962` asset/view comparisons per active detector pattern.
+
+```bash
+bun run --cwd tools/bench bench study binary-prefilter-signals \
+  --view-set all
+```
+
+This was an incremental run, not a fresh timing confirmation. `run-map` and `scanline-squared` came from cache (`21,924` hits total); the seven processing-only matcher candidates were fresh (`76,734` writes). That makes the run suitable for ranking the fresh candidates against each other and checking equivalence, but the control-vs-candidate percentages should be confirmed with `--refresh-cache` before production promotion.
+
+| Variant | Avg | p95 | p98 | p99 | Max | Improvement vs cached `run-map` | Output equal | Mismatched views | Decision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
+| `run-map` | 23.82 ms | 57.48 ms | 93.80 ms | 127.15 ms | 534.85 ms | — | control | 0 | Cached control. |
+| `run-map-u16` | 19.72 ms | 51.50 ms | 85.48 ms | 115.15 ms | 489.96 ms | 17.20% | `true` | 0 | Safe but not lead. |
+| `run-map-u16-fill-horizontal` | 18.92 ms | 50.68 ms | 84.93 ms | 116.81 ms | 476.75 ms | 20.58% | `true` | 0 | Safe but not lead. |
+| `run-map-scalar-score` | 22.27 ms | 54.08 ms | 87.13 ms | 121.17 ms | 464.42 ms | 6.53% | `true` | 0 | Safe but weak alone. |
+| `run-map-u16-scalar-score` | 18.96 ms | 49.17 ms | 83.32 ms | 114.75 ms | 420.19 ms | 20.41% | `true` | 0 | Safe but not lead. |
+| `run-map-packed-u16` | 18.27 ms | 49.14 ms | 81.87 ms | 119.58 ms | 528.75 ms | 23.31% | `true` | 0 | Safe but not lead. |
+| `run-map-packed-u16-fill-horizontal` | 18.13 ms | 49.45 ms | 82.08 ms | 114.11 ms | 492.75 ms | 23.88% | `true` | 0 | Safe but not lead. |
+| `run-map-packed-u16-scalar-score` | 17.33 ms | 47.49 ms | 79.82 ms | 113.59 ms | 443.54 ms | 27.28% | `true` | 0 | Lead; narrow for fresh confirmation. |
+
+**Conclusion.** All processing-only candidates preserved signatures over all `10,962` comparisons. The packed run-map representation is the strongest direction, and `run-map-packed-u16-scalar-score` leads on avg, p95, p98, p99, and total fresh candidate time. Narrow the next run to `run-map` and `run-map-packed-u16-scalar-score` with `--refresh-cache` so the control and lead candidate are timed fresh in the same run.
+
 ## Current variant status
 
 | Variant id | Area | Compared to | Status |
 | --- | --- | --- | --- |
 | `scanline-squared` | Flood | — | Canonical flood lead: `0` mismatches, `18.80%` faster than `dense-stats`, lower detector p98 and queued p98, and faster than `scanline-stats`. |
 | `run-map` | Matcher | — | Canonical matcher control; current production-equivalent baseline. |
-| `run-map-u16` | Matcher | `run-map` | Confirmed processing-only matcher candidate: incremental run had `0` mismatches, p98 `85.97 ms`, and `18.09%` faster overall with cached controls. Kept active as baseline candidate for the next processing bake-off. |
-| `run-map-u16-fill-horizontal` | Matcher | `run-map` | Active processing-only candidate: compact axis maps plus typed-array fill for horizontal run-map construction. |
-| `run-map-scalar-score` | Matcher | `run-map` | Active processing-only candidate: scalar ratio-score arithmetic over the same full matcher path. |
-| `run-map-u16-scalar-score` | Matcher | `run-map` | Active processing-only hybrid: compact maps plus scalar score arithmetic. |
-| `run-map-packed-u16` | Matcher | `run-map` | Active processing-only candidate: pack start/end into one 32-bit word per axis. |
-| `run-map-packed-u16-fill-horizontal` | Matcher | `run-map` | Active processing-only hybrid: packed maps plus horizontal typed-array fill. |
-| `run-map-packed-u16-scalar-score` | Matcher | `run-map` | Active processing-only hybrid: packed maps plus scalar score arithmetic. |
+| `run-map-packed-u16-scalar-score` | Matcher | `run-map` | Lead processing-only matcher candidate: incremental bake-off had `0` mismatches, p98 `79.82 ms`, and `27.28%` faster overall with cached controls. Active for narrowed fresh confirmation. |
 
-The next processing-only bake-off keeps the whole matcher path active and compares compact, packed, fill, and scalar-arithmetic representations. Horizontal-failure gating/staging variants are deferred to a later early-abandon study.
+The next confirmation keeps only `run-map` and `run-map-packed-u16-scalar-score` active. Horizontal-failure gating/staging variants remain deferred to a later early-abandon study.
 
 ## Inactive and binned variants
 
@@ -391,6 +413,12 @@ Disabled means implemented/cache-retained but not currently queued. Binned means
 | `spatial-bin` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Binned; not retained in active detector-pattern cache. |
 | `run-length-ccl` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Binned; not retained in active detector-pattern cache. |
 
+| `run-map-u16` | Matcher | Processing-only bake-off: `0` mismatches, p98 `85.48 ms`, `17.20%` faster than cached `run-map`. | Safe but weaker than packed/scalar lead; disabled for narrowed confirmation. |
+| `run-map-u16-fill-horizontal` | Matcher | Processing-only bake-off: `0` mismatches, p98 `84.93 ms`, `20.58%` faster than cached `run-map`. | Safe but weaker than packed/scalar lead; disabled for narrowed confirmation. |
+| `run-map-scalar-score` | Matcher | Processing-only bake-off: `0` mismatches, p98 `87.13 ms`, `6.53%` faster than cached `run-map`. | Safe but weak alone; disabled for narrowed confirmation. |
+| `run-map-u16-scalar-score` | Matcher | Processing-only bake-off: `0` mismatches, p98 `83.32 ms`, `20.41%` faster than cached `run-map`. | Safe but weaker than packed/scalar lead; disabled for narrowed confirmation. |
+| `run-map-packed-u16` | Matcher | Processing-only bake-off: `0` mismatches, p98 `81.87 ms`, `23.31%` faster than cached `run-map`. | Safe but weaker than packed/scalar hybrid; disabled for narrowed confirmation. |
+| `run-map-packed-u16-fill-horizontal` | Matcher | Processing-only bake-off: `0` mismatches, p98 `82.08 ms`, `23.88%` faster than cached `run-map`. | Safe but weaker than packed/scalar hybrid; disabled for narrowed confirmation. |
 | `run-pattern` | Matcher | Reopened after flood canonization; `55.09%` faster than `run-map` but changed signatures on `8,760` views. | Binned as a replacement; may return only as prioritization/fallback work with explicit recall accounting. |
 | `axis-intersect` | Matcher | Reopened after flood canonization; `59.30%` faster than `run-map` but changed signatures on `8,712` views. | Binned as a replacement; may return only as prioritization/fallback work with explicit recall accounting. |
 | `shared-runs` | Flood+Matcher | Reopened after flood canonization; `55.84%` faster than `run-map` but changed signatures on `8,760` views. | Binned in this form; future shared artifacts need a new equivalence hypothesis, not this replacement matcher. |
@@ -460,6 +488,6 @@ Use `--refresh-cache` only when intentionally invalidating all detector-pattern 
 ## Next work
 
 1. Promote `scanline-squared` behind the production flood control abstraction.
-2. Run a fresh processing-only matcher bake-off with compact, packed, fill, and scalar-score variants active.
-3. If a packed/compact processing variant preserves signatures and wins p98, narrow to that candidate for confirmation before production promotion.
+2. Run a fresh narrowed processing-only matcher confirmation with only `run-map` and `run-map-packed-u16-scalar-score` active; use `--refresh-cache` so the control and candidate timings are both fresh.
+3. If confirmation holds, promote the packed compact run-map plus scalar score path behind the production matcher control abstraction.
 4. Sweep flood scheduler limits (`4`, `6`, `8`, `10`, `12`) only after matcher profiling, because flood algorithm ranking is settled.
