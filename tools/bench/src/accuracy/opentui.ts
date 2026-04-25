@@ -73,6 +73,12 @@ export class BenchOpenTuiDashboard {
   private studyViewTimingOffset = 0;
   private studyDetectorTimingOffset = 0;
   private focusedStudyWidget: 'views' | 'detectors' = 'views';
+  private filterModalOpen = false;
+  private filterCursor = 0;
+  private readonly studyFilters: Record<'views' | 'detectors', StudyChartFilters> = {
+    views: createStudyChartFilters(),
+    detectors: createStudyChartFilters(),
+  };
 
   constructor(
     private readonly dashboard: BenchDashboardModel,
@@ -274,12 +280,41 @@ export class BenchOpenTuiDashboard {
 
   private installQuitHandlers(renderer: OpenTuiRenderer): void {
     this.keyHandler = (key: OpenTuiKeyEvent): void => {
+      if (this.dashboard.commandName === 'study' && this.filterModalOpen) {
+        if (isFilterCloseKey(key)) {
+          this.filterModalOpen = false;
+          this.renderNow();
+          return;
+        }
+        if (isScrollDownKey(key)) {
+          this.moveFilterCursor(1);
+          return;
+        }
+        if (isScrollUpKey(key)) {
+          this.moveFilterCursor(-1);
+          return;
+        }
+        if (isSpaceKey(key)) {
+          this.toggleSelectedFilter();
+          return;
+        }
+        if (key.name === 'a' || key.sequence === 'a') {
+          this.clearFocusedFilters();
+          return;
+        }
+      }
       if (key.name === 'q' && !key.ctrl && !key.meta) {
         this.quit();
         return;
       }
       if (key.name === 'p' && !key.ctrl && !key.meta) {
         this.renderPaused = !this.renderPaused;
+        this.renderNow();
+        return;
+      }
+      if (this.dashboard.commandName === 'study' && (key.name === 'f' || key.sequence === 'f')) {
+        this.filterModalOpen = true;
+        this.filterCursor = 0;
         this.renderNow();
         return;
       }
@@ -341,6 +376,36 @@ export class BenchOpenTuiDashboard {
 
   private studyPageScrollSize(): number {
     return Math.max(1, panelBodyRows(CHART_PANEL_ROWS) - 4);
+  }
+
+  private moveFilterCursor(delta: number): void {
+    const count = filterRows().length;
+    this.filterCursor = (this.filterCursor + delta + count) % count;
+    this.renderNow();
+  }
+
+  private toggleSelectedFilter(): void {
+    const row = filterRows()[this.filterCursor];
+    if (!row) return;
+    const filters = this.studyFilters[this.focusedStudyWidget];
+    const values = filters[row.group];
+    if (values.has(row.value)) values.delete(row.value);
+    else values.add(row.value);
+    this.studyViewTimingOffset = 0;
+    this.studyDetectorTimingOffset = 0;
+    this.renderNow();
+  }
+
+  private clearFocusedFilters(): void {
+    const filters = this.studyFilters[this.focusedStudyWidget];
+    filters.families.clear();
+    filters.scalars.clear();
+    filters.thresholds.clear();
+    filters.polarities.clear();
+    filters.cache.clear();
+    this.studyViewTimingOffset = 0;
+    this.studyDetectorTimingOffset = 0;
+    this.renderNow();
   }
 
   private cleanup(): void {
@@ -407,6 +472,7 @@ export class BenchOpenTuiDashboard {
             maxRows: chartBodyRows,
             offset: this.studyViewTimingOffset,
             focused: this.focusedStudyWidget === 'views',
+            filters: this.studyFilters.views,
           })
         : renderTimingChart(this.dashboard, {
             width: contentWidth,
@@ -421,13 +487,21 @@ export class BenchOpenTuiDashboard {
           maxRows: chartBodyRows,
           offset: this.studyDetectorTimingOffset,
           focused: this.focusedStudyWidget === 'detectors',
+          filters: this.studyFilters.detectors,
         }),
         chartBodyRows,
       );
     }
     panels.scorecard.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? renderStudyEvents(this.dashboard, { width: contentWidth })
+        ? this.filterModalOpen
+          ? renderStudyFilterModal({
+              width: contentWidth,
+              focus: this.focusedStudyWidget,
+              filters: this.studyFilters[this.focusedStudyWidget],
+              cursor: this.filterCursor,
+            })
+          : renderStudyEvents(this.dashboard, { width: contentWidth })
         : renderScorecard(this.dashboard, { width: contentWidth }),
       panelBodyRows(SCORECARD_PANEL_ROWS),
     );
@@ -451,7 +525,7 @@ export class BenchOpenTuiDashboard {
       this.dashboard.commandName === 'study'
         ? renderStudyFooterStatus(this.dashboard)
         : renderRunFooter(this.dashboard);
-    panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
+    panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | f=filters | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
     this.renderer?.requestRender();
   }
 }
@@ -472,6 +546,41 @@ const isSingleRowScrollKey = (key: OpenTuiKeyEvent): boolean =>
   key.sequence === 'k' ||
   key.option ||
   key.meta;
+
+const isSpaceKey = (key: OpenTuiKeyEvent): boolean => key.name === 'space' || key.sequence === ' ';
+
+const isFilterCloseKey = (key: OpenTuiKeyEvent): boolean =>
+  key.name === 'escape' || key.sequence === '\u001b' || key.name === 'f' || key.sequence === 'f';
+
+type StudyFilterGroup = 'families' | 'scalars' | 'thresholds' | 'polarities' | 'cache';
+
+interface StudyChartFilters {
+  readonly families: Set<string>;
+  readonly scalars: Set<string>;
+  readonly thresholds: Set<string>;
+  readonly polarities: Set<string>;
+  readonly cache: Set<string>;
+}
+
+const createStudyChartFilters = (): StudyChartFilters => ({
+  families: new Set(),
+  scalars: new Set(),
+  thresholds: new Set(),
+  polarities: new Set(),
+  cache: new Set(),
+});
+
+const FILTER_ROWS: readonly { readonly group: StudyFilterGroup; readonly value: string }[] = [
+  ...['row', 'flood', 'matcher', 'dedupe'].map((value) => ({ group: 'families' as const, value })),
+  ...['gray', 'oklab-l', 'oklab+a', 'oklab-a', 'oklab+b', 'oklab-b', 'r', 'g', 'b'].map(
+    (value) => ({ group: 'scalars' as const, value }),
+  ),
+  ...['otsu', 'sauvola', 'hybrid'].map((value) => ({ group: 'thresholds' as const, value })),
+  ...['normal', 'inverted'].map((value) => ({ group: 'polarities' as const, value })),
+  ...['fresh', 'cached', 'mixed'].map((value) => ({ group: 'cache' as const, value })),
+];
+
+const filterRows = (): typeof FILTER_ROWS => FILTER_ROWS;
 
 const createPanel = (
   BoxRenderable: OpenTuiCore['BoxRenderable'],
@@ -548,6 +657,7 @@ const renderStudyViewTimings = (
     readonly maxRows: number;
     readonly offset: number;
     readonly focused: boolean;
+    readonly filters: StudyChartFilters;
   },
 ): readonly string[] => {
   const cache = cacheTotals(dashboard);
@@ -573,6 +683,7 @@ const renderStudyViewTimings = (
       maxRows: chartRows,
       offset: options.offset,
       maxLabelWidth: 30,
+      filters: options.filters,
     }),
   );
   return lines;
@@ -585,6 +696,7 @@ const renderStudyDetectorTimings = (
     readonly maxRows: number;
     readonly offset: number;
     readonly focused: boolean;
+    readonly filters: StudyChartFilters;
   },
 ): readonly string[] => {
   const lines = [
@@ -598,6 +710,7 @@ const renderStudyDetectorTimings = (
       maxRows: chartRows,
       offset: options.offset,
       maxLabelWidth: 44,
+      filters: options.filters,
     }),
   );
   return lines;
@@ -617,12 +730,20 @@ const renderStudyTimingBars = (
     readonly maxRows: number;
     readonly offset: number;
     readonly maxLabelWidth: number;
+    readonly filters: StudyChartFilters;
   },
 ): readonly string[] => {
-  const rows = [...inputRows].sort(
-    (left, right) => averageStudyTimingMs(right) - averageStudyTimingMs(left),
-  );
-  if (rows.length === 0) return [truncateLine(`${title} 0/0 — waiting…`, options.width)];
+  const allRows = inputRows.length;
+  const rows = inputRows
+    .filter((row) => matchesStudyFilters(row, options.filters))
+    .sort((left, right) => averageStudyTimingMs(right) - averageStudyTimingMs(left));
+  if (rows.length === 0) {
+    const suffix =
+      activeFilterCount(options.filters) > 0
+        ? ` filters=${activeFilterCount(options.filters)}`
+        : '';
+    return [truncateLine(`${title} 0/0 of ${allRows}${suffix} — no matches`, options.width)];
+  }
   const maxBars = Math.max(1, options.maxRows - 2);
   const maxOffset = Math.max(0, rows.length - maxBars);
   const offset = Math.min(Math.max(0, options.offset), maxOffset);
@@ -639,7 +760,7 @@ const renderStudyTimingBars = (
   const maxAverage = Math.max(1, ...rows.map(averageStudyTimingMs));
   return [
     truncateLine(
-      `${title} ${first}-${last}/${rows.length} pos=${offset + 1}/${rows.length}`,
+      `${title} ${first}-${last}/${rows.length}${rows.length === allRows ? '' : ` of ${allRows}`} pos=${offset + 1}/${rows.length}${activeFilterCount(options.filters) > 0 ? ` filters=${activeFilterCount(options.filters)}` : ''}`,
       options.width,
     ),
     ...visibleRows.map((row) => {
@@ -652,6 +773,90 @@ const renderStudyTimingBars = (
       );
     }),
   ];
+};
+
+const matchesStudyFilters = (
+  row: {
+    readonly id: string;
+    readonly count: number;
+    readonly cachedCount: number;
+  },
+  filters: StudyChartFilters,
+): boolean => {
+  const parsed = parseStudyTimingId(row.id);
+  return (
+    matchesGroup(filters.families, parsed.family) &&
+    matchesGroup(filters.scalars, parsed.scalar) &&
+    matchesGroup(filters.thresholds, parsed.threshold) &&
+    matchesGroup(filters.polarities, parsed.polarity) &&
+    matchesCacheFilter(filters.cache, row)
+  );
+};
+
+const matchesGroup = (selected: ReadonlySet<string>, value: string): boolean =>
+  selected.size === 0 || selected.has(value);
+
+const matchesCacheFilter = (
+  selected: ReadonlySet<string>,
+  row: { readonly count: number; readonly cachedCount: number },
+): boolean => {
+  if (selected.size === 0) return true;
+  const fresh = row.count - row.cachedCount;
+  const states = new Set<string>();
+  if (fresh > 0) states.add('fresh');
+  if (row.cachedCount > 0) states.add('cached');
+  if (fresh > 0 && row.cachedCount > 0) states.add('mixed');
+  return [...selected].some((entry) => states.has(entry));
+};
+
+const parseStudyTimingId = (
+  id: string,
+): {
+  readonly family: string;
+  readonly scalar: string;
+  readonly threshold: string;
+  readonly polarity: string;
+} => {
+  const parts = id.split(':');
+  return {
+    family: parts.length >= 5 ? (parts[1] ?? '') : (parts[0] ?? ''),
+    scalar: parts.at(-3) ?? '',
+    threshold: parts.at(-2) ?? '',
+    polarity: parts.at(-1) ?? '',
+  };
+};
+
+const activeFilterCount = (filters: StudyChartFilters): number =>
+  filters.families.size +
+  filters.scalars.size +
+  filters.thresholds.size +
+  filters.polarities.size +
+  filters.cache.size;
+
+const renderStudyFilterModal = (options: {
+  readonly width: number;
+  readonly focus: 'views' | 'detectors';
+  readonly filters: StudyChartFilters;
+  readonly cursor: number;
+}): readonly string[] => {
+  const lines = [
+    'study filters',
+    truncateLine(
+      `filtering ${options.focus}; ↑/↓ select, space toggle, a clear, esc/f close`,
+      options.width,
+    ),
+  ];
+  for (const [index, row] of filterRows().entries()) {
+    const selected = options.filters[row.group].has(row.value);
+    const cursor = index === options.cursor ? '›' : ' ';
+    lines.push(
+      truncateLine(
+        `${cursor} ${selected ? '[x]' : '[ ]'} ${row.group}:${row.value}`,
+        options.width,
+      ),
+    );
+  }
+  return lines;
 };
 
 const padStudyCell = (value: string, width: number): string => {
