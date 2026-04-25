@@ -10,6 +10,7 @@ import {
   thresholdStatsCacheStudyPlugin,
   warmImageProcessingStudyWorker,
 } from './image-processing.js';
+import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
 import type { StudyCacheHandle } from './types.js';
 import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
 
@@ -22,6 +23,7 @@ const plugins = new Map(
     scalarMaterializationFusionStudyPlugin,
     sharedBinaryDetectorArtifactsStudyPlugin,
     thresholdStatsCacheStudyPlugin,
+    proposalDetectorPolicyStudyPlugin,
   ].map((plugin) => [plugin.id, plugin] as const),
 );
 
