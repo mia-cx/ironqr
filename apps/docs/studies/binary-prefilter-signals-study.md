@@ -48,13 +48,13 @@ The first implementation was intentionally broad and exploratory: passive binary
 
 ## Experiment design refinement
 
-| Iteration | Design | Why it changed | Evidence produced | Outcome |
-| --- | --- | --- | --- | --- |
-| 0. Broad detector exploration | Passive signals, materialization timings, detector timings, retired materialization candidates, early matcher/flood variants. | Too many moving parts; good for hotspot discovery, not production validation. | Detector work dominated; materialization was not the main issue. | Split into focused detector studies. |
-| 1. Matcher exploration | Run-map, center-pruned, seeded, and fused matcher candidates. | Prototype variants mixed correctness and headroom; run-map needed a clean legacy comparison. | Center/seed variants mismatched; run-map looked promising. | Narrowed to legacy matcher vs run-map matcher. |
-| 2. Matcher equivalence | Only legacy matcher vs run-map matcher. | Needed a direct regression proof for the default matcher. | `0` mismatches over `10,962` comparisons; `88.93%` faster. | Run-map matcher canonized; legacy matcher removed. |
-| 3. Flood equivalence | Legacy two-pass flood vs inline stats vs filtered component matching. | Needed to distinguish the large pass-fusion win from smaller matching-filter effects. | Inline stats: `0` mismatches, `64.72%` faster. Filtered: `0` mismatches, only `1.66%` faster over old control. | Inline flood canonized; legacy/filtered variants retired from active study. |
-| 4. Current phase | Inline flood and run-map matcher controls only, until a new better candidate is implemented. | Avoid wasting runtime on exhausted controls/candidates. | Variant-level cache runs only missing measurements; summaries exclude binned variants. | Add only new candidates that can plausibly beat the running lead. |
+| Iteration                     | Design                                                                                                                        | Why it changed                                                                               | Evidence produced                                                                                              | Outcome                                                                     |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 0. Broad detector exploration | Passive signals, materialization timings, detector timings, retired materialization candidates, early matcher/flood variants. | Too many moving parts; good for hotspot discovery, not production validation.                | Detector work dominated; materialization was not the main issue.                                               | Split into focused detector studies.                                        |
+| 1. Matcher exploration        | Run-map, center-pruned, seeded, and fused matcher candidates.                                                                 | Prototype variants mixed correctness and headroom; run-map needed a clean legacy comparison. | Center/seed variants mismatched; run-map looked promising.                                                     | Narrowed to legacy matcher vs run-map matcher.                              |
+| 2. Matcher equivalence        | Only legacy matcher vs run-map matcher.                                                                                       | Needed a direct regression proof for the default matcher.                                    | `0` mismatches over `10,962` comparisons; `88.93%` faster.                                                     | Run-map matcher canonized; legacy matcher removed.                          |
+| 3. Flood equivalence          | Legacy two-pass flood vs inline stats vs filtered component matching.                                                         | Needed to distinguish the large pass-fusion win from smaller matching-filter effects.        | Inline stats: `0` mismatches, `64.72%` faster. Filtered: `0` mismatches, only `1.66%` faster over old control. | Inline flood canonized; legacy/filtered variants retired from active study. |
+| 4. Current phase              | Inline flood and run-map matcher controls plus queued, non-exhausted flood/matcher candidates.                                | Avoid wasting runtime on exhausted controls/candidates without losing the candidate backlog. | Variant-level cache runs only missing measurements; summaries exclude empirically binned variants.             | Implement queued candidates one by one against cached controls.             |
 
 ## Evidence ledger
 
@@ -64,12 +64,12 @@ The first implementation was intentionally broad and exploratory: passive binary
 
 **Corpus.** `203` assets (`60` positive, `143` negative), all `54` binary view identities, `10,962` asset/view comparisons.
 
-| Metric | Legacy matcher | Run-map matcher | Delta |
-| --- | ---: | ---: | ---: |
-| Matcher time | 1,847,272.22 ms | 204,453.47 ms | -1,642,818.75 ms |
-| Runtime improvement | — | 88.93% | — |
-| Output equality | — | `true` | — |
-| Mismatched views | — | 0 | — |
+| Metric              |  Legacy matcher | Run-map matcher |            Delta |
+| ------------------- | --------------: | --------------: | ---------------: |
+| Matcher time        | 1,847,272.22 ms |   204,453.47 ms | -1,642,818.75 ms |
+| Runtime improvement |               — |          88.93% |                — |
+| Output equality     |               — |          `true` |                — |
+| Mismatched views    |               — |               0 |                — |
 
 **Conclusion.** Run-map matcher is canonical. The legacy matcher path was removed; the low-level `crossCheck` primitive remains only because row-scan uses it.
 
@@ -81,30 +81,52 @@ The first implementation was intentionally broad and exploratory: passive binary
 
 **Corpus.** `203` assets (`60` positive, `143` negative), all `54` binary view identities, `10,962` asset/view comparisons, cache `0` hits / `203` misses / `203` writes.
 
-| Variant | Time | Saved vs legacy | Improvement | Output equal | Mismatched views | Decision |
-| --- | ---: | ---: | ---: | --- | ---: | --- |
-| Legacy two-pass flood | 443,090.70 ms | — | — | control | 0 | Retired reference. |
-| Inline component-stats flood | 156,305.84 ms | 286,784.86 ms | 64.72% | `true` | 0 | Canonical control. |
-| Filtered components over old two-pass path | 435,716.10 ms | 7,374.60 ms | 1.66% | `true` | 0 | Retired; not enough gain. |
+| Variant                                    |          Time | Saved vs legacy | Improvement | Output equal | Mismatched views | Decision                  |
+| ------------------------------------------ | ------------: | --------------: | ----------: | ------------ | ---------------: | ------------------------- |
+| Legacy two-pass flood                      | 443,090.70 ms |               — |           — | control      |                0 | Retired reference.        |
+| Inline component-stats flood               | 156,305.84 ms |   286,784.86 ms |      64.72% | `true`       |                0 | Canonical control.        |
+| Filtered components over old two-pass path | 435,716.10 ms |     7,374.60 ms |       1.66% | `true`       |                0 | Retired; not enough gain. |
 
 **Conclusion.** Inline component-stats flood is canonical. It eliminates the old second full-image component-stat traversal and preserves flood finder evidence across the full corpus. The filtered-components variant was safe but too small to keep running.
 
 ## Active variants
 
-| Variant id | Area | Control | Status |
-| --- | --- | --- | --- |
-| `inline-flood-control` | Flood | — | Current running lead. |
+| Variant id                             | Area          | Control                   | Status                                           |
+| -------------------------------------- | ------------- | ------------------------- | ------------------------------------------------ |
+| `inline-flood-control`                 | Flood         | —                         | Current running flood lead.                      |
+| `run-map-matcher-control`              | Matcher       | —                         | Current running matcher lead.                    |
+| `run-length-connected-components`      | Flood         | `inline-flood-control`    | Queued active candidate; not measured yet.       |
+| `dense-typed-array-component-stats`    | Flood         | `inline-flood-control`    | Queued active candidate; not measured yet.       |
+| `spatial-binned-component-lookup`      | Flood         | `inline-flood-control`    | Queued active candidate; not measured yet.       |
+| `run-pattern-center-matcher`           | Matcher       | `run-map-matcher-control` | Queued active candidate; not measured yet.       |
+| `axis-run-intersection-matcher`        | Matcher       | `run-map-matcher-control` | Queued active candidate; not measured yet.       |
+| `coarse-grid-fallback-matcher`         | Matcher       | `run-map-matcher-control` | Queued active candidate; not measured yet.       |
+| `shared-run-length-detector-artifacts` | Flood+Matcher | both controls             | Queued architecture candidate; not measured yet. |
 
-There are currently no active candidates. Add one only when it has a credible path to outperform inline flood or run-map matcher.
+Active candidate means “admitted to the backlog and report ledger,” not “already measured.” The variant cache lets each candidate be implemented and run independently while cached controls are reused.
 
-## Proposed future avenues
+## Binned / empirically exhausted variants
 
-| Avenue | Area | Rationale | Admission bar |
-| --- | --- | --- | --- |
-| Run-length connected components | Flood | Work scales with horizontal runs rather than pixels; could be the next large improvement after inline stats. | Implement as a candidate and compare against inline flood over all views/assets. |
-| Dense typed-array component stats | Flood | Replaces object-heavy component stats with dense arrays indexed by component id. | Must beat inline flood and preserve output. |
-| Spatial bins for ring/gap/stone lookup | Flood | Reduces nested component containment scans if matching dominates after inline stats. | Must beat inline flood and preserve output. |
-| New matcher center enumeration | Matcher | A fundamentally different candidate-center source may reduce run-map matcher work without hard filtering. | Must beat run-map matcher and preserve output; avoid old center-signal hard gate. |
+| Variant                                         | Area    | Evidence                                                                            | Decision                                                                           |
+| ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Legacy matcher pixel-walk cross-checks          | Matcher | Run-map matcher preserved output over `10,962` comparisons and was `88.93%` faster. | Retired reference; not active.                                                     |
+| Center-signal / center-pruned matcher hard gate | Matcher | 25-asset post-run-map run had `1,097` mismatched views.                             | Binned; do not re-add as hard filtering.                                           |
+| Row/flood seeded matcher replacement            | Matcher | Latest run had `1,104` mismatched views.                                            | Binned as replacement; may only return as prioritization with fallback accounting. |
+| Fused normal+inverted matcher traversal         | Matcher | Output-equivalent in one run but not faster enough to keep active.                  | Binned until a shared-artifact architecture changes the economics.                 |
+| Legacy two-pass flood                           | Flood   | Inline stats preserved output and was `64.72%` faster over the full corpus.         | Retired reference; not active.                                                     |
+| Filtered-components flood over old path         | Flood   | Output-equivalent but only `1.66%` faster over old control.                         | Binned; not worth active runtime.                                                  |
+
+## Candidate rationale
+
+| Candidate                              | Area          | Rationale                                                                                                     | Admission bar                                                                               |
+| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Run-length connected components        | Flood         | Work scales with horizontal runs rather than pixels; could be the next large improvement after inline stats.  | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.                   |
+| Dense typed-array component stats      | Flood         | Replaces object-heavy component stats with dense arrays indexed by component id.                              | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.                   |
+| Spatial bins for ring/gap/stone lookup | Flood         | Reduces nested component containment scans if matching dominates after inline stats.                          | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.                   |
+| Run-pattern center matcher             | Matcher       | Enumerates centers from `1:1:3:1:1` run patterns instead of arbitrary grid probes.                            | Must beat run-map matcher and preserve sorted `FinderEvidence[]` signatures.                |
+| Axis-run intersection matcher          | Matcher       | Intersects plausible horizontal and vertical run-pattern centers without the retired hard center-signal gate. | Must beat run-map matcher and preserve sorted `FinderEvidence[]` signatures.                |
+| Coarse-grid fallback matcher           | Matcher       | Measures priority-first probing plus fallback accounting; can be safe only if fallback restores equality.     | Must report coarse-only mismatch and fallback cost; production candidate requires equality. |
+| Shared run-length detector artifacts   | Flood+Matcher | One run-length threshold-plane pass could feed both flood CCL and matcher center enumeration.                 | Must show combined detector savings, not just local wins.                                   |
 
 ## Report contract
 

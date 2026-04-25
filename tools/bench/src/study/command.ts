@@ -378,23 +378,51 @@ const buildExploredAvenues = (
     {
       id: 'run-length-connected-components',
       area: 'flood',
-      status: 'proposed-future',
+      status: 'active-candidate-queued',
       finding:
         'Replace pixel BFS with run-length component labeling; likely next large architecture candidate if inline flood remains hot.',
     },
     {
       id: 'dense-typed-array-component-stats',
       area: 'flood',
-      status: 'proposed-future',
+      status: 'active-candidate-queued',
       finding:
         'Use dense typed arrays for component stats to reduce object/Map allocation after inline stats.',
     },
     {
       id: 'spatial-binned-component-lookup',
       area: 'flood',
-      status: 'proposed-future',
+      status: 'active-candidate-queued',
       finding:
         'Use component spatial bins/ranges to reduce ring/gap/stone search if nested matching dominates after inline stats.',
+    },
+    {
+      id: 'run-pattern-center-matcher',
+      area: 'matcher',
+      status: 'active-candidate-queued',
+      finding:
+        'Enumerate matcher centers from 1:1:3:1:1 run patterns, then verify with run-map cross-checks instead of sampling arbitrary grid centers.',
+    },
+    {
+      id: 'axis-run-intersection-matcher',
+      area: 'matcher',
+      status: 'active-candidate-queued',
+      finding:
+        'Intersect plausible horizontal and vertical run-pattern centers to reduce matcher probes without the retired hard center-signal gate.',
+    },
+    {
+      id: 'coarse-grid-fallback-matcher',
+      area: 'matcher',
+      status: 'active-candidate-queued',
+      finding:
+        'Measure coarse matcher probing plus fallback accounting to learn whether a priority-first matcher can preserve output while avoiding full scans on easy views.',
+    },
+    {
+      id: 'shared-run-length-detector-artifacts',
+      area: 'flood+matcher',
+      status: 'active-candidate-queued',
+      finding:
+        'Use run-length artifacts for both flood connected-components and matcher center enumeration so one threshold-plane pass can feed multiple detectors.',
     },
   ];
   return avenues;
@@ -418,7 +446,7 @@ const buildStudyConclusions = (
     'No exhausted legacy flood, filtered flood, or center-signal matcher variants are active in this study phase.',
   );
   conclusions.push(
-    'Next runs should add only new candidates that plausibly beat the inline flood or run-map matcher controls.',
+    'Queued active candidates are run-length CCL, dense typed-array stats, spatial-binned component lookup, run-pattern matcher centers, axis-run matcher intersections, coarse-grid fallback, and shared run-length detector artifacts.',
   );
   conclusions.push(
     'Decode success and false-positive impact remain out of scope for this detector-evidence report.',
@@ -437,8 +465,8 @@ const buildQuestionCoverage = (
     return [
       {
         question: 'What is the current detector control baseline?',
-        status: 'answered-for-control',
-        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidates=0`,
+        status: 'answered-for-control-with-queued-candidates',
+        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidatesQueued=7 measuredCandidates=0`,
       },
       {
         question: 'Do flood variants prove decode success or false positives?',
