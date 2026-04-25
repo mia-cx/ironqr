@@ -566,7 +566,7 @@ const runPlugin = async (input: {
     const assetsToRun: (typeof input.assets)[number][] = [];
     const readCachedAsset = input.plugin.readCachedAsset;
     if (readCachedAsset) {
-      input.progress.onMessage(`study cache preflight ${input.assets.length} assets`);
+      input.progress.onMessage(`study cache preload starting for ${input.assets.length} assets`);
       for (const [index, asset] of input.assets.entries()) {
         input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
         const cached = await readCachedAsset({
@@ -601,7 +601,7 @@ const runPlugin = async (input: {
         preloadedResults.push(cached);
       }
       input.progress.onMessage(
-        `study cache preflight queued ${assetsToRun.length}/${input.assets.length} assets`,
+        `study cache preload complete: replayed ${preloadedResults.length} assets, queued ${assetsToRun.length}/${input.assets.length}`,
       );
     } else {
       assetsToRun.push(...input.assets);

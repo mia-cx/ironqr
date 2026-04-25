@@ -448,6 +448,7 @@ function makeImageProcessingStudyPlugin(input: {
       if (config.focus !== 'binary-prefilter-signals') return null;
       if (!redundantDetectorCachePurged) {
         redundantDetectorCachePurged = true;
+        log('detector cache purge starting: scanning inactive pattern rows');
         await purgeRedundantDetectorCacheRows(cache, log);
       }
       return readCachedDetectorAssetResult(asset, config, cache, log);
@@ -457,6 +458,7 @@ function makeImageProcessingStudyPlugin(input: {
       if (config.focus === 'binary-prefilter-signals') {
         if (!redundantDetectorCachePurged) {
           redundantDetectorCachePurged = true;
+          log('detector cache purge starting: scanning inactive pattern rows');
           await purgeRedundantDetectorCacheRows(cache, log);
         }
         const cached = await readCachedDetectorAssetResult(asset, config, cache, log);
@@ -845,13 +847,19 @@ const purgeRedundantDetectorCacheRows = async (
   const activePatternPrefixes = new Set(
     [...activeIds].map((variantId) => detectorPatternPrefix(variantId)),
   );
+  const startedAt = performance.now();
   const purged = await cache.purge((cacheKey) => {
     const parsed = parseDetectorCacheKey(cacheKey);
     if (!parsed) return false;
     if (parsed.kind === 'detector-variant') return !activeIds.has(parsed.variantId);
     return ![...activePatternPrefixes].some((prefix) => parsed.patternId.startsWith(prefix));
   });
-  if (purged > 0) log(`purged ${purged} redundant detector cache rows for inactive patterns`);
+  const elapsed = round(performance.now() - startedAt);
+  log(
+    purged > 0
+      ? `detector cache purge complete: removed ${purged} inactive pattern rows in ${elapsed}ms`
+      : `detector cache purge complete: no inactive pattern rows found in ${elapsed}ms`,
+  );
 };
 
 const parseDetectorCacheKey = (
