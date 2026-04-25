@@ -123,12 +123,48 @@ The processed summary must include:
 
 ## Results
 
-Pending. Run the study before changing production policy.
+Full proposal-only run generated `2026-04-25T21:24:03.240Z` from commit `0b1454bc0c07cdb7a0a36f191e1b22ffc2bde524` with dirty working tree state. Reports:
+
+```text
+tools/bench/reports/full/study/study-proposal-detector-policy.json
+tools/bench/reports/study/study-proposal-detector-policy.summary.json
+```
+
+Run shape:
+
+```text
+assets=203 positives=60 negatives=143
+viewSet=all maxViews=54 maxProposals=24
+cache hits=0 misses=203 writes=203
+```
+
+| Policy | Positive assets with proposals | Negative assets with proposals | Proposals | Scan ms | Row ms | Flood ms | Matcher ms | Expensive views | Fallback assets |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `full-current` | 60 | 143 | 168,366 | 533,914.26 | 68,755.15 | 212,503.17 | 188,132.05 | 8,347 | 0 |
+| `no-flood` | 60 | 143 | 168,366 | 306,914.19 | 66,560.80 | 0.56 | 181,063.29 | 8,347 | 0 |
+| `row-only` | 60 | 142 | 159,305 | 125,062.77 | 66,185.86 | 0.77 | 0.74 | 0 | 0 |
+| `row-plus-flood` | 60 | 142 | 159,315 | 331,921.64 | 66,666.78 | 205,188.85 | 6.46 | 8,347 | 0 |
+| `matcher-only` | 60 | 141 | 24,801 | 83,801.89 | 3.39 | 0.23 | 27,987.35 | 1,218 | 0 |
+| `matcher-no-row-overlap` | 60 | 143 | 163,773 | 305,416.80 | 65,982.86 | 0.69 | 180,310.02 | 8,347 | 0 |
+| `row-first-fallback-on-no-proposals` | 60 | 143 | 159,309 | 124,386.92 | 65,828.69 | 0.60 | 111.60 | 24 | 1 |
+
+Compared with `full-current`:
+
+- `no-flood` matched positive coverage, negative proposal behavior, and proposal count exactly; scan time dropped by `227,000.07ms` (`42.52%`).
+- `matcher-no-row-overlap` matched positive coverage and negative proposal behavior while emitting `4,593` fewer proposals and reducing scan time by `228,497.46ms` (`42.80%`).
+- `row-first-fallback-on-no-proposals` matched positive coverage and negative proposal behavior, emitted `9,057` fewer proposals, used fallback on one negative asset (`asset-a63ebea2df94c77a`), and reduced scan time by `409,527.34ms` (`76.70%`).
+- `row-only`, `row-plus-flood`, and `matcher-only` all retained positive proposal coverage but reduced negative assets with proposals; these are contribution-bound controls, not strict full-current equivalents.
 
 ## Interpretation plan
 
-First inspect `no-flood` versus `full-current`. If equivalent at proposal level, flood is a deletion/gating candidate for a later decode-confirmation study. Then inspect `row-first-fallback-on-no-proposals` to decide whether matcher can be staged at proposal-generation time. Finally inspect `matcher-no-row-overlap`; if it loses any positive proposal coverage, matcher overlap should remain a dedupe concern rather than an early suppression policy.
+This proposal-only run answers proposal coverage and proposal-generation cost. It does not answer decode payload equivalence, first-success ranks, or false decoded payload behavior.
+
+First inspect `no-flood` versus `full-current`. It is equivalent at the measured proposal-count and coverage level and removes the flood cost. Then inspect `row-first-fallback-on-no-proposals`; it is the fastest full-current coverage match, but changes proposal frontier size. Finally inspect `matcher-no-row-overlap`; it preserves proposal coverage while reducing duplicate proposal pressure, but needs proposal-identity or decode confirmation before production suppression.
 
 ## Conclusion / evidence-backed decision
 
-Pending generated study evidence.
+For proposal generation, flood is removable: `no-flood` matched `full-current` on positive coverage, negative proposal behavior, and total proposal count while eliminating `212,503.17ms` of flood work.
+
+The fastest full-current coverage-preserving policy is `row-first-fallback-on-no-proposals`; it avoids matcher on all but one asset and cuts scan time by `76.70%`, but it emits fewer proposals than `full-current`, so treat it as the next policy candidate rather than an immediate production default.
+
+Matcher overlap suppression is promising at proposal level, but should not be promoted without proposal-identity or decode-level confirmation.
