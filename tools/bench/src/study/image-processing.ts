@@ -431,6 +431,7 @@ function makeImageProcessingStudyPlugin(input: {
   readonly decodeDefault: boolean;
 }): StudyPlugin<ImageProcessingSummary, ImageProcessingConfig, ImageProcessingAssetResult> {
   let redundantDetectorCachePurged = false;
+  const preloadedDetectorRows = new Set<string>();
   return {
     id: input.id,
     title: input.title,
@@ -489,6 +490,7 @@ function makeImageProcessingStudyPlugin(input: {
       }
       return readCachedDetectorAssetResult(asset, config, cache, log, {
         replayPartialRows: true,
+        preloadedRows: preloadedDetectorRows,
       });
     },
     runAsset: async ({ asset, config, cache, signal, log }) => {
@@ -501,6 +503,7 @@ function makeImageProcessingStudyPlugin(input: {
         }
         const cached = await readCachedDetectorAssetResult(asset, config, cache, log, {
           replayPartialRows: false,
+          preloadedRows: preloadedDetectorRows,
         });
         if (cached) return cached;
       }
@@ -533,6 +536,7 @@ function makeImageProcessingStudyPlugin(input: {
           asset,
           cache,
           log,
+          preloadedDetectorRows,
         );
         matcherCandidates = await measureMatcherCandidateVariants(
           viewBank,
@@ -541,6 +545,7 @@ function makeImageProcessingStudyPlugin(input: {
           asset,
           cache,
           log,
+          preloadedDetectorRows,
         );
         proposalGenerationMs = round(performance.now() - detectorStartedAt);
       } else {
@@ -764,7 +769,7 @@ const readCachedDetectorAssetResult = async (
   config: ImageProcessingConfig,
   cache: StudyCacheHandle<unknown>,
   log: (message: string) => void,
-  options: { readonly replayPartialRows: boolean },
+  options: { readonly replayPartialRows: boolean; readonly preloadedRows: Set<string> },
 ): Promise<ImageProcessingAssetResult | null> => {
   const viewIds = detectorStudyViewIds(config);
   const requiredIds = activeDetectorPatternIds();
@@ -779,7 +784,14 @@ const readCachedDetectorAssetResult = async (
   );
   if (missing.length > 0) {
     if (options.replayPartialRows) {
-      const replayed = await replayCachedDetectorRows(asset, cache, viewIds, requiredIds, log);
+      const replayed = await replayCachedDetectorRows(
+        asset,
+        cache,
+        viewIds,
+        requiredIds,
+        log,
+        options.preloadedRows,
+      );
       log(
         `${asset.id}: detector cache missing ${missing.length}/${requiredIds.length * viewIds.length} variant-view rows; preloaded ${replayed} cached rows`,
       );
@@ -911,6 +923,7 @@ const replayCachedDetectorRows = async (
   viewIds: readonly BinaryViewId[],
   variantIds: readonly string[],
   log: (message: string) => void,
+  preloadedRows: Set<string>,
 ): Promise<number> => {
   let replayed = 0;
   for (const viewId of viewIds) {
@@ -918,6 +931,7 @@ const replayCachedDetectorRows = async (
       const measurement = await readVariantMeasurement(asset, cache, variantId, viewId);
       if (!measurement) continue;
       replayed += 1;
+      preloadedRows.add(detectorRowKey(asset.id, variantId, viewId));
       const detector = detectorAreaId(variantId) === 'f' ? 'flood' : 'matcher';
       logStudyTiming(
         log,
@@ -1084,14 +1098,22 @@ const measureVariant = async (
   cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
   variantId: string,
   viewId: BinaryViewId,
+  preloadedRows: ReadonlySet<string>,
   run: () => FinderEvidence[],
 ): Promise<{
   readonly output: FinderEvidence[];
   readonly measurement: VariantCacheMeasurement;
   readonly cached: boolean;
+  readonly preloaded: boolean;
 }> => {
   const cached = await readVariantMeasurement(asset, cache, variantId, viewId);
-  if (cached) return { output: [], measurement: cached, cached: true };
+  if (cached)
+    return {
+      output: [],
+      measurement: cached,
+      cached: true,
+      preloaded: preloadedRows.has(detectorRowKey(asset.id, variantId, viewId)),
+    };
   const cacheKey = detectorVariantCacheKey(variantId, viewId);
   const startedAt = performance.now();
   const output = run();
@@ -1101,8 +1123,11 @@ const measureVariant = async (
     signature: finderSignature(output),
   };
   await cache.write(asset, cacheKey, measurement);
-  return { output, measurement, cached: false };
+  return { output, measurement, cached: false, preloaded: false };
 };
+
+const detectorRowKey = (assetId: string, variantId: string, viewId: BinaryViewId): string =>
+  `${assetId}\u0000${variantId}\u0000${viewId}`;
 
 const compareVariant = (
   id: string,
@@ -1492,6 +1517,7 @@ const measureFloodCandidateVariants = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
   cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
   log: (message: string) => void,
+  preloadedRows: ReadonlySet<string>,
 ): Promise<FloodCandidateMeasurement> => {
   let controlMs = 0;
   const variants = new Map<string, DetectorVariantMeasurement>();
@@ -1499,7 +1525,7 @@ const measureFloodCandidateVariants = async (
 
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
-    const control = await measureVariant(asset, cache, 'inline-flood', viewId, () =>
+    const control = await measureVariant(asset, cache, 'inline-flood', viewId, preloadedRows, () =>
       detectFloodFinders(view, view.width, view.height),
     );
     controlMs += control.measurement.durationMs;
@@ -1507,27 +1533,34 @@ const measureFloodCandidateVariants = async (
     units.push(
       detectorUnit(controlId, 'inline-flood', 'flood', control.measurement, control.cached, true),
     );
-    if (!control.cached) {
+    if (!control.preloaded) {
       logStudyTiming(
         log,
         controlId,
         control.measurement.durationMs,
         'detector',
         control.measurement.outputCount,
-        false,
+        control.cached,
       );
     }
 
     for (const candidate of ACTIVE_FLOOD_CANDIDATES) {
-      const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
-        if (candidate.id === 'spatial-bin') {
-          return floodWithSpatialBins(labelDenseComponents(view));
-        }
-        if (candidate.id === 'run-length-ccl') {
-          return floodWithRunLengthComponents(view);
-        }
-        return floodFromComponents(labelDenseComponents(view));
-      });
+      const measured = await measureVariant(
+        asset,
+        cache,
+        candidate.id,
+        viewId,
+        preloadedRows,
+        () => {
+          if (candidate.id === 'spatial-bin') {
+            return floodWithSpatialBins(labelDenseComponents(view));
+          }
+          if (candidate.id === 'run-length-ccl') {
+            return floodWithRunLengthComponents(view);
+          }
+          return floodFromComponents(labelDenseComponents(view));
+        },
+      );
       const compared = compareVariant(
         candidate.id,
         'flood',
@@ -1547,19 +1580,19 @@ const measureFloodCandidateVariants = async (
           compared.outputsEqual,
         ),
       );
-      if (!measured.cached) {
+      if (!measured.preloaded) {
         logStudyTiming(
           log,
           unitId,
           measured.measurement.durationMs,
           'detector',
           measured.measurement.outputCount,
-          false,
+          measured.cached,
         );
       }
-      if (!measured.cached) {
+      if (!measured.preloaded) {
         log(
-          `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} fresh p=${measured.measurement.outputCount}`,
+          `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
         );
         await yieldToDashboard();
       }
@@ -1595,6 +1628,7 @@ const measureMatcherCandidateVariants = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
   cache: Pick<StudyCacheHandle, 'has' | 'read' | 'write'>,
   log: (message: string) => void,
+  preloadedRows: ReadonlySet<string>,
 ): Promise<MatcherCandidateMeasurement> => {
   let controlMatcherMs = 0;
   const variants = new Map<string, DetectorVariantMeasurement>();
@@ -1602,7 +1636,7 @@ const measureMatcherCandidateVariants = async (
 
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
-    const control = await measureVariant(asset, cache, 'run-map', viewId, () =>
+    const control = await measureVariant(asset, cache, 'run-map', viewId, preloadedRows, () =>
       detectMatcherFinders(view, view.width, view.height),
     );
     controlMatcherMs += control.measurement.durationMs;
@@ -1610,24 +1644,31 @@ const measureMatcherCandidateVariants = async (
     units.push(
       detectorUnit(controlId, 'run-map', 'matcher', control.measurement, control.cached, true),
     );
-    if (!control.cached) {
+    if (!control.preloaded) {
       logStudyTiming(
         log,
         controlId,
         control.measurement.durationMs,
         'detector',
         control.measurement.outputCount,
-        false,
+        control.cached,
       );
     }
 
     for (const candidate of ACTIVE_MATCHER_CANDIDATES) {
-      const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
-        if (candidate.id === 'axis-intersect') {
-          return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));
-        }
-        return matcherFromCenters(view, matcherPatternCenters(view, 'horizontal'));
-      });
+      const measured = await measureVariant(
+        asset,
+        cache,
+        candidate.id,
+        viewId,
+        preloadedRows,
+        () => {
+          if (candidate.id === 'axis-intersect') {
+            return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));
+          }
+          return matcherFromCenters(view, matcherPatternCenters(view, 'horizontal'));
+        },
+      );
       const area = candidate.id === 'shared-runs' ? 'flood+matcher' : 'matcher';
       const compared = compareVariant(
         candidate.id,
@@ -1648,19 +1689,19 @@ const measureMatcherCandidateVariants = async (
           compared.outputsEqual,
         ),
       );
-      if (!measured.cached) {
+      if (!measured.preloaded) {
         logStudyTiming(
           log,
           unitId,
           measured.measurement.durationMs,
           'detector',
           measured.measurement.outputCount,
-          false,
+          measured.cached,
         );
       }
-      if (!measured.cached) {
+      if (!measured.preloaded) {
         log(
-          `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} fresh p=${measured.measurement.outputCount}`,
+          `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
         );
         await yieldToDashboard();
       }

@@ -625,9 +625,11 @@ export class BenchOpenTuiDashboard {
     const width = process.stdout.columns ?? process.stderr.columns ?? 120;
     const height = process.stdout.rows ?? process.stderr.rows ?? 40;
     const contentWidth = Math.max(36, width - ROOT_HORIZONTAL_PADDING);
-    if (this.filterModalOpen) {
+    const showPreloadModal =
+      this.dashboard.commandName === 'study' && isStudyCachePreloading(this.dashboard);
+    if (this.filterModalOpen || showPreloadModal) {
       this.centerFilterModal();
-      this.ensureFilterCursorVisible();
+      if (this.filterModalOpen) this.ensureFilterCursorVisible();
     }
     const showStudyViewChart = this.dashboard.commandName !== 'study' || this.hasStudyViewTimings();
     if (
@@ -708,7 +710,11 @@ export class BenchOpenTuiDashboard {
         : renderScorecard(this.dashboard, { width: contentWidth }),
       this.dashboard.commandName === 'study' ? eventRows + 1 : panelBodyRows(SCORECARD_PANEL_ROWS),
     );
-    panels.filterModal.box.visible = this.dashboard.commandName === 'study' && this.filterModalOpen;
+    panels.filterModal.box.visible =
+      this.dashboard.commandName === 'study' && (this.filterModalOpen || showPreloadModal);
+    panels.filterModal.box.title = this.filterModalOpen
+      ? ' STUDY FILTERS '
+      : ' STUDY CACHE PRELOAD ';
     panels.filterModal.body.content = this.filterModalOpen
       ? panelBody(
           renderStudyFilterModal({
@@ -722,7 +728,15 @@ export class BenchOpenTuiDashboard {
           }),
           this.filterModalBodyRows(),
         )
-      : '';
+      : showPreloadModal
+        ? panelBody(
+            renderStudyPreloadModal(this.dashboard, {
+              width: Math.max(40, panels.filterModal.box.width - 4),
+              maxRows: this.filterModalBodyRows(),
+            }),
+            this.filterModalBodyRows(),
+          )
+        : '';
     panels.active.body.content = panelBody(
       renderActiveWorkers(this.dashboard, {
         width: leftWidth,
@@ -1255,6 +1269,33 @@ const renderStudyEvents = (
   }
   for (const row of rows) lines.push(truncateLine(row, options.width));
   return lines;
+};
+
+const isStudyCachePreloading = (dashboard: BenchDashboardModel): boolean => {
+  const started = dashboard.studyEvents.some((event) =>
+    event.includes('study cache preload starting'),
+  );
+  if (!started) return false;
+  return !dashboard.studyEvents.some((event) => event.includes('study cache preload complete'));
+};
+
+const renderStudyPreloadModal = (
+  dashboard: BenchDashboardModel,
+  options: { readonly width: number; readonly maxRows: number },
+): readonly string[] => {
+  const rowCache = studyTimingCacheTotals(dashboard);
+  const latest = [...dashboard.studyEvents].reverse().find(Boolean) ?? 'starting';
+  const lines = [
+    'study cache preload',
+    `assets checked ${dashboard.preparedAssets}/${dashboard.assetCount || '-'}`,
+    `preloaded rows ${rowCache.cached}`,
+    `fresh rows queued ${rowCache.fresh}`,
+    '',
+    latest,
+  ];
+  return lines
+    .slice(0, Math.max(1, options.maxRows))
+    .map((line) => truncateLine(line, options.width));
 };
 
 const renderStudyFooterStatus = (dashboard: BenchDashboardModel): string => {
