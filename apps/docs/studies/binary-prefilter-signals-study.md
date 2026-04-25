@@ -105,16 +105,16 @@ The first implementation was intentionally broad and exploratory: passive binary
 | --------------- | ------- | -------------- | ------------------------------------------- |
 | `inline-flood`  | Flood   | —              | Current running flood lead.                 |
 | `run-map`       | Matcher | —              | Current running matcher lead.               |
-| `dense-stats`   | Flood   | `inline-flood` | First enabled runnable candidate to measure. |
+| `dense-stats`   | Flood   | `inline-flood` | Enabled runnable candidate.                 |
+| `spatial-bin`   | Flood   | `inline-flood` | Enabled runnable candidate.                 |
+| `run-length-ccl` | Flood  | `inline-flood` | Enabled runnable candidate.                 |
 
-Current phase measures `dense-stats` against the warmed inline-flood control. Other runnable candidates remain implemented and cache-retained, but are disabled from default execution until this candidate is decided.
+Current phase measures all flood candidates against the warmed inline-flood control. Matcher candidates remain implemented and cache-retained, but are disabled from default execution until this flood batch is decided.
 
 ## Disabled runnable variants
 
 | Variant id        | Area          | Compared to     | Status                                  |
 | ----------------- | ------------- | --------------- | --------------------------------------- |
-| `run-length-ccl`  | Flood         | `inline-flood`  | Disabled; cache rows are retained.      |
-| `spatial-bin`     | Flood         | `inline-flood`  | Disabled; cache rows are retained.      |
 | `run-pattern`     | Matcher       | `run-map`       | Disabled; cache rows are retained.      |
 | `axis-intersect`  | Matcher       | `run-map`       | Disabled; cache rows are retained.      |
 | `shared-runs`     | Flood+Matcher | both leads      | Disabled; cache rows are retained.      |

@@ -1060,7 +1060,7 @@ const FLOOD_CANDIDATES = [
   { id: 'run-length-ccl', note: 'Run-length connected components prototype.' },
 ] as const;
 
-const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = [FLOOD_CANDIDATES[0]];
+const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = [...FLOOD_CANDIDATES];
 
 const MATCHER_CANDIDATES = [
   {

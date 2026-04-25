@@ -296,7 +296,7 @@ const buildStudyHeadline = (
   const floodMs = detectorBreakdown.floodMs ?? 0;
   const floodControlMs = numberField(totals, 'floodControlMs');
   if (floodControlMs > 0) {
-    return `Detector=${formatMs(detectorMs)}; inline-flood lead=${formatMs(floodControlMs)}; activeCandidate=dense-stats.`;
+    return `Detector=${formatMs(detectorMs)}; inline-flood lead=${formatMs(floodControlMs)}; activeFloodCandidates=dense-stats,spatial-bin,run-length-ccl.`;
   }
   const matcherMs = numberField(totals, 'matcherControlMs');
   const legacyMs = numberField(totals, 'matcherLegacyControlMs');
@@ -400,9 +400,9 @@ const buildExploredAvenues = (
     {
       id: 'run-length-ccl',
       area: 'flood',
-      status: 'disabled-candidate',
+      status: 'active-candidate',
       finding:
-        'Replace pixel BFS with run-length component labeling; retained for later measurement after dense-stats.',
+        'Replace pixel BFS with run-length component labeling; currently enabled for measurement against inline-flood.',
     },
     {
       id: 'dense-stats',
@@ -414,9 +414,9 @@ const buildExploredAvenues = (
     {
       id: 'spatial-bin',
       area: 'flood',
-      status: 'disabled-candidate',
+      status: 'active-candidate',
       finding:
-        'Use component spatial bins/ranges to reduce ring/gap/stone search if nested matching dominates after inline stats; retained for later measurement.',
+        'Use component spatial bins/ranges to reduce ring/gap/stone search if nested matching dominates after inline stats; currently enabled for measurement.',
     },
     {
       id: 'run-pattern',
@@ -468,7 +468,7 @@ const buildStudyConclusions = (
     'No exhausted legacy flood, filtered flood, or center-signal matcher variants are active in this study phase.',
   );
   conclusions.push(
-    'Current run phase measures dense-stats against the inline-flood control; other runnable candidates are retained in the ledger and cache but disabled by default.',
+    'Current run phase measures all flood candidates against the inline-flood control; matcher candidates are retained in the ledger and cache but disabled by default.',
   );
   conclusions.push(
     'Decode success and false-positive impact remain out of scope for this detector-evidence report.',
@@ -488,7 +488,7 @@ const buildQuestionCoverage = (
       {
         question: 'What is the current detector control baseline?',
         status: 'answered-for-control-with-active-candidates',
-        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidate=dense-stats`,
+        evidence: `inlineFlood=${formatMs(floodControlMs)} activeFloodCandidates=dense-stats,spatial-bin,run-length-ccl`,
       },
       {
         question: 'Do flood variants prove decode success or false positives?',
