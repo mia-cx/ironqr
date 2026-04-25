@@ -240,7 +240,7 @@ export const viewProposalsStudyPlugin: StudyPlugin<
         if (event.type !== 'proposal-view-generated') return;
         generatedViewCount += 1;
         generatedProposalCount += event.proposalCount;
-        logStudyTiming(log, studyTimingId(event.binaryViewId, 'a'), event.detectorDurationMs);
+        logStudyTiming(log, studyTimingId(event.binaryViewId, 'c'), event.detectorDurationMs);
         log(
           `${asset.id}: view ${generatedViewCount} ${event.binaryViewId} proposals=${event.proposalCount} total=${generatedProposalCount}`,
         );

@@ -358,7 +358,7 @@ function makeImageProcessingStudyPlugin(input: {
           maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
         }).summary;
         proposalSummaries.push(summary);
-        logStudyTiming(log, studyTimingId(viewId, 'a'), summary.detectorDurationMs);
+        logStudyTiming(log, studyTimingId(viewId, 'c'), summary.detectorDurationMs);
         log(`${asset.id}: proposal path ${proposalViewIndex}/${viewIds.length} ${viewId}`);
         await yieldToDashboard();
       }
@@ -536,7 +536,7 @@ const measureMaterializedInvertedVariant = async (
       floodCountsEqual &&=
         control.finderEvidence.floodCount === candidate.finderEvidence.floodCount;
     }
-    logStudyTiming(log, studyTimingId(viewId, 'b'), candidate.detectorDurationMs);
+    logStudyTiming(log, studyTimingId(viewId, 'a'), candidate.detectorDurationMs);
     log(`${assetId}: materialized inverted detector variant ${viewId}`);
     await yieldToDashboard();
   }
