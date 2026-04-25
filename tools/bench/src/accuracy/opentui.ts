@@ -29,6 +29,7 @@ const ROOT_HORIZONTAL_PADDING = 8;
 const TABLE_LAYOUT_RESERVED_ROWS = 26;
 const RECENT_LAYOUT_RESERVED_ROWS = 24;
 const PROGRESS_BAR_WIDTH = 24;
+const DASHBOARD_REFRESH_INTERVAL_MS = 250;
 
 const panelBodyRows = (panelRows: number): number =>
   Math.max(0, panelRows - PANEL_BORDER_ROWS - PANEL_TITLE_ROWS - PANEL_BODY_BOTTOM_GUTTER_ROWS);
@@ -66,6 +67,7 @@ export class BenchOpenTuiDashboard {
   private renderQueued = false;
   private renderPaused = false;
   private stopped = false;
+  private refreshTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly dashboard: BenchDashboardModel,
@@ -74,6 +76,7 @@ export class BenchOpenTuiDashboard {
 
   start(): void {
     if (this.startPromise) return;
+    this.startRefreshTimer();
     this.startPromise = this.startAsync();
   }
 
@@ -92,6 +95,14 @@ export class BenchOpenTuiDashboard {
     this.render();
     this.cleanup();
     this.stopped = true;
+  }
+
+  private startRefreshTimer(): void {
+    if (this.refreshTimer !== null) return;
+    this.refreshTimer = setInterval(() => {
+      this.render();
+    }, DASHBOARD_REFRESH_INTERVAL_MS);
+    this.refreshTimer.unref?.();
   }
 
   private async startAsync(): Promise<void> {
@@ -265,6 +276,10 @@ export class BenchOpenTuiDashboard {
   }
 
   private cleanup(): void {
+    if (this.refreshTimer !== null) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
     const renderer = this.renderer;
     if (renderer && this.keyHandler) {
       renderer.keyInput.off('keypress', this.keyHandler);

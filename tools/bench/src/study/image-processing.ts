@@ -298,19 +298,33 @@ function makeImageProcessingStudyPlugin(input: {
 
       log(`${asset.id}: profiling ${viewIds.length} binary views (${config.focus})`);
       const proposalStartedAt = performance.now();
-      const proposalSummaries = viewIds.map(
-        (viewId) =>
+      const proposalSummaries: ProposalViewGenerationSummary[] = [];
+      let proposalViewIndex = 0;
+      for (const viewId of viewIds) {
+        proposalViewIndex += 1;
+        proposalSummaries.push(
           generateProposalBatchForView(viewBank, viewId, {
             maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
           }).summary,
-      );
+        );
+        log(`${asset.id}: proposal view ${proposalViewIndex}/${viewIds.length} ${viewId}`);
+        await yieldToDashboard();
+      }
       const proposalGenerationMs = round(performance.now() - proposalStartedAt);
-      const binarySignals = viewIds.map((viewId) =>
-        measureBinarySignals(viewBank.getBinaryView(viewId)),
-      );
-      const scalarStats = viewBank
-        .listScalarViewIds()
-        .map((scalarId) =>
+      const binarySignals: BinaryViewSignal[] = [];
+      let binarySignalIndex = 0;
+      for (const viewId of viewIds) {
+        binarySignalIndex += 1;
+        binarySignals.push(measureBinarySignals(viewBank.getBinaryView(viewId)));
+        log(`${asset.id}: binary signal ${binarySignalIndex}/${viewIds.length} ${viewId}`);
+        await yieldToDashboard();
+      }
+      const scalarStats: ScalarStatsMeasurement[] = [];
+      const scalarViewIds = viewBank.listScalarViewIds();
+      let scalarViewIndex = 0;
+      for (const scalarId of scalarViewIds) {
+        scalarViewIndex += 1;
+        scalarStats.push(
           measureScalarStats(
             scalarId,
             viewBank.getScalarView(scalarId).values,
@@ -318,6 +332,9 @@ function makeImageProcessingStudyPlugin(input: {
             image.height,
           ),
         );
+        log(`${asset.id}: scalar stats ${scalarViewIndex}/${scalarViewIds.length} ${scalarId}`);
+        await yieldToDashboard();
+      }
       const scalarFusion = measureScalarFusion(image);
       const sharedArtifacts = summarizeSharedArtifacts(binarySignals);
       const decode = config.decode ? await runDecodeMeasurement(image, viewIds, asset, log) : null;
@@ -903,6 +920,10 @@ const otsuThresholdFromHistogram = (histogram: Uint32Array, total: number): numb
     }
   }
   return bestThreshold;
+};
+
+const yieldToDashboard = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 };
 
 const clampByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
