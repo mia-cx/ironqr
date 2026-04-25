@@ -84,9 +84,23 @@ Run metadata:
 Report fitness notes:
 
 - The run is suitable for materialization, passive signal, and proposal-detector timing analysis because cache hits were zero.
+- The run partially measured the intended corpus and view set: all 203 assets and all 54 binary view identities were covered.
 - The run is not a decode-capability or prefilter-safety proof because `decode=false`; it cannot report lost positives or false positives for a future gating policy.
+- The run does not fully match the designed experiment because it did not attach signals to the `view-proposals` trace path. It lacks ranked proposal count, structure pass count, decode success, and false-positive outcomes per signal row.
 - The report was generated before the later `summary.variants` report addition, so this analysis treats it as a passive signal/control run rather than a variant decision report.
 - The study processed all 54 binary view identities over the shared threshold-plane model. Inverted entries are polarity paths/signals, not separately materialized inverted planes.
+
+Question coverage:
+
+| Study-doc question / metric | Status | Report evidence | Interpretation |
+| --- | --- | --- | --- |
+| Do cheap signals identify detector hotspots? | Answered | signal rows + detector durations | Yes. Dark ratio, matcher count, and row-scan finder count correlate with detector time; hottest paths are inverted Sauvola. |
+| Do signals predict proposal quality? | Partially answered | proposal counts only | Proposal count exists, but ranked proposal count, score, and structure pass count are missing from this run. Count alone is not quality. |
+| Do signals predict decode success? | Unanswered | `decode=false` | No decode success or unique-positive evidence was collected. |
+| Do signals predict false-positive risk? | Unanswered | `decode=false` | No false-positive evidence was collected. |
+| Is signal collection cheap enough for study observability? | Answered | signalMs vs detectorMs | Yes for study use: about 20.5s signal time vs 1,696.7s detector time. |
+| Are component counts/percentiles useful? | Unanswered | not collected | Component stats were optional and not present. |
+| Are duplicate/redundant sibling-view signals useful? | Unanswered | not collected | Similarity to sibling views was not present. |
 
 Headline totals:
 
@@ -171,8 +185,40 @@ The hottest paths are concentrated in inverted Sauvola views with high dark rati
 
 Keep passive binary signals in study reports. They are cheap enough for study use and explain detector hotspots well enough to guide follow-up work.
 
+This run does **not** answer the full problem statement. It answers the detector-hotspot half, partially answers proposal-yield behavior, and does not answer decode success or safe production gating.
+
+Refined experiment:
+
+1. Integrate binary signal collection into the exhaustive `view-proposals` path instead of running it as a detached proposal-only study.
+2. For each `proposal-view-generated` row, attach:
+   - dark ratio and light ratio;
+   - horizontal/vertical transition density;
+   - horizontal/vertical run counts;
+   - approximate finder-run candidate count from the cheap signal pass;
+   - optional connected-component count and size percentiles;
+   - optional sibling similarity for normal/inverted and scalar-family pairs.
+3. Preserve exhaustive study behavior:
+   - all 54 view identities;
+   - 10k proposal/cluster/representative ceiling;
+   - `allowMultiple: true`;
+   - `continueAfterDecode: true`;
+   - no signal-based skipping.
+4. Reuse the `view-proposals` trace outputs to correlate signals against:
+   - ranked proposal count;
+   - proposal scores;
+   - structure pass/fail count;
+   - cluster representative count;
+   - decode success and unique positive contribution;
+   - false-positive count on negatives.
+5. Add a candidate-threshold sweep as analysis-only rows, not production behavior:
+   - compute which views/assets would be skipped by candidate signal thresholds;
+   - report detector time avoided;
+   - report unique positive assets lost;
+   - report false positives avoided;
+   - require zero unique-positive loss before considering a production prefilter.
+
 Do not ship production prefilter gating from this run. Required next evidence:
 
-- rerun after `summary.variants` support so the report includes explicit control/candidate rows;
-- run `view-proposals` or a decode-enabled follow-up to connect signals to unique positive successes and false-positive risk;
-- prioritize `shared-binary-detector-artifacts` and `finder-run-map` candidate studies for the inverted Sauvola hotspot.
+- rerun after signal rows are joined to `view-proposals` decode/structure evidence;
+- verify candidate thresholds against unique positive successes and false-positive risk;
+- prioritize `shared-binary-detector-artifacts` and `finder-run-map` candidate studies for the inverted Sauvola hotspot regardless of gating outcome.
