@@ -325,14 +325,6 @@ const buildMatcherVariantMatrix = (
         numberField(totals, 'matcherLegacyControlMs'),
       ),
     },
-    sharedCounters: {
-      sampledCenterCount: numberField(totals, 'matcherSampledCenterCount'),
-      prunedCenterCount: numberField(totals, 'matcherPrunedCenterCount'),
-      seededEstimatedCenters: numberField(totals, 'matcherSeededEstimatedCenters'),
-      fusedDarkCenterCount: numberField(totals, 'matcherFusedDarkCenterCount'),
-      fusedLightCenterCount: numberField(totals, 'matcherFusedLightCenterCount'),
-      sharedPlaneCount: numberField(totals, 'matcherSharedPlaneCount'),
-    },
   };
 };
 
