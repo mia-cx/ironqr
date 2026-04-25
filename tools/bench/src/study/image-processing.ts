@@ -1557,10 +1557,12 @@ const measureFloodCandidateVariants = async (
           false,
         );
       }
-      log(
-        `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
-      );
-      await yieldToDashboard();
+      if (!measured.cached) {
+        log(
+          `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} fresh p=${measured.measurement.outputCount}`,
+        );
+        await yieldToDashboard();
+      }
     }
   }
 
@@ -1656,10 +1658,12 @@ const measureMatcherCandidateVariants = async (
           false,
         );
       }
-      log(
-        `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
-      );
-      await yieldToDashboard();
+      if (!measured.cached) {
+        log(
+          `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} fresh p=${measured.measurement.outputCount}`,
+        );
+        await yieldToDashboard();
+      }
     }
   }
 
