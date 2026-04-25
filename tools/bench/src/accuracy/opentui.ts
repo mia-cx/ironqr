@@ -1334,7 +1334,7 @@ const fractionalBar = (
   const partialEighths = totalEighths % 8;
   const partial = partialEighths === 0 ? '' : (FRACTIONAL_BAR_SEGMENTS[partialEighths - 1] ?? '');
   const filledWidth = fullCells + (partial ? 1 : 0);
-  return `${'█'.repeat(fullCells)}${partial}${'░'.repeat(Math.max(0, normalizedWidth - filledWidth))}`;
+  return `${'█'.repeat(fullCells)}${partial}${' '.repeat(Math.max(0, normalizedWidth - filledWidth))}`;
 };
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
