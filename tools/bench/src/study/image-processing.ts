@@ -1253,7 +1253,112 @@ const floodVariantOptions = (
   squaredDistance: variantId.includes('squared'),
 });
 
-const labelScanlineComponents = async (
+const labelScanlineComponents = (
+  binary: BinaryView,
+  yieldIfDue?: () => Promise<void> | undefined,
+): readonly BenchComponentStats[] | Promise<readonly BenchComponentStats[]> =>
+  yieldIfDue
+    ? labelScanlineComponentsCooperative(binary, yieldIfDue)
+    : labelScanlineComponentsSync(binary);
+
+const labelScanlineComponentsSync = (binary: BinaryView): readonly BenchComponentStats[] => {
+  const width = binary.width;
+  const height = binary.height;
+  const labels = new Int32Array(width * height);
+  const seedX = new Int32Array(width * height);
+  const seedY = new Int32Array(width * height);
+  const stats: BenchComponentStats[] = [];
+  let nextLabel = 1;
+
+  for (let start = 0; start < labels.length; start += 1) {
+    if (labels[start] !== 0) continue;
+    const color = readBinaryPixel(binary, start);
+    let head = 0;
+    let tail = 1;
+    let pixelCount = 0;
+    let minX = start % width;
+    let maxX = minX;
+    let minY = Math.floor(start / width);
+    let maxY = minY;
+    let sumX = 0;
+    let sumY = 0;
+    seedX[0] = minX;
+    seedY[0] = minY;
+
+    while (head < tail) {
+      const x = seedX[head] ?? 0;
+      const y = seedY[head] ?? 0;
+      head += 1;
+      const index = y * width + x;
+      if (labels[index] !== 0 || readBinaryPixel(binary, index) !== color) continue;
+
+      let left = x;
+      while (left > 0) {
+        const next = y * width + left - 1;
+        if (labels[next] !== 0 || readBinaryPixel(binary, next) !== color) break;
+        left -= 1;
+      }
+      let right = x;
+      while (right + 1 < width) {
+        const next = y * width + right + 1;
+        if (labels[next] !== 0 || readBinaryPixel(binary, next) !== color) break;
+        right += 1;
+      }
+
+      for (let spanX = left; spanX <= right; spanX += 1) labels[y * width + spanX] = nextLabel;
+      const runLength = right - left + 1;
+      pixelCount += runLength;
+      if (left < minX) minX = left;
+      if (right > maxX) maxX = right;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      sumX += ((left + right) * runLength) / 2;
+      sumY += y * runLength;
+
+      if (y > 0)
+        tail = enqueueAdjacentScanlineSeeds(
+          binary,
+          labels,
+          seedX,
+          seedY,
+          tail,
+          left,
+          right,
+          y - 1,
+          color,
+        );
+      if (y + 1 < height)
+        tail = enqueueAdjacentScanlineSeeds(
+          binary,
+          labels,
+          seedX,
+          seedY,
+          tail,
+          left,
+          right,
+          y + 1,
+          color,
+        );
+    }
+
+    stats.push({
+      id: nextLabel,
+      color,
+      pixelCount,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      centroidX: sumX / pixelCount,
+      centroidY: sumY / pixelCount,
+    });
+    nextLabel += 1;
+  }
+
+  return stats;
+};
+
+const labelScanlineComponentsCooperative = async (
   binary: BinaryView,
   yieldIfDue?: () => Promise<void> | undefined,
 ): Promise<readonly BenchComponentStats[]> => {
@@ -1490,7 +1595,71 @@ const centersNear = (
     : Math.hypot(dx, dy) < tolerance;
 };
 
-const labelDenseComponents = async (
+const labelDenseComponents = (
+  binary: BinaryView,
+  yieldIfDue?: () => Promise<void> | undefined,
+): readonly BenchComponentStats[] | Promise<readonly BenchComponentStats[]> =>
+  yieldIfDue
+    ? labelDenseComponentsCooperative(binary, yieldIfDue)
+    : labelDenseComponentsSync(binary);
+
+const labelDenseComponentsSync = (binary: BinaryView): readonly BenchComponentStats[] => {
+  const width = binary.width;
+  const height = binary.height;
+  const labels = new Int32Array(width * height);
+  const queue = new Int32Array(width * height);
+  const stats: BenchComponentStats[] = [];
+  let nextLabel = 1;
+  for (let start = 0; start < labels.length; start += 1) {
+    if (labels[start] !== 0) continue;
+    const color = readBinaryPixel(binary, start);
+    let head = 0;
+    let tail = 1;
+    let pixelCount = 0;
+    let minX = start % width;
+    let maxX = minX;
+    let minY = Math.floor(start / width);
+    let maxY = minY;
+    let sumX = 0;
+    let sumY = 0;
+    queue[0] = start;
+    labels[start] = nextLabel;
+    while (head < tail) {
+      const index = queue[head] ?? 0;
+      head += 1;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      pixelCount += 1;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      sumX += x;
+      sumY += y;
+      if (x > 0) tail = enqueueSame(binary, labels, queue, tail, index - 1, color, nextLabel);
+      if (x + 1 < width)
+        tail = enqueueSame(binary, labels, queue, tail, index + 1, color, nextLabel);
+      if (y > 0) tail = enqueueSame(binary, labels, queue, tail, index - width, color, nextLabel);
+      if (y + 1 < height)
+        tail = enqueueSame(binary, labels, queue, tail, index + width, color, nextLabel);
+    }
+    stats.push({
+      id: nextLabel,
+      color,
+      pixelCount,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      centroidX: sumX / pixelCount,
+      centroidY: sumY / pixelCount,
+    });
+    nextLabel += 1;
+  }
+  return stats;
+};
+
+const labelDenseComponentsCooperative = async (
   binary: BinaryView,
   yieldIfDue?: () => Promise<void> | undefined,
 ): Promise<readonly BenchComponentStats[]> => {
