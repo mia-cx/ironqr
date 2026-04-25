@@ -10,7 +10,9 @@ import {
 } from '../../../../packages/ironqr/src/pipeline/frame.js';
 import {
   detectMatcherFinders,
+  detectMatcherFindersWithRunMapVariant,
   type FinderEvidence,
+  type MatcherRunMapVariant,
 } from '../../../../packages/ironqr/src/pipeline/proposals.js';
 import {
   type BinaryView,
@@ -910,7 +912,7 @@ const readCachedDetectorAssetResult = async (
     for (const candidate of ACTIVE_MATCHER_CANDIDATES) {
       const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
       if (!measured) return null;
-      const area = candidate.id === 'shared-runs' ? 'flood+matcher' : 'matcher';
+      const area = 'matcher';
       const compared = compareVariant(
         candidate.id,
         area,
@@ -1150,20 +1152,29 @@ const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = []
 
 const MATCHER_CANDIDATES = [
   {
-    id: 'run-pattern',
-    note: 'Centers enumerated from horizontal 1:1:3:1:1 run patterns.',
+    id: 'run-map-early-exit',
+    note: 'Run-map matcher with vertical cross-check skipped after horizontal failure.',
   },
   {
-    id: 'axis-intersect',
-    note: 'Centers enumerated from intersecting horizontal and vertical run patterns.',
+    id: 'run-map-u16',
+    note: 'Run-map matcher with 16-bit axis maps when image dimensions fit.',
   },
   {
-    id: 'shared-runs',
-    note: 'Shared run-pattern artifact prototype feeding matcher enumeration.',
+    id: 'run-map-u16-early-exit',
+    note: 'Hybrid run-map matcher with compact axis maps and horizontal-failure early exit.',
   },
-] as const;
+  {
+    id: 'run-map-horizontal-first',
+    note: 'Hybrid run-map matcher that builds horizontal maps first and vertical maps only after horizontal candidates survive.',
+  },
+  {
+    id: 'run-map-horizontal-first-u16',
+    note: 'Hybrid staged run-map matcher with compact axis maps when dimensions fit.',
+  },
+] as const satisfies readonly { id: MatcherRunMapVariant; note: string }[];
 
-const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] = [];
+const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] =
+  MATCHER_CANDIDATES;
 
 const throwIfStudyAborted = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
@@ -1918,161 +1929,6 @@ const isBenchFloodRing = (component: BenchComponentStats): boolean => {
   return component.pixelCount >= 16 && aspect <= 1.7;
 };
 
-const matcherPatternCenters = (
-  binary: BinaryView,
-  mode: 'horizontal' | 'intersection' | 'coarse',
-): readonly { x: number; y: number }[] => {
-  const width = binary.width;
-  const height = binary.height;
-  if (mode === 'coarse') {
-    const step = Math.max(1, Math.floor(Math.min(width, height) / 90));
-    const centers: { x: number; y: number }[] = [];
-    for (let y = 2; y < height - 2; y += step)
-      for (let x = 2; x < width - 2; x += step)
-        if (readBinaryPixel(binary, y * width + x) === 0) centers.push({ x, y });
-    return centers;
-  }
-  const horizontal: { x: number; y: number }[] = [];
-  const verticalKeys = new Set<string>();
-  for (let y = 0; y < height; y += 1)
-    collectRunCenters(binary, width, height, y, true, horizontal, verticalKeys);
-  if (mode === 'horizontal') return horizontal;
-  for (let x = 0; x < width; x += 1)
-    collectRunCenters(binary, width, height, x, false, [], verticalKeys);
-  return horizontal.filter((center) =>
-    verticalKeys.has(`${Math.round(center.x)}:${Math.round(center.y)}`),
-  );
-};
-
-const collectRunCenters = (
-  binary: BinaryView,
-  width: number,
-  height: number,
-  fixed: number,
-  horizontal: boolean,
-  centers: { x: number; y: number }[],
-  keys: Set<string>,
-): void => {
-  const limit = horizontal ? width : height;
-  const runs: { color: number; start: number; end: number }[] = [];
-  let start = 0;
-  let color = readBinaryPixel(binary, horizontal ? fixed * width : fixed);
-  for (let pos = 1; pos < limit; pos += 1) {
-    const index = horizontal ? fixed * width + pos : pos * width + fixed;
-    const next = readBinaryPixel(binary, index);
-    if (next === color) continue;
-    runs.push({ color, start, end: pos - 1 });
-    start = pos;
-    color = next;
-  }
-  runs.push({ color, start, end: limit - 1 });
-  for (let i = 0; i + 4 < runs.length; i += 1) {
-    const slice = runs.slice(i, i + 5);
-    if (slice.map((run) => run.color).join(',') !== '0,255,0,255,0') continue;
-    const lengths = slice.map((run) => run.end - run.start + 1);
-    const moduleSize = lengths.reduce((sum, value) => sum + value, 0) / 7;
-    if (
-      moduleSize < 0.8 ||
-      lengths.some(
-        (value, index) => Math.abs(value - moduleSize * (index === 2 ? 3 : 1)) > moduleSize,
-      )
-    )
-      continue;
-    const centerRun = slice[2];
-    if (!centerRun) continue;
-    const center = (centerRun.start + centerRun.end) / 2;
-    if (horizontal) centers.push({ x: center, y: fixed });
-    else keys.add(`${Math.round(fixed)}:${Math.round(center)}`);
-  }
-};
-
-const matcherFromCenters = (
-  binary: BinaryView,
-  centers: readonly { x: number; y: number }[],
-): FinderEvidence[] => {
-  const evidence: FinderEvidence[] = [];
-  for (const center of centers) {
-    const horizontal = benchCrossCheck(binary, center.x, center.y, 1, 0);
-    const vertical = benchCrossCheck(binary, center.x, center.y, 0, 1);
-    if (!horizontal || !vertical) continue;
-    const moduleSize = (horizontal.moduleSize + vertical.moduleSize) / 2;
-    if (moduleSize < 0.8) continue;
-    evidence.push({
-      source: 'matcher',
-      centerX: horizontal.centerX,
-      centerY: vertical.centerY,
-      moduleSize,
-      hModuleSize: horizontal.moduleSize,
-      vModuleSize: vertical.moduleSize,
-      score: horizontal.score + vertical.score + 0.75,
-    });
-  }
-  return dedupeBenchEvidence(evidence)
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, 12);
-};
-
-const benchCrossCheck = (
-  binary: BinaryView,
-  centerX: number,
-  centerY: number,
-  dx: number,
-  dy: number,
-): { centerX: number; centerY: number; moduleSize: number; score: number } | null => {
-  const width = binary.width;
-  const height = binary.height;
-  const x = Math.round(centerX);
-  const y = Math.round(centerY);
-  if (!insideBench(x, y, width, height) || readBinaryPixel(binary, y * width + x) !== 0)
-    return null;
-  const counts: [number, number, number, number, number] = [0, 0, 0, 0, 0];
-  let cursorX = x;
-  let cursorY = y;
-  for (const [slot, color, step] of [
-    [2, 0, -1],
-    [1, 255, -1],
-    [0, 0, -1],
-    [2, 0, 1],
-    [3, 255, 1],
-    [4, 0, 1],
-  ] as const) {
-    if (step === 1 && slot === 2) {
-      cursorX = x + dx;
-      cursorY = y + dy;
-    }
-    while (
-      insideBench(cursorX, cursorY, width, height) &&
-      readBinaryPixel(binary, cursorY * width + cursorX) === color
-    ) {
-      counts[slot] += 1;
-      cursorX += dx * step;
-      cursorY += dy * step;
-    }
-  }
-  const score = benchRatioScore(counts);
-  if (score <= 0) return null;
-  const before = counts[0] + counts[1] + counts[2] / 2;
-  const after = counts[4] + counts[3] + counts[2] / 2;
-  return {
-    centerX: centerX + dx * ((after - before) / 2),
-    centerY: centerY + dy * ((after - before) / 2),
-    moduleSize: counts.reduce((sum, value) => sum + value, 0) / 7,
-    score,
-  };
-};
-
-const benchRatioScore = (counts: readonly number[]): number => {
-  const total = counts.reduce((sum, value) => sum + value, 0);
-  if (total < 7) return 0;
-  const moduleSize = total / 7;
-  const variance =
-    counts.reduce(
-      (sum, value, index) => sum + Math.abs(value - moduleSize * (index === 2 ? 3 : 1)),
-      0,
-    ) / total;
-  return variance > 0.9 ? 0 : 1 - variance;
-};
-
 const dedupeBenchEvidence = (evidence: readonly FinderEvidence[]): FinderEvidence[] => {
   const kept: FinderEvidence[] = [];
   for (const entry of evidence)
@@ -2086,9 +1942,6 @@ const dedupeBenchEvidence = (evidence: readonly FinderEvidence[]): FinderEvidenc
       kept.push(entry);
   return kept;
 };
-
-const insideBench = (x: number, y: number, width: number, height: number): boolean =>
-  x >= 0 && y >= 0 && x < width && y < height;
 
 const distancePoint = (x0: number, y0: number, x1: number, y1: number): number =>
   Math.hypot(x1 - x0, y1 - y0);
@@ -2245,20 +2098,10 @@ const measureMatcherCandidateVariants = async (
 
     for (const candidate of ACTIVE_MATCHER_CANDIDATES) {
       throwIfStudyAborted(signal);
-      const measured = await measureVariant(
-        asset,
-        cache,
-        candidate.id,
-        viewId,
-        preloadedRows,
-        () => {
-          if (candidate.id === 'axis-intersect') {
-            return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));
-          }
-          return matcherFromCenters(view, matcherPatternCenters(view, 'horizontal'));
-        },
+      const measured = await measureVariant(asset, cache, candidate.id, viewId, preloadedRows, () =>
+        detectMatcherFindersWithRunMapVariant(view, view.width, view.height, candidate.id),
       );
-      const area = candidate.id === 'shared-runs' ? 'flood+matcher' : 'matcher';
+      const area = 'matcher';
       const compared = compareVariant(
         candidate.id,
         area,
@@ -2414,6 +2257,11 @@ const VARIANT_ID_ALIASES: Record<string, string> = {
   'run-pattern': 'run-pattern',
   'axis-intersect': 'axis-x',
   'shared-runs': 'shared-runs',
+  'run-map-early-exit': 'run-map-ee',
+  'run-map-u16': 'run-map-u16',
+  'run-map-u16-early-exit': 'run-map-u16-ee',
+  'run-map-horizontal-first': 'run-map-h1',
+  'run-map-horizontal-first-u16': 'run-map-h1-u16',
 };
 
 const LEGACY_VARIANT_IDS: Record<string, readonly string[]> = {

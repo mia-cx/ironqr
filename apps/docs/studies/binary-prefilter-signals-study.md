@@ -327,7 +327,15 @@ The run measured `scanline-squared` as the fixed flood control, `run-map` as the
 | `scanline-squared` | Flood | — | Canonical flood lead: `0` mismatches, `18.80%` faster than `dense-stats`, lower detector p98 and queued p98, and faster than `scanline-stats`. |
 | `run-map` | Matcher | — | Canonical matcher lead; remains active after reopened matcher candidates failed equivalence. |
 
-No matcher candidates are currently active. The default detector-study run keeps only the canonical flood and matcher controls until a new matcher hypothesis is introduced.
+The current matcher phase tests exact-output `run-map` internals, not replacement center enumerators. Active matcher candidates are:
+
+| Variant id | Hypothesis | Hybrid ingredients | Admission bar |
+| --- | --- | --- | --- |
+| `run-map-early-exit` | Skip vertical cross-checks after horizontal failure. | Existing full run maps + horizontal-failure guard. | `0` mismatches; lower avg and p98 than `run-map`. |
+| `run-map-u16` | Cut run-map memory bandwidth by using 16-bit coordinate maps when dimensions fit. | Existing matcher + compact axis maps. | `0` mismatches; lower p98 under Worker load. |
+| `run-map-u16-early-exit` | Combine less memory traffic with fewer vertical checks. | Compact maps + early exit. | `0` mismatches; beat both single-factor variants. |
+| `run-map-horizontal-first` | Avoid vertical map construction on views with no horizontal survivors and stage vertical checks after horizontal filtering. | Horizontal-first run-map build + early exit. | `0` mismatches; improve negative/noisy views without output loss. |
+| `run-map-horizontal-first-u16` | Combine staged map construction with compact coordinate arrays. | Horizontal-first staging + compact maps. | `0` mismatches; best p98-focused safe matcher candidate. |
 
 ## Inactive and binned variants
 
@@ -364,6 +372,11 @@ Disabled means implemented/cache-retained but not currently queued. Binned means
 | Dense squared-distance geometry tests | Flood | Removes `Math.hypot` from ring/gap/stone center checks while preserving thresholds. | Binned after losing to `scanline-squared`. |
 | Scanline component labeling | Flood | Processes horizontal spans in bulk while keeping dense-compatible component stats and finder semantics. | Binned after losing to `scanline-squared`. |
 | Scanline + indexed/squared hybrids | Flood | Tests span labeling with containment and geometry optimizations. | `scanline-squared` is canonical; indexed variants are binned until mismatches are fixed. |
+| Run-map horizontal-failure early exit | Matcher | Current matcher always computes horizontal and vertical checks before rejecting failed candidates; vertical work can be skipped after horizontal failure. | Active exact-output candidate `run-map-early-exit`. |
+| Compact run-map arrays | Matcher | Current run maps use four `Uint32Array`s; most images fit axis coordinates in `Uint16Array`, reducing memory bandwidth and allocation size. | Active exact-output candidate `run-map-u16`. |
+| Compact arrays + early exit | Matcher | Memory bandwidth and unnecessary vertical checks may compound under Worker load. | Active hybrid `run-map-u16-early-exit`. |
+| Horizontal-first run-map staging | Matcher | Build horizontal maps first, collect horizontal survivors, and build vertical maps only if any survive. | Active hybrid `run-map-horizontal-first`. |
+| Horizontal-first compact staging | Matcher | Combine staged construction with compact axis maps. | Active hybrid `run-map-horizontal-first-u16`. |
 | Run-pattern center matcher | Matcher | Enumerates centers from horizontal `1:1:3:1:1` run patterns instead of arbitrary grid probes. | Binned as a replacement after `8,760` mismatches; may return only with fallback/recall accounting. |
 | Axis-run intersection matcher | Matcher | Intersects plausible horizontal and vertical run-pattern centers without a hard center-signal gate. | Binned as a replacement after `8,712` mismatches; may return only with fallback/recall accounting. |
 | Shared run-length detector artifacts | Flood+Matcher | One run-length threshold-plane pass could feed both flood CCL and matcher center enumeration. | Current replacement form is binned; a future shared-artifact design needs a new equivalence hypothesis. |
@@ -415,6 +428,6 @@ Use `--refresh-cache` only when intentionally invalidating all detector-pattern 
 ## Next work
 
 1. Promote `scanline-squared` behind the production flood control abstraction.
-2. Design the next matcher optimization around preserving `run-map` signatures, not replacing center enumeration wholesale; the reopened run-pattern candidates were faster but not equivalent.
-3. Profile `run-map` internally under `--workers 0`, `--workers 1`, and the half-CPU default to separate algorithm cost from loaded Worker contention.
+2. Run the exact-output matcher-internals phase with active candidates `run-map-early-exit`, `run-map-u16`, `run-map-u16-early-exit`, `run-map-horizontal-first`, and `run-map-horizontal-first-u16`.
+3. If no exact candidate wins, profile `run-map` internally under `--workers 0`, `--workers 1`, and the half-CPU default to separate algorithm cost from loaded Worker contention.
 4. Sweep flood scheduler limits (`4`, `6`, `8`, `10`, `12`) only after matcher profiling, because flood algorithm ranking is settled.
