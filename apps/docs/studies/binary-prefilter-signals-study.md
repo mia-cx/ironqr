@@ -296,15 +296,15 @@ scanline-squared wait avg / p98: 1.53 / 6.29 ms
 
 | Variant id | Area | Compared to | Status |
 | --- | --- | --- | --- |
-| `run-map` | Matcher | — | Canonical matcher lead; disabled during flood-only confirmation. |
-| `dense-stats` | Flood | — | Replaced by `scanline-squared` after corrected head-to-head confirmation; retained as historical/control evidence. |
-| `dense-index` | Flood | `dense-stats` | Disabled for confirmation; faster but `17` mismatched views. |
-| `dense-squared` | Flood | `dense-stats` | Disabled for confirmation; safe but weaker than scanline candidates. |
-| `dense-index-squared` | Flood | `dense-stats` | Disabled for confirmation; faster but `17` mismatched views. |
-| `scanline-stats` | Flood | `dense-stats` | Safe but slower than `scanline-squared` in the corrected confirmation. |
-| `scanline-index` | Flood | `dense-stats` | Disabled for confirmation; faster but `17` mismatched views. |
-| `scanline-squared` | Flood | `dense-stats` | Confirmed replacement: `0` mismatches, `18.80%` faster, lower detector p98 and queued p98 than `dense-stats`, and faster than `scanline-stats`. |
-| `scanline-index-squared` | Flood | `dense-stats` | Disabled for confirmation; fastest but `17` mismatched views. |
+| `run-map` | Matcher | — | Canonical matcher lead; disabled during flood-only confirmation while matcher candidates are reopened. |
+| `scanline-squared` | Flood | — | Canonical flood lead: `0` mismatches, `18.80%` faster than `dense-stats`, lower detector p98 and queued p98, and faster than `scanline-stats`. |
+| `dense-stats` | Flood | `scanline-squared` | Binned after corrected head-to-head confirmation; retained only as historical evidence. |
+| `dense-index` | Flood | `scanline-squared` | Binned: faster than old dense control but `17` mismatched views. |
+| `dense-squared` | Flood | `scanline-squared` | Binned: safe but weaker than scanline candidates. |
+| `dense-index-squared` | Flood | `scanline-squared` | Binned: faster than old dense control but `17` mismatched views. |
+| `scanline-stats` | Flood | `scanline-squared` | Binned: safe but slower than `scanline-squared` in the corrected confirmation. |
+| `scanline-index` | Flood | `scanline-squared` | Binned: faster than old dense control but `17` mismatched views. |
+| `scanline-index-squared` | Flood | `scanline-squared` | Binned: fastest old candidate but `17` mismatched views. |
 
 ## Disabled and binned variants
 
@@ -319,9 +319,9 @@ Active means included in the default detector-study run and summary matrices. Di
 | Coarse-grid fallback matcher | Matcher | Several views averaged above `400 ms` even with cache replay. | Binned; fallback cost dominates. |
 | Legacy two-pass flood | Flood | Inline stats preserved output and was `64.72%` faster. | Retired reference. |
 | Filtered-components flood over old path | Flood | Output-equivalent but only `1.66%` faster over old control. | Binned; not enough gain. |
-| `inline-flood` | Flood | Superseded by `dense-stats`; targeted `gray:h:i` check showed inline emitted fewer finders than legacy/dense. | Retired reference. |
-| `spatial-bin` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Cache-retained historical reference. |
-| `run-length-ccl` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Cache-retained historical reference. |
+| `inline-flood` | Flood | Superseded by `dense-stats`; targeted `gray:h:i` check showed inline emitted fewer finders than legacy/dense. | Binned; not retained in active detector-pattern cache. |
+| `spatial-bin` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Binned; not retained in active detector-pattern cache. |
+| `run-length-ccl` | Flood | Matched legacy on the targeted divergence but not active after dense/scanline phase. | Binned; not retained in active detector-pattern cache. |
 | `run-pattern` | Matcher | Implemented but disabled after run-map canonization. | Cache-retained disabled variant. |
 | `axis-intersect` | Matcher | Implemented but disabled after run-map canonization. | Cache-retained disabled variant. |
 | `shared-runs` | Flood+Matcher | Requires a combined shared-artifact study, not just local detector wins. | Cache-retained disabled variant. |
@@ -330,10 +330,10 @@ Active means included in the default detector-study run and summary matrices. Di
 
 | Candidate | Area | Rationale | Admission bar |
 | --- | --- | --- | --- |
-| Dense min-x indexed containment lookup | Flood | Bounds gap/stone containment scans by sorted `minX` windows instead of full candidate scans. | Must beat `dense-stats` and preserve sorted `FinderEvidence[]` signatures. Current implementation fails equivalence. |
-| Dense squared-distance geometry tests | Flood | Removes `Math.hypot` from ring/gap/stone center checks while preserving thresholds. | Must beat `dense-stats` and preserve signatures. Safe but smaller win than scanline candidates. |
-| Scanline component labeling | Flood | Processes horizontal spans in bulk while keeping dense-compatible component stats and finder semantics. | Must beat `dense-stats` and preserve signatures. Current best: `scanline-stats`. |
-| Scanline + indexed/squared hybrids | Flood | Tests span labeling with containment and geometry optimizations. | Indexed variants must fix mismatches before reconsideration. |
+| Dense min-x indexed containment lookup | Flood | Bounds gap/stone containment scans by sorted `minX` windows instead of full candidate scans. | Binned after mismatches; may return only with a corrected equivalence hypothesis. |
+| Dense squared-distance geometry tests | Flood | Removes `Math.hypot` from ring/gap/stone center checks while preserving thresholds. | Binned after losing to `scanline-squared`. |
+| Scanline component labeling | Flood | Processes horizontal spans in bulk while keeping dense-compatible component stats and finder semantics. | Binned after losing to `scanline-squared`. |
+| Scanline + indexed/squared hybrids | Flood | Tests span labeling with containment and geometry optimizations. | `scanline-squared` is canonical; indexed variants are binned until mismatches are fixed. |
 | Run-pattern center matcher | Matcher | Enumerates centers from `1:1:3:1:1` run patterns instead of arbitrary grid probes. | Must beat `run-map` and preserve signatures. Disabled. |
 | Axis-run intersection matcher | Matcher | Intersects plausible horizontal and vertical run-pattern centers without a hard center-signal gate. | Must beat `run-map` and preserve signatures. Disabled. |
 | Shared run-length detector artifacts | Flood+Matcher | One run-length threshold-plane pass could feed both flood CCL and matcher center enumeration. | Requires combined detector savings, not local wins. Disabled pending separate design. |
@@ -384,7 +384,7 @@ Use `--refresh-cache` only when intentionally invalidating all detector-pattern 
 
 ## Next work
 
-1. Promote `scanline-squared` behind the flood control abstraction; the corrected head-to-head confirmation preserved equivalence and beat `scanline-stats`.
-2. Sweep flood scheduler limits (`4`, `6`, `8`, `10`, `12`) to tune throughput versus scheduler wait without changing algorithm rankings.
-3. Investigate the `17` indexed-lookup mismatches. Indexed variants are fast enough to revisit only if equivalence can be restored.
-4. Revisit shared run-length artifacts as a separate combined flood+matcher study after the flood control is settled.
+1. Promote `scanline-squared` behind the production flood control abstraction.
+2. Reopen matcher optimization candidates against `run-map`; matcher work is now the dominant detector cost after flood canonization.
+3. Sweep flood scheduler limits (`4`, `6`, `8`, `10`, `12`) only after the matcher phase, because flood algorithm ranking is settled.
+4. Revisit shared run-length artifacts as a separate combined flood+matcher study after the matcher phase.

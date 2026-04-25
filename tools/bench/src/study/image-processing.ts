@@ -791,7 +791,7 @@ const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
 const detectorStudyViewIds = (config: ImageProcessingConfig): readonly BinaryViewId[] =>
   config.viewSet === 'all' ? listDefaultBinaryViewIds() : listDefaultProposalViewIds();
 
-const FLOOD_CONTROL_ID = 'dense-stats';
+const FLOOD_CONTROL_ID = 'scanline-squared';
 
 const activeDetectorPatternIds = (): readonly string[] => [
   FLOOD_CONTROL_ID,
@@ -805,10 +805,8 @@ const activeMatcherPatternIds = (): readonly string[] =>
     : ['run-map', ...ACTIVE_MATCHER_CANDIDATES.map((candidate) => candidate.id)];
 
 const retainedDetectorPatternIds = (): readonly string[] => [
-  'inline-flood',
   FLOOD_CONTROL_ID,
   'run-map',
-  ...FLOOD_CANDIDATES.map((candidate) => candidate.id),
   ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
 ];
 
@@ -1152,10 +1150,7 @@ const FLOOD_CANDIDATES = [
   { id: 'run-length-ccl', note: 'Historical run-length connected components prototype.' },
 ] as const;
 
-const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] =
-  FLOOD_CANDIDATES.filter(
-    (candidate) => candidate.id === 'scanline-stats' || candidate.id === 'scanline-squared',
-  );
+const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = [];
 
 const MATCHER_CANDIDATES = [
   {
@@ -3298,15 +3293,15 @@ const buildVariantSummaries = (
   if (config.focus === 'binary-prefilter-signals' && totals.floodControlMs > 0) {
     variants.push({
       id: FLOOD_CONTROL_ID,
-      title: 'Dense stats flood detector control',
-      controlMetric: 'dense stats flood duration',
-      candidateMetric: 'dense stats flood duration',
+      title: 'Scanline squared-distance flood detector control',
+      controlMetric: 'scanline-squared flood duration',
+      candidateMetric: 'scanline-squared flood duration',
       controlMs: totals.floodControlMs,
       candidateMs: totals.floodControlMs,
       deltaMs: 0,
       improvementPct: 0,
       evidence:
-        'canonical dense-stats flood control; active candidates are measured separately in detectorCandidates.',
+        'canonical scanline-squared flood control; active candidates are measured separately in detectorCandidates.',
     });
     for (const candidate of detectorCandidates) {
       variants.push({
