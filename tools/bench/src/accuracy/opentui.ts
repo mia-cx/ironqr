@@ -1378,7 +1378,6 @@ const renderStudyFooterStatus = (dashboard: BenchDashboardModel): string => {
     'bench study',
     `stage=${dashboard.stage}`,
     `jobs=${studyJobProgress(dashboard)}`,
-    `eta=${studyFreshEta(dashboard, rowCache)}`,
     `assets=${dashboard.completedJobs}/${dashboard.totalJobs}`,
     `workers=${dashboard.workerCount || '-'}`,
     `asset-cache=${dashboard.cacheEnabled ? 'on' : 'off'}:${cache.hits}/${cache.misses}/${cache.writes}`,
@@ -1437,8 +1436,12 @@ const headerText = (dashboard: BenchDashboardModel, width: number): string => {
   const total = dashboard.commandName === 'study' ? dashboard.studyTotalUnits : dashboard.totalJobs;
   const percent = clamp01(total > 0 ? completed / total : 0);
   const labelWidth = `IRONQR BENCH  ${stageBadge(dashboard.stage)}  `.length;
+  const etaText =
+    dashboard.commandName === 'study'
+      ? `  eta=${studyFreshEta(dashboard, studyTimingCacheTotals(dashboard))}`
+      : '';
   const suffix = dashboard.commandName === 'study' ? '' : `  ${dashboard.message}`;
-  const countText = `  ${completed}/${total} jobs${suffix}`;
+  const countText = `${etaText}  ${completed}/${total} jobs${suffix}`;
   const dynamicBarWidth = Math.max(PROGRESS_BAR_WIDTH, width - labelWidth - countText.length - 1);
   const progress = fractionalBar(percent, dynamicBarWidth);
   return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}${countText}`;
