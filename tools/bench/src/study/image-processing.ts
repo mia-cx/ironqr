@@ -143,6 +143,7 @@ interface DetectorVariantMeasurement {
   readonly schedulerWaitMs: number;
   readonly samples: readonly number[];
   readonly schedulerWaitSamples: readonly number[];
+  readonly queuedSamples: readonly number[];
 }
 
 interface DetectorVariantSummary extends DetectorVariantMeasurement, DetectorLatencySummary {
@@ -154,6 +155,10 @@ interface DetectorVariantSummary extends DetectorVariantMeasurement, DetectorLat
   readonly p95SchedulerWaitMs: number;
   readonly p98SchedulerWaitMs: number;
   readonly maxSchedulerWaitMs: number;
+  readonly avgQueuedMs: number;
+  readonly p95QueuedMs: number;
+  readonly p98QueuedMs: number;
+  readonly maxQueuedMs: number;
 }
 
 interface DetectorUnitMeasurement {
@@ -182,6 +187,10 @@ interface DetectorUnitSummary extends DetectorLatencySummary {
   readonly p95SchedulerWaitMs: number;
   readonly p98SchedulerWaitMs: number;
   readonly maxSchedulerWaitMs: number;
+  readonly avgQueuedMs: number;
+  readonly p95QueuedMs: number;
+  readonly p98QueuedMs: number;
+  readonly maxQueuedMs: number;
 }
 
 interface VariantCacheMeasurement {
@@ -1262,6 +1271,7 @@ const compareVariant = (
     schedulerWaitMs,
     samples: [measurement.durationMs],
     schedulerWaitSamples: [schedulerWaitMs],
+    queuedSamples: [measurement.durationMs + schedulerWaitMs],
   };
 };
 
@@ -2192,6 +2202,7 @@ const mergeDetectorVariant = (
     schedulerWaitMs: round(current.schedulerWaitMs + next.schedulerWaitMs),
     samples: [...current.samples, ...next.samples],
     schedulerWaitSamples: [...current.schedulerWaitSamples, ...next.schedulerWaitSamples],
+    queuedSamples: [...current.queuedSamples, ...next.queuedSamples],
   });
 };
 
@@ -3160,6 +3171,7 @@ const summarizeDetectorVariants = (
       deltaMs: round(controlMs - variant.durationMs),
       improvementPct: percent(controlMs - variant.durationMs, controlMs),
       ...schedulerWaitSummary(variant.schedulerWaitSamples),
+      ...queuedLatencySummary(variant.queuedSamples),
     };
   });
 
@@ -3169,7 +3181,11 @@ const summarizeDetectorUnits = (
 ): readonly DetectorUnitSummary[] => {
   const rows = new Map<
     string,
-    Mutable<DetectorUnitSummary> & { samples: number[]; schedulerWaitSamples: number[] }
+    Mutable<DetectorUnitSummary> & {
+      samples: number[];
+      schedulerWaitSamples: number[];
+      queuedSamples: number[];
+    }
   >();
   for (const unit of units) {
     const key = keyFor(unit);
@@ -3195,8 +3211,13 @@ const summarizeDetectorUnits = (
         p95SchedulerWaitMs: 0,
         p98SchedulerWaitMs: 0,
         maxSchedulerWaitMs: 0,
+        avgQueuedMs: 0,
+        p95QueuedMs: 0,
+        p98QueuedMs: 0,
+        maxQueuedMs: 0,
         samples: [unit.durationMs],
         schedulerWaitSamples: [unit.schedulerWaitMs],
+        queuedSamples: [unit.durationMs + unit.schedulerWaitMs],
       });
       continue;
     }
@@ -3208,12 +3229,14 @@ const summarizeDetectorUnits = (
     row.schedulerWaitMs = round(row.schedulerWaitMs + unit.schedulerWaitMs);
     row.samples.push(unit.durationMs);
     row.schedulerWaitSamples.push(unit.schedulerWaitMs);
+    row.queuedSamples.push(unit.durationMs + unit.schedulerWaitMs);
   }
   return [...rows.values()]
-    .map(({ samples, schedulerWaitSamples, ...row }) => ({
+    .map(({ samples, schedulerWaitSamples, queuedSamples, ...row }) => ({
       ...row,
       ...latencySummary(samples),
       ...schedulerWaitSummary(schedulerWaitSamples),
+      ...queuedLatencySummary(queuedSamples),
     }))
     .sort((left, right) => right.p95Ms - left.p95Ms);
 };
@@ -3239,6 +3262,15 @@ const schedulerWaitSummary = (
   p95SchedulerWaitMs: percentileMs(samples, 0.95),
   p98SchedulerWaitMs: percentileMs(samples, 0.98),
   maxSchedulerWaitMs: round(samples.reduce((max, value) => Math.max(max, value), 0)),
+});
+
+const queuedLatencySummary = (
+  samples: readonly number[],
+): Pick<DetectorUnitSummary, 'avgQueuedMs' | 'p95QueuedMs' | 'p98QueuedMs' | 'maxQueuedMs'> => ({
+  avgQueuedMs: round(samples.reduce((sum, value) => sum + value, 0) / Math.max(1, samples.length)),
+  p95QueuedMs: percentileMs(samples, 0.95),
+  p98QueuedMs: percentileMs(samples, 0.98),
+  maxQueuedMs: round(samples.reduce((max, value) => Math.max(max, value), 0)),
 });
 
 const percentileMs = (samples: readonly number[], quantile: number): number => {
