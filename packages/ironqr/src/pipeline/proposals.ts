@@ -761,7 +761,7 @@ const scoreTripleGeometry = (
   return asymmetry + pythagorean + versionPlausibility + (2 - sizeRatio);
 };
 
-const detectRowScanFinders = (
+export const detectRowScanFinders = (
   binary: Uint8Array | BinaryView,
   width: number,
   height: number,
@@ -874,6 +874,75 @@ export const detectMatcherFindersWithCenterSignal = (
   );
 };
 
+export const detectMatcherFindersFromSeeds = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  seeds: readonly FinderEvidence[],
+): FinderEvidence[] => {
+  const runs = buildAxisRuns(binary, width, height);
+  return finalizeMatcherEvidence(
+    seeds.flatMap((seed) =>
+      matcherNeighborhoodCenters(seed).flatMap(([x, y]) =>
+        matcherEvidenceAt(
+          binary,
+          width,
+          height,
+          x,
+          y,
+          (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+            runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+        ),
+      ),
+    ),
+  );
+};
+
+export const detectMatcherFindersForSharedPolarities = (
+  normalView: BinaryView,
+  invertedView: BinaryView,
+): { readonly normal: readonly FinderEvidence[]; readonly inverted: readonly FinderEvidence[] } => {
+  const width = normalView.width;
+  const height = normalView.height;
+  const runs = buildAxisRuns(normalView, width, height);
+  const normalEvidence: FinderEvidence[] = [];
+  const invertedEvidence: FinderEvidence[] = [];
+  const step = matcherStep(width, height);
+  for (let y = 2; y < height - 2; y += step) {
+    for (let x = 2; x < width - 2; x += step) {
+      if (pixel(normalView, width, x, y) === 0) {
+        normalEvidence.push(
+          ...matcherEvidenceAt(
+            normalView,
+            width,
+            height,
+            x,
+            y,
+            (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+              runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+          ),
+        );
+      } else {
+        invertedEvidence.push(
+          ...matcherEvidenceAt(
+            invertedView,
+            width,
+            height,
+            x,
+            y,
+            (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+              runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+          ),
+        );
+      }
+    }
+  }
+  return {
+    normal: finalizeMatcherEvidence(normalEvidence),
+    inverted: finalizeMatcherEvidence(invertedEvidence),
+  };
+};
+
 const detectMatcherFindersWithCrossCheck = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -887,33 +956,67 @@ const detectMatcherFindersWithCrossCheck = (
   ) => boolean = isDarkCenter,
 ): FinderEvidence[] => {
   const evidence: FinderEvidence[] = [];
-  const step = Math.max(1, Math.floor(Math.min(width, height) / 180));
+  const step = matcherStep(width, height);
   for (let y = 2; y < height - 2; y += step) {
     for (let x = 2; x < width - 2; x += step) {
       if (!shouldCheckCenter(binary, width, x, y)) continue;
-      const horizontal = crossCheckFn(binary, width, height, x, y, 1, 0);
-      const vertical = crossCheckFn(binary, width, height, x, y, 0, 1);
-      if (!horizontal || !vertical) continue;
-      const moduleSize = (horizontal.moduleSize + vertical.moduleSize) / 2;
-      if (moduleSize < 0.8) continue;
-      evidence.push({
-        source: 'matcher',
-        centerX: horizontal.centerX,
-        centerY: vertical.centerY,
-        moduleSize,
-        hModuleSize: horizontal.moduleSize,
-        vModuleSize: vertical.moduleSize,
-        score: horizontal.score + vertical.score + 0.75,
-      });
+      evidence.push(...matcherEvidenceAt(binary, width, height, x, y, crossCheckFn));
     }
   }
 
-  return clusterFinderEvidence(evidence)
-    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-    .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
+  return finalizeMatcherEvidence(evidence);
 };
 
-const detectFloodFinders = (
+const matcherStep = (width: number, height: number): number =>
+  Math.max(1, Math.floor(Math.min(width, height) / 180));
+
+const matcherEvidenceAt = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  crossCheckFn: typeof crossCheck,
+): FinderEvidence[] => {
+  const horizontal = crossCheckFn(binary, width, height, x, y, 1, 0);
+  const vertical = crossCheckFn(binary, width, height, x, y, 0, 1);
+  if (!horizontal || !vertical) return [];
+  const moduleSize = (horizontal.moduleSize + vertical.moduleSize) / 2;
+  if (moduleSize < 0.8) return [];
+  return [
+    {
+      source: 'matcher',
+      centerX: horizontal.centerX,
+      centerY: vertical.centerY,
+      moduleSize,
+      hModuleSize: horizontal.moduleSize,
+      vModuleSize: vertical.moduleSize,
+      score: horizontal.score + vertical.score + 0.75,
+    },
+  ];
+};
+
+const finalizeMatcherEvidence = (evidence: readonly FinderEvidence[]): FinderEvidence[] =>
+  clusterFinderEvidence(evidence)
+    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
+    .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
+
+const matcherNeighborhoodCenters = (
+  seed: FinderEvidence,
+): readonly (readonly [number, number])[] => {
+  const radius = Math.max(1, Math.round(seed.moduleSize));
+  const centerX = Math.round(seed.centerX);
+  const centerY = Math.round(seed.centerY);
+  return [
+    [centerX, centerY],
+    [centerX - radius, centerY],
+    [centerX + radius, centerY],
+    [centerX, centerY - radius],
+    [centerX, centerY + radius],
+  ];
+};
+
+export const detectFloodFinders = (
   binary: Uint8Array | BinaryView,
   width: number,
   height: number,

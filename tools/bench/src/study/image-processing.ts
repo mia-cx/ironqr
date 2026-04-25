@@ -9,8 +9,12 @@ import {
   getOklabPlanes,
 } from '../../../../packages/ironqr/src/pipeline/frame.js';
 import {
+  detectFloodFinders,
   detectMatcherFinders,
+  detectMatcherFindersForSharedPolarities,
+  detectMatcherFindersFromSeeds,
   detectMatcherFindersWithCenterSignal,
+  detectRowScanFinders,
   type FinderEvidence,
 } from '../../../../packages/ironqr/src/pipeline/proposals.js';
 import {
@@ -127,7 +131,12 @@ interface MatcherCandidateMeasurement {
   readonly prunedCenterOutputsEqual: boolean;
   readonly runMapMismatchCount: number;
   readonly prunedCenterMismatchCount: number;
+  readonly seededMatcherMs: number;
   readonly fusedPolarityMs: number;
+  readonly seededMatcherOutputsEqual: boolean;
+  readonly fusedPolarityOutputsEqual: boolean;
+  readonly seededMatcherMismatchCount: number;
+  readonly fusedPolarityMismatchCount: number;
   readonly seededMatcherEstimatedCenters: number;
   readonly sampledCenterCount: number;
   readonly prunedCenterCount: number;
@@ -190,7 +199,12 @@ interface ImageProcessingTotals {
   readonly matcherPrunedCenterOutputsEqual: boolean;
   readonly matcherRunMapMismatchCount: number;
   readonly matcherPrunedCenterMismatchCount: number;
+  readonly matcherSeededMs: number;
   readonly matcherFusedPolarityMs: number;
+  readonly matcherSeededOutputsEqual: boolean;
+  readonly matcherFusedPolarityOutputsEqual: boolean;
+  readonly matcherSeededMismatchCount: number;
+  readonly matcherFusedPolarityMismatchCount: number;
   readonly matcherSeededEstimatedCenters: number;
   readonly matcherSampledCenterCount: number;
   readonly matcherPrunedCenterCount: number;
@@ -580,6 +594,7 @@ const measureMatcherCandidateVariants = async (
   );
   const runMapMs = 0;
   let prunedCenterMs = 0;
+  let seededMatcherMs = 0;
   let fusedPolarityMs = 0;
   let seededMatcherEstimatedCenters = 0;
   let sampledCenterCount = 0;
@@ -588,8 +603,12 @@ const measureMatcherCandidateVariants = async (
   let fusedLightCenterCount = 0;
   const runMapOutputsEqual = true;
   let prunedCenterOutputsEqual = true;
+  let seededMatcherOutputsEqual = true;
+  let fusedPolarityOutputsEqual = true;
   const runMapMismatchCount = 0;
   let prunedCenterMismatchCount = 0;
+  let seededMatcherMismatchCount = 0;
+  let fusedPolarityMismatchCount = 0;
 
   for (const summary of controlSummaries) {
     seededMatcherEstimatedCenters +=
@@ -599,6 +618,19 @@ const measureMatcherCandidateVariants = async (
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
     const controlOutput = detectMatcherFinders(view, view.width, view.height);
+
+    const seeds = [
+      ...detectRowScanFinders(view, view.width, view.height),
+      ...detectFloodFinders(view, view.width, view.height),
+    ];
+    const seededStartedAt = performance.now();
+    const seededOutput = detectMatcherFindersFromSeeds(view, view.width, view.height, seeds);
+    const seededElapsed = performance.now() - seededStartedAt;
+    seededMatcherMs += seededElapsed;
+    const seededEqual = finderOutputsEqual(controlOutput, seededOutput);
+    seededMatcherOutputsEqual &&= seededEqual;
+    if (!seededEqual) seededMatcherMismatchCount += 1;
+    logStudyTiming(log, detectorTimingId(viewId, 'e', 'seeded-matcher'), seededElapsed, 'detector');
 
     const prunedStartedAt = performance.now();
     const prunedOutput = detectMatcherFindersWithCenterSignal(view, view.width, view.height);
@@ -611,21 +643,42 @@ const measureMatcherCandidateVariants = async (
     prunedCenterOutputsEqual &&= prunedEqual;
     if (!prunedEqual) prunedCenterMismatchCount += 1;
     logStudyTiming(log, detectorTimingId(viewId, 'b', 'pruned-matcher'), prunedElapsed, 'detector');
-    log(`${assetId}: matcher output candidate ${viewId} prunedEqual=${prunedEqual}`);
+    log(
+      `${assetId}: matcher output candidates ${viewId} seededEqual=${seededEqual} prunedEqual=${prunedEqual}`,
+    );
     await yieldToDashboard();
   }
 
   const planeViewIds = uniquePlaneRepresentativeIds(viewIds);
   for (const viewId of planeViewIds) {
-    const view = viewBank.getBinaryView(viewId);
+    const [scalar = '', threshold = ''] = viewId.split(':');
+    const normalViewId = `${scalar}:${threshold}:normal` as BinaryViewId;
+    const invertedViewId = `${scalar}:${threshold}:inverted` as BinaryViewId;
+    if (!viewIds.includes(normalViewId) || !viewIds.includes(invertedViewId)) continue;
+    const normalView = viewBank.getBinaryView(normalViewId);
+    const invertedView = viewBank.getBinaryView(invertedViewId);
     const fusedStartedAt = performance.now();
-    const fused = measureFusedPolarityMatcherCenters(view);
+    const fusedOutput = detectMatcherFindersForSharedPolarities(normalView, invertedView);
     const fusedElapsed = performance.now() - fusedStartedAt;
     fusedPolarityMs += fusedElapsed;
+    const fused = measureFusedPolarityMatcherCenters(normalView);
     fusedDarkCenterCount += fused.darkCenterCount;
     fusedLightCenterCount += fused.lightCenterCount;
+    const normalEqual = finderOutputsEqual(
+      detectMatcherFinders(normalView, normalView.width, normalView.height),
+      fusedOutput.normal,
+    );
+    const invertedEqual = finderOutputsEqual(
+      detectMatcherFinders(invertedView, invertedView.width, invertedView.height),
+      fusedOutput.inverted,
+    );
+    fusedPolarityOutputsEqual &&= normalEqual && invertedEqual;
+    if (!normalEqual) fusedPolarityMismatchCount += 1;
+    if (!invertedEqual) fusedPolarityMismatchCount += 1;
     logStudyTiming(log, detectorTimingId(viewId, 'd', 'fused-polarity'), fusedElapsed, 'detector');
-    log(`${assetId}: matcher shared-plane prototypes ${viewId}`);
+    log(
+      `${assetId}: matcher fused-polarity candidate ${viewId} normalEqual=${normalEqual} invertedEqual=${invertedEqual}`,
+    );
     await yieldToDashboard();
   }
 
@@ -633,6 +686,7 @@ const measureMatcherCandidateVariants = async (
     controlMatcherMs: round(controlMatcherMs),
     runMapMs: round(runMapMs),
     prunedCenterMs: round(prunedCenterMs),
+    seededMatcherMs: round(seededMatcherMs),
     fusedPolarityMs: round(fusedPolarityMs),
     seededMatcherEstimatedCenters,
     sampledCenterCount,
@@ -641,8 +695,12 @@ const measureMatcherCandidateVariants = async (
     fusedLightCenterCount,
     runMapOutputsEqual,
     prunedCenterOutputsEqual,
+    seededMatcherOutputsEqual,
+    fusedPolarityOutputsEqual,
     runMapMismatchCount,
     prunedCenterMismatchCount,
+    seededMatcherMismatchCount,
+    fusedPolarityMismatchCount,
     sharedPlaneCount: planeViewIds.length,
   };
 };
@@ -1049,10 +1107,17 @@ const summarizeImageProcessingStudy = ({
       totals.matcherControlMs += result.matcherCandidates.controlMatcherMs;
       totals.matcherRunMapMs += result.matcherCandidates.runMapMs;
       totals.matcherPrunedCenterMs += result.matcherCandidates.prunedCenterMs;
+      totals.matcherSeededMs += result.matcherCandidates.seededMatcherMs;
       totals.matcherRunMapOutputsEqual &&= result.matcherCandidates.runMapOutputsEqual;
       totals.matcherPrunedCenterOutputsEqual &&= result.matcherCandidates.prunedCenterOutputsEqual;
+      totals.matcherSeededOutputsEqual &&= result.matcherCandidates.seededMatcherOutputsEqual;
+      totals.matcherFusedPolarityOutputsEqual &&=
+        result.matcherCandidates.fusedPolarityOutputsEqual;
       totals.matcherRunMapMismatchCount += result.matcherCandidates.runMapMismatchCount;
       totals.matcherPrunedCenterMismatchCount += result.matcherCandidates.prunedCenterMismatchCount;
+      totals.matcherSeededMismatchCount += result.matcherCandidates.seededMatcherMismatchCount;
+      totals.matcherFusedPolarityMismatchCount +=
+        result.matcherCandidates.fusedPolarityMismatchCount;
       totals.matcherFusedPolarityMs += result.matcherCandidates.fusedPolarityMs;
       totals.matcherSeededEstimatedCenters +=
         result.matcherCandidates.seededMatcherEstimatedCenters;
@@ -1172,11 +1237,16 @@ const emptyTotals = (): MutableTotals => ({
   matcherControlMs: 0,
   matcherRunMapMs: 0,
   matcherPrunedCenterMs: 0,
+  matcherSeededMs: 0,
   matcherFusedPolarityMs: 0,
   matcherRunMapOutputsEqual: true,
   matcherPrunedCenterOutputsEqual: true,
+  matcherSeededOutputsEqual: true,
+  matcherFusedPolarityOutputsEqual: true,
   matcherRunMapMismatchCount: 0,
   matcherPrunedCenterMismatchCount: 0,
+  matcherSeededMismatchCount: 0,
+  matcherFusedPolarityMismatchCount: 0,
   matcherSeededEstimatedCenters: 0,
   matcherSampledCenterCount: 0,
   matcherPrunedCenterCount: 0,
@@ -1258,11 +1328,16 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   matcherControlMs: round(totals.matcherControlMs),
   matcherRunMapMs: round(totals.matcherRunMapMs),
   matcherPrunedCenterMs: round(totals.matcherPrunedCenterMs),
+  matcherSeededMs: round(totals.matcherSeededMs),
   matcherFusedPolarityMs: round(totals.matcherFusedPolarityMs),
   matcherRunMapOutputsEqual: totals.matcherRunMapOutputsEqual,
   matcherPrunedCenterOutputsEqual: totals.matcherPrunedCenterOutputsEqual,
+  matcherSeededOutputsEqual: totals.matcherSeededOutputsEqual,
+  matcherFusedPolarityOutputsEqual: totals.matcherFusedPolarityOutputsEqual,
   matcherRunMapMismatchCount: totals.matcherRunMapMismatchCount,
   matcherPrunedCenterMismatchCount: totals.matcherPrunedCenterMismatchCount,
+  matcherSeededMismatchCount: totals.matcherSeededMismatchCount,
+  matcherFusedPolarityMismatchCount: totals.matcherFusedPolarityMismatchCount,
   matcherSeededEstimatedCenters: totals.matcherSeededEstimatedCenters,
   matcherSampledCenterCount: totals.matcherSampledCenterCount,
   matcherPrunedCenterCount: totals.matcherPrunedCenterCount,
@@ -1323,20 +1398,25 @@ const buildVariantSummaries = (
     });
     variants.push({
       id: 'matcher-seeded-rescue-estimate',
-      title: 'Row/flood seeded matcher rescue estimate',
-      controlMetric: 'current full matcher detector duration',
-      candidateMetric: 'estimated matcher centers seeded by row-scan/flood evidence',
+      title: 'Row/flood seeded matcher rescue prototype',
+      controlMetric: 'current run-map matcher detector duration',
+      candidateMetric: 'output-producing matcher run around row-scan/flood finder centers',
       controlMs: totals.matcherControlMs,
-      candidateMs: totals.matcherControlMs,
-      deltaMs: 0,
-      improvementPct: 0,
-      evidence: `${totals.matcherSeededEstimatedCenters} row/flood finder centers would seed matcher refinement. Timing is intentionally zero because this row is an evidence-count estimate, not a behavior-equivalent implementation.`,
+      candidateMs: totals.matcherSeededMs,
+      deltaMs: round(totals.matcherControlMs - totals.matcherSeededMs),
+      improvementPct: percent(
+        totals.matcherControlMs - totals.matcherSeededMs,
+        totals.matcherControlMs,
+      ),
+      evidence: `finder outputs equal=${totals.matcherSeededOutputsEqual}; mismatched views=${totals.matcherSeededMismatchCount}; ${totals.matcherSeededEstimatedCenters} row/flood finder centers seeded matcher refinement.`,
     });
     variants.push({
       id: 'matcher-fused-polarity-traversal-prototype',
       title: 'Normal+inverted matcher traversal fusion prototype',
-      controlMetric: 'current matcher detector duration over separate polarity view identities',
-      candidateMetric: 'single shared-plane traversal that classifies dark and light centers',
+      controlMetric:
+        'current run-map matcher detector duration over separate polarity view identities',
+      candidateMetric:
+        'output-producing shared-plane matcher traversal for normal and inverted views',
       controlMs: totals.matcherControlMs,
       candidateMs: totals.matcherFusedPolarityMs,
       deltaMs: round(totals.matcherControlMs - totals.matcherFusedPolarityMs),
@@ -1344,7 +1424,7 @@ const buildVariantSummaries = (
         totals.matcherControlMs - totals.matcherFusedPolarityMs,
         totals.matcherControlMs,
       ),
-      evidence: `${totals.matcherFusedDarkCenterCount} normal-dark and ${totals.matcherFusedLightCenterCount} inverted-dark sampled centers classified in one shared traversal.`,
+      evidence: `finder outputs equal=${totals.matcherFusedPolarityOutputsEqual}; mismatched polarity views=${totals.matcherFusedPolarityMismatchCount}; ${totals.matcherFusedDarkCenterCount} normal-dark and ${totals.matcherFusedLightCenterCount} inverted-dark sampled centers classified in one shared traversal.`,
     });
   }
   if (config.focus === 'binary-bit-hot-path' && totals.binaryReadPixels > 0) {
