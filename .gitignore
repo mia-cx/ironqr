@@ -22,6 +22,7 @@ tools/bench/.cache/
 tools/bench/reports/studies/
 tools/bench/reports/runs/
 tools/bench/reports/study-*.json
+tools/bench/reports/performance.json
 !tools/bench/reports/
 tools/bench/tests/.tmp/
 
