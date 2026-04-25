@@ -837,20 +837,7 @@ export const detectMatcherFinders = (
   height: number,
 ): FinderEvidence[] => detectMatcherFindersWithRunMaps(binary, width, height);
 
-export const detectMatcherFindersLegacy = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): FinderEvidence[] => detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck);
-
-export const detectMatcherFindersLegacyWithCenterSignal = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): FinderEvidence[] =>
-  detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck, hasMatcherCenterSignal);
-
-export const detectMatcherFindersWithRunMaps = (
+const detectMatcherFindersWithRunMaps = (
   binary: Uint8Array | BinaryView,
   width: number,
   height: number,
@@ -863,110 +850,6 @@ export const detectMatcherFindersWithRunMaps = (
     (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
       runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
   );
-};
-
-export const detectMatcherFindersWithCenterSignal = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-): FinderEvidence[] => {
-  const runs = buildAxisRuns(binary, width, height);
-  return detectMatcherFindersWithCrossCheck(
-    binary,
-    width,
-    height,
-    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-    hasMatcherCenterSignal,
-  );
-};
-
-export const detectMatcherFindersLegacyFromSeeds = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-  seeds: readonly FinderEvidence[],
-): FinderEvidence[] =>
-  detectMatcherFindersFromSeedsWithCrossCheck(binary, width, height, seeds, crossCheck);
-
-export const detectMatcherFindersFromSeeds = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-  seeds: readonly FinderEvidence[],
-): FinderEvidence[] => {
-  const runs = buildAxisRuns(binary, width, height);
-  return detectMatcherFindersFromSeedsWithCrossCheck(
-    binary,
-    width,
-    height,
-    seeds,
-    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-  );
-};
-
-const detectMatcherFindersFromSeedsWithCrossCheck = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  height: number,
-  seeds: readonly FinderEvidence[],
-  crossCheckFn: typeof crossCheck,
-): FinderEvidence[] =>
-  finalizeMatcherEvidence(
-    seeds.flatMap((seed) =>
-      matcherNeighborhoodCenters(seed).flatMap(([x, y]) =>
-        matcherEvidenceAt(binary, width, height, x, y, crossCheckFn),
-      ),
-    ),
-  );
-
-export const detectMatcherFindersLegacyForSharedPolarities = (
-  normalView: BinaryView,
-  invertedView: BinaryView,
-): { readonly normal: readonly FinderEvidence[]; readonly inverted: readonly FinderEvidence[] } =>
-  detectMatcherFindersForSharedPolaritiesWithCrossCheck(normalView, invertedView, crossCheck);
-
-export const detectMatcherFindersForSharedPolarities = (
-  normalView: BinaryView,
-  invertedView: BinaryView,
-): { readonly normal: readonly FinderEvidence[]; readonly inverted: readonly FinderEvidence[] } => {
-  const width = normalView.width;
-  const height = normalView.height;
-  const runs = buildAxisRuns(normalView, width, height);
-  return detectMatcherFindersForSharedPolaritiesWithCrossCheck(
-    normalView,
-    invertedView,
-    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
-      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
-  );
-};
-
-const detectMatcherFindersForSharedPolaritiesWithCrossCheck = (
-  normalView: BinaryView,
-  invertedView: BinaryView,
-  crossCheckFn: typeof crossCheck,
-): { readonly normal: readonly FinderEvidence[]; readonly inverted: readonly FinderEvidence[] } => {
-  const width = normalView.width;
-  const height = normalView.height;
-  const normalEvidence: FinderEvidence[] = [];
-  const invertedEvidence: FinderEvidence[] = [];
-  const step = matcherStep(width, height);
-  for (let y = 2; y < height - 2; y += step) {
-    for (let x = 2; x < width - 2; x += step) {
-      if (pixel(normalView, width, x, y) === 0) {
-        normalEvidence.push(...matcherEvidenceAt(normalView, width, height, x, y, crossCheckFn));
-      } else {
-        invertedEvidence.push(
-          ...matcherEvidenceAt(invertedView, width, height, x, y, crossCheckFn),
-        );
-      }
-    }
-  }
-  return {
-    normal: finalizeMatcherEvidence(normalEvidence),
-    inverted: finalizeMatcherEvidence(invertedEvidence),
-  };
 };
 
 const detectMatcherFindersWithCrossCheck = (
@@ -1026,21 +909,6 @@ const finalizeMatcherEvidence = (evidence: readonly FinderEvidence[]): FinderEvi
   clusterFinderEvidence(evidence)
     .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
     .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
-
-const matcherNeighborhoodCenters = (
-  seed: FinderEvidence,
-): readonly (readonly [number, number])[] => {
-  const radius = Math.max(1, Math.round(seed.moduleSize));
-  const centerX = Math.round(seed.centerX);
-  const centerY = Math.round(seed.centerY);
-  return [
-    [centerX, centerY],
-    [centerX - radius, centerY],
-    [centerX + radius, centerY],
-    [centerX, centerY - radius],
-    [centerX, centerY + radius],
-  ];
-};
 
 export const detectFloodFinders = (
   binary: Uint8Array | BinaryView,
@@ -1153,38 +1021,6 @@ const isDarkCenter = (
   x: number,
   y: number,
 ): boolean => pixel(binary, width, x, y) === 0;
-
-const hasMatcherCenterSignal = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  x: number,
-  y: number,
-): boolean => {
-  if (!isDarkCenter(binary, width, x, y)) return false;
-  const horizontalTransitions = countMatcherCenterTransitions(binary, width, x, y, 1, 0);
-  const verticalTransitions = countMatcherCenterTransitions(binary, width, x, y, 0, 1);
-  if (horizontalTransitions >= 2 && verticalTransitions >= 2) return true;
-  if (horizontalTransitions === 0 && verticalTransitions === 0) return true;
-  return horizontalTransitions === 0 ? verticalTransitions >= 2 : horizontalTransitions >= 2;
-};
-
-const countMatcherCenterTransitions = (
-  binary: Uint8Array | BinaryView,
-  width: number,
-  x: number,
-  y: number,
-  dx: number,
-  dy: number,
-): number => {
-  let transitions = 0;
-  let previous = pixel(binary, width, x - dx * 2, y - dy * 2);
-  for (let offset = -1; offset <= 2; offset += 1) {
-    const value = pixel(binary, width, x + dx * offset, y + dy * offset);
-    if (value !== previous) transitions += 1;
-    previous = value;
-  }
-  return transitions;
-};
 
 const crossCheck = (
   binary: Uint8Array | BinaryView,
