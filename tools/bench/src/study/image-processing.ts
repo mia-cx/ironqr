@@ -815,6 +815,7 @@ const readCachedDetectorAssetResult = async (
   const matcherUnits: DetectorUnitMeasurement[] = [];
 
   for (const viewId of viewIds) {
+    await yieldToDashboard();
     const floodControl = await readVariantMeasurement(asset, cache, FLOOD_CONTROL_ID, viewId);
     const matcherControl = await readVariantMeasurement(asset, cache, 'run-map', viewId);
     if (!floodControl || !matcherControl) return null;
@@ -931,6 +932,7 @@ const replayCachedDetectorRows = async (
 ): Promise<number> => {
   let replayed = 0;
   for (const viewId of viewIds) {
+    await yieldToDashboard();
     for (const variantId of variantIds) {
       const measurement = await readVariantMeasurement(asset, cache, variantId, viewId);
       if (!measurement) continue;

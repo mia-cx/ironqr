@@ -592,6 +592,8 @@ const runPlugin = async (input: {
     if (readCachedAsset) {
       input.progress.onMessage(`study cache preload starting for ${input.assets.length} assets`);
       for (const [index, asset] of input.assets.entries()) {
+        if (input.signal?.aborted) throw input.signal.reason ?? new Error('Study interrupted.');
+        await yieldToProgressRenderer();
         input.progress.onAssetPrepared(asset.id, index + 1, input.assets.length);
         const cached = await readCachedAsset({
           repoRoot: input.repoRoot,
@@ -636,6 +638,10 @@ const runPlugin = async (input: {
       cache: input.cache,
     });
     const assetsById = new Map(input.assets.map((asset) => [asset.id, asset] as const));
+    const abortStudyWorkers = (): void => {
+      void studyWorkerPool.close();
+    };
+    input.signal?.addEventListener('abort', abortStudyWorkers, { once: true });
     try {
       const run = await mapConcurrentPartial(
         assetsToRun,
@@ -738,6 +744,7 @@ const runPlugin = async (input: {
         interrupted,
       };
     } finally {
+      input.signal?.removeEventListener('abort', abortStudyWorkers);
       await studyWorkerPool.close();
     }
   }
