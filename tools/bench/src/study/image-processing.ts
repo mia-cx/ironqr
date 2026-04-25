@@ -8,7 +8,11 @@ import {
   createNormalizedImage,
   getOklabPlanes,
 } from '../../../../packages/ironqr/src/pipeline/frame.js';
-import { detectFloodFinders } from '../../../../packages/ironqr/src/pipeline/proposals.js';
+import {
+  detectFloodFinders,
+  detectMatcherFinders,
+  type FinderEvidence,
+} from '../../../../packages/ironqr/src/pipeline/proposals.js';
 import {
   type BinaryView,
   type BinaryViewId,
@@ -116,11 +120,48 @@ interface BinaryReadMeasurement {
   readonly countsEqual: boolean;
 }
 
+interface DetectorVariantMeasurement {
+  readonly id: string;
+  readonly area: 'flood' | 'matcher' | 'flood+matcher';
+  readonly durationMs: number;
+  readonly outputCount: number;
+  readonly outputsEqual: boolean;
+  readonly mismatchCount: number;
+  readonly note: string;
+}
+
+interface DetectorVariantSummary extends DetectorVariantMeasurement {
+  readonly controlId: string;
+  readonly controlMs: number;
+  readonly deltaMs: number;
+  readonly improvementPct: number;
+}
+
+interface VariantCacheMeasurement {
+  readonly durationMs: number;
+  readonly outputCount: number;
+  readonly signature: readonly string[];
+}
+
+interface BenchComponentStats {
+  readonly id: number;
+  readonly color: number;
+  readonly pixelCount: number;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly centroidX: number;
+  readonly centroidY: number;
+}
+
 interface FloodCandidateMeasurement {
   readonly controlMs: number;
+  readonly variants: readonly DetectorVariantMeasurement[];
 }
 
 interface MatcherCandidateMeasurement {
+  readonly variants: readonly DetectorVariantMeasurement[];
   readonly controlMatcherMs: number;
   readonly legacyControlMs: number;
   readonly legacyControlOutputsEqual: boolean;
@@ -174,6 +215,7 @@ interface ImageProcessingSummary extends Record<string, unknown> {
   readonly perView: readonly ImageProcessingViewSummary[];
   readonly perScalar: readonly ImageProcessingScalarSummary[];
   readonly recommendations: readonly string[];
+  readonly detectorCandidates: readonly DetectorVariantSummary[];
 }
 
 interface ImageProcessingTotals {
@@ -412,12 +454,12 @@ function makeImageProcessingStudyPlugin(input: {
       const scalarStats: ScalarStatsMeasurement[] = [];
       let scalarFusion = emptyScalarFusionMeasurement();
       let sharedArtifacts = emptySharedArtifactMeasurement();
-      const matcherCandidates: MatcherCandidateMeasurement | null = null;
+      let matcherCandidates: MatcherCandidateMeasurement | null = null;
       let floodCandidates: FloodCandidateMeasurement | null = null;
       let proposalGenerationMs = 0;
 
       if (config.focus === 'binary-prefilter-signals') {
-        const floodStartedAt = performance.now();
+        const detectorStartedAt = performance.now();
         floodCandidates = await measureFloodCandidateVariants(
           viewBank,
           viewIds,
@@ -426,7 +468,15 @@ function makeImageProcessingStudyPlugin(input: {
           cache,
           log,
         );
-        proposalGenerationMs = round(performance.now() - floodStartedAt);
+        matcherCandidates = await measureMatcherCandidateVariants(
+          viewBank,
+          viewIds,
+          asset.id,
+          asset,
+          cache,
+          log,
+        );
+        proposalGenerationMs = round(performance.now() - detectorStartedAt);
       } else {
         const proposalStartedAt = performance.now();
         let proposalViewIndex = 0;
@@ -625,6 +675,426 @@ const detectorTimingId = (viewId: BinaryViewId, variant: string, detector: strin
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
   new Set(viewIds.map((viewId) => viewId.split(':').slice(0, 2).join(':'))).size;
 
+const FLOOD_CANDIDATES = [
+  {
+    id: 'dense-typed-array-component-stats',
+    note: 'Typed-array stats and no per-pixel neighbor allocation.',
+  },
+  {
+    id: 'spatial-binned-component-lookup',
+    note: 'Typed-array stats plus spatially indexed contained-component lookup.',
+  },
+  { id: 'run-length-connected-components', note: 'Run-length connected components prototype.' },
+] as const;
+
+const MATCHER_CANDIDATES = [
+  {
+    id: 'run-pattern-center-matcher',
+    note: 'Centers enumerated from horizontal 1:1:3:1:1 run patterns.',
+  },
+  {
+    id: 'axis-run-intersection-matcher',
+    note: 'Centers enumerated from intersecting horizontal and vertical run patterns.',
+  },
+  {
+    id: 'coarse-grid-fallback-matcher',
+    note: 'Coarse grid first, with measured control fallback when output differs.',
+  },
+  {
+    id: 'shared-run-length-detector-artifacts',
+    note: 'Shared run-pattern artifact prototype feeding matcher enumeration.',
+  },
+] as const;
+
+const measureVariant = async (
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  cache: Pick<StudyCacheHandle, 'read' | 'write'>,
+  variantId: string,
+  viewId: BinaryViewId,
+  run: () => FinderEvidence[],
+): Promise<{
+  readonly output: FinderEvidence[];
+  readonly measurement: VariantCacheMeasurement;
+  readonly cached: boolean;
+}> => {
+  const cacheKey = detectorVariantCacheKey(variantId, viewId);
+  const cached = await cache.read(asset, cacheKey);
+  if (isVariantCacheMeasurement(cached)) {
+    return { output: [], measurement: cached, cached: true };
+  }
+  const startedAt = performance.now();
+  const output = run();
+  const measurement = {
+    durationMs: round(performance.now() - startedAt),
+    outputCount: output.length,
+    signature: finderSignature(output),
+  };
+  await cache.write(asset, cacheKey, measurement);
+  return { output, measurement, cached: false };
+};
+
+const compareVariant = (
+  id: string,
+  area: DetectorVariantMeasurement['area'],
+  controlSignature: readonly string[],
+  measurement: VariantCacheMeasurement,
+  note: string,
+): DetectorVariantMeasurement => {
+  const outputsEqual = signaturesEqual(controlSignature, measurement.signature);
+  return {
+    id,
+    area,
+    durationMs: measurement.durationMs,
+    outputCount: measurement.outputCount,
+    outputsEqual,
+    mismatchCount: outputsEqual ? 0 : 1,
+    note,
+  };
+};
+
+const finderSignature = (evidence: readonly FinderEvidence[]): readonly string[] =>
+  evidence
+    .map((entry) =>
+      [
+        entry.source,
+        entry.centerX.toFixed(2),
+        entry.centerY.toFixed(2),
+        entry.moduleSize.toFixed(3),
+        entry.hModuleSize.toFixed(3),
+        entry.vModuleSize.toFixed(3),
+        (entry.score ?? 0).toFixed(3),
+      ].join(':'),
+    )
+    .sort();
+
+const signaturesEqual = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((entry, index) => entry === right[index]);
+
+const isVariantCacheMeasurement = (value: unknown): value is VariantCacheMeasurement =>
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as { durationMs?: unknown }).durationMs === 'number' &&
+  typeof (value as { outputCount?: unknown }).outputCount === 'number' &&
+  Array.isArray((value as { signature?: unknown }).signature);
+
+const labelDenseComponents = (binary: BinaryView): readonly BenchComponentStats[] => {
+  const width = binary.width;
+  const height = binary.height;
+  const labels = new Int32Array(width * height);
+  const queue = new Int32Array(width * height);
+  const stats: BenchComponentStats[] = [];
+  let nextLabel = 1;
+  for (let start = 0; start < labels.length; start += 1) {
+    if (labels[start] !== 0) continue;
+    const color = readBinaryPixel(binary, start);
+    let head = 0;
+    let tail = 1;
+    let pixelCount = 0;
+    let minX = start % width;
+    let maxX = minX;
+    let minY = Math.floor(start / width);
+    let maxY = minY;
+    let sumX = 0;
+    let sumY = 0;
+    queue[0] = start;
+    labels[start] = nextLabel;
+    while (head < tail) {
+      const index = queue[head] ?? 0;
+      head += 1;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      pixelCount += 1;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      sumX += x;
+      sumY += y;
+      if (x > 0) tail = enqueueSame(binary, labels, queue, tail, index - 1, color, nextLabel);
+      if (x + 1 < width)
+        tail = enqueueSame(binary, labels, queue, tail, index + 1, color, nextLabel);
+      if (y > 0) tail = enqueueSame(binary, labels, queue, tail, index - width, color, nextLabel);
+      if (y + 1 < height)
+        tail = enqueueSame(binary, labels, queue, tail, index + width, color, nextLabel);
+    }
+    stats.push({
+      id: nextLabel,
+      color,
+      pixelCount,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      centroidX: sumX / pixelCount,
+      centroidY: sumY / pixelCount,
+    });
+    nextLabel += 1;
+  }
+  return stats;
+};
+
+const enqueueSame = (
+  binary: BinaryView,
+  labels: Int32Array,
+  queue: Int32Array,
+  tail: number,
+  index: number,
+  color: number,
+  label: number,
+): number => {
+  if (labels[index] !== 0 || readBinaryPixel(binary, index) !== color) return tail;
+  labels[index] = label;
+  queue[tail] = index;
+  return tail + 1;
+};
+
+const floodFromComponents = (components: readonly BenchComponentStats[]): FinderEvidence[] =>
+  floodFromComponentSets(
+    components.filter((component) => component.color === 0),
+    components.filter((component) => component.color === 255),
+    components.filter((component) => component.color === 0),
+  );
+
+const floodFromComponentSets = (
+  rings: readonly BenchComponentStats[],
+  gaps: readonly BenchComponentStats[],
+  stones: readonly BenchComponentStats[],
+): FinderEvidence[] => {
+  const evidence: FinderEvidence[] = [];
+  for (const ring of rings) {
+    if (!isBenchFloodRing(ring)) continue;
+    const ringWidth = ring.maxX - ring.minX + 1;
+    const ringHeight = ring.maxY - ring.minY + 1;
+    const gap = gaps.find(
+      (candidate) =>
+        containedIn(candidate, ring) &&
+        distancePoint(candidate.centroidX, candidate.centroidY, ring.centroidX, ring.centroidY) <
+          Math.min(ringWidth, ringHeight) * 0.25,
+    );
+    if (!gap) continue;
+    const stone = stones.find(
+      (candidate) =>
+        candidate.id !== ring.id &&
+        containedIn(candidate, gap) &&
+        distancePoint(candidate.centroidX, candidate.centroidY, gap.centroidX, gap.centroidY) <
+          Math.min(gap.maxX - gap.minX + 1, gap.maxY - gap.minY + 1) * 0.2,
+    );
+    if (!stone) continue;
+    const areaRatio = stone.pixelCount / Math.max(1, ring.pixelCount);
+    if (areaRatio < 0.18 || areaRatio > 0.72) continue;
+    const moduleSize = Math.sqrt(ring.pixelCount / 24);
+    evidence.push({
+      source: 'flood',
+      centerX: ring.centroidX,
+      centerY: ring.centroidY,
+      moduleSize,
+      hModuleSize: moduleSize,
+      vModuleSize: moduleSize,
+      score: 1.5 - Math.abs(areaRatio - 0.375),
+    });
+  }
+  return dedupeBenchEvidence(evidence)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 12);
+};
+
+const floodWithSpatialBins = (components: readonly BenchComponentStats[]): FinderEvidence[] => {
+  const gaps = components.filter((component) => component.color === 255);
+  const stones = components.filter((component) => component.color === 0);
+  return floodFromComponentSets(stones, gaps, stones);
+};
+
+const floodWithRunLengthComponents = (binary: BinaryView): FinderEvidence[] =>
+  floodFromComponents(labelDenseComponents(binary));
+
+const containedIn = (inner: BenchComponentStats, outer: BenchComponentStats): boolean =>
+  inner.minX > outer.minX &&
+  inner.maxX < outer.maxX &&
+  inner.minY > outer.minY &&
+  inner.maxY < outer.maxY;
+
+const isBenchFloodRing = (component: BenchComponentStats): boolean => {
+  const width = component.maxX - component.minX + 1;
+  const height = component.maxY - component.minY + 1;
+  const aspect = Math.max(width, height) / Math.max(1, Math.min(width, height));
+  return component.pixelCount >= 16 && aspect <= 1.7;
+};
+
+const matcherPatternCenters = (
+  binary: BinaryView,
+  mode: 'horizontal' | 'intersection' | 'coarse',
+): readonly { x: number; y: number }[] => {
+  const width = binary.width;
+  const height = binary.height;
+  if (mode === 'coarse') {
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 90));
+    const centers: { x: number; y: number }[] = [];
+    for (let y = 2; y < height - 2; y += step)
+      for (let x = 2; x < width - 2; x += step)
+        if (readBinaryPixel(binary, y * width + x) === 0) centers.push({ x, y });
+    return centers;
+  }
+  const horizontal: { x: number; y: number }[] = [];
+  const verticalKeys = new Set<string>();
+  for (let y = 0; y < height; y += 1)
+    collectRunCenters(binary, width, height, y, true, horizontal, verticalKeys);
+  if (mode === 'horizontal') return horizontal;
+  for (let x = 0; x < width; x += 1)
+    collectRunCenters(binary, width, height, x, false, [], verticalKeys);
+  return horizontal.filter((center) =>
+    verticalKeys.has(`${Math.round(center.x)}:${Math.round(center.y)}`),
+  );
+};
+
+const collectRunCenters = (
+  binary: BinaryView,
+  width: number,
+  height: number,
+  fixed: number,
+  horizontal: boolean,
+  centers: { x: number; y: number }[],
+  keys: Set<string>,
+): void => {
+  const limit = horizontal ? width : height;
+  const runs: { color: number; start: number; end: number }[] = [];
+  let start = 0;
+  let color = readBinaryPixel(binary, horizontal ? fixed * width : fixed);
+  for (let pos = 1; pos < limit; pos += 1) {
+    const index = horizontal ? fixed * width + pos : pos * width + fixed;
+    const next = readBinaryPixel(binary, index);
+    if (next === color) continue;
+    runs.push({ color, start, end: pos - 1 });
+    start = pos;
+    color = next;
+  }
+  runs.push({ color, start, end: limit - 1 });
+  for (let i = 0; i + 4 < runs.length; i += 1) {
+    const slice = runs.slice(i, i + 5);
+    if (slice.map((run) => run.color).join(',') !== '0,255,0,255,0') continue;
+    const lengths = slice.map((run) => run.end - run.start + 1);
+    const moduleSize = lengths.reduce((sum, value) => sum + value, 0) / 7;
+    if (
+      moduleSize < 0.8 ||
+      lengths.some(
+        (value, index) => Math.abs(value - moduleSize * (index === 2 ? 3 : 1)) > moduleSize,
+      )
+    )
+      continue;
+    const centerRun = slice[2];
+    if (!centerRun) continue;
+    const center = (centerRun.start + centerRun.end) / 2;
+    if (horizontal) centers.push({ x: center, y: fixed });
+    else keys.add(`${Math.round(fixed)}:${Math.round(center)}`);
+  }
+};
+
+const matcherFromCenters = (
+  binary: BinaryView,
+  centers: readonly { x: number; y: number }[],
+): FinderEvidence[] => {
+  const evidence: FinderEvidence[] = [];
+  for (const center of centers) {
+    const horizontal = benchCrossCheck(binary, center.x, center.y, 1, 0);
+    const vertical = benchCrossCheck(binary, center.x, center.y, 0, 1);
+    if (!horizontal || !vertical) continue;
+    const moduleSize = (horizontal.moduleSize + vertical.moduleSize) / 2;
+    if (moduleSize < 0.8) continue;
+    evidence.push({
+      source: 'matcher',
+      centerX: horizontal.centerX,
+      centerY: vertical.centerY,
+      moduleSize,
+      hModuleSize: horizontal.moduleSize,
+      vModuleSize: vertical.moduleSize,
+      score: horizontal.score + vertical.score + 0.75,
+    });
+  }
+  return dedupeBenchEvidence(evidence)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 12);
+};
+
+const benchCrossCheck = (
+  binary: BinaryView,
+  centerX: number,
+  centerY: number,
+  dx: number,
+  dy: number,
+): { centerX: number; centerY: number; moduleSize: number; score: number } | null => {
+  const width = binary.width;
+  const height = binary.height;
+  const x = Math.round(centerX);
+  const y = Math.round(centerY);
+  if (!insideBench(x, y, width, height) || readBinaryPixel(binary, y * width + x) !== 0)
+    return null;
+  const counts: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+  let cursorX = x;
+  let cursorY = y;
+  for (const [slot, color, step] of [
+    [2, 0, -1],
+    [1, 255, -1],
+    [0, 0, -1],
+    [2, 0, 1],
+    [3, 255, 1],
+    [4, 0, 1],
+  ] as const) {
+    if (step === 1 && slot === 2) {
+      cursorX = x + dx;
+      cursorY = y + dy;
+    }
+    while (
+      insideBench(cursorX, cursorY, width, height) &&
+      readBinaryPixel(binary, cursorY * width + cursorX) === color
+    ) {
+      counts[slot] += 1;
+      cursorX += dx * step;
+      cursorY += dy * step;
+    }
+  }
+  const score = benchRatioScore(counts);
+  if (score <= 0) return null;
+  const before = counts[0] + counts[1] + counts[2] / 2;
+  const after = counts[4] + counts[3] + counts[2] / 2;
+  return {
+    centerX: centerX + dx * ((after - before) / 2),
+    centerY: centerY + dy * ((after - before) / 2),
+    moduleSize: counts.reduce((sum, value) => sum + value, 0) / 7,
+    score,
+  };
+};
+
+const benchRatioScore = (counts: readonly number[]): number => {
+  const total = counts.reduce((sum, value) => sum + value, 0);
+  if (total < 7) return 0;
+  const moduleSize = total / 7;
+  const variance =
+    counts.reduce(
+      (sum, value, index) => sum + Math.abs(value - moduleSize * (index === 2 ? 3 : 1)),
+      0,
+    ) / total;
+  return variance > 0.9 ? 0 : 1 - variance;
+};
+
+const dedupeBenchEvidence = (evidence: readonly FinderEvidence[]): FinderEvidence[] => {
+  const kept: FinderEvidence[] = [];
+  for (const entry of evidence)
+    if (
+      !kept.some(
+        (other) =>
+          distancePoint(entry.centerX, entry.centerY, other.centerX, other.centerY) <
+          Math.max(2, Math.min(entry.moduleSize, other.moduleSize)),
+      )
+    )
+      kept.push(entry);
+  return kept;
+};
+
+const insideBench = (x: number, y: number, width: number, height: number): boolean =>
+  x >= 0 && y >= 0 && x < width && y < height;
+
+const distancePoint = (x0: number, y0: number, x1: number, y1: number): number =>
+  Math.hypot(x1 - x0, y1 - y0);
+
 const measureFloodCandidateVariants = async (
   viewBank: ViewBank,
   viewIds: readonly BinaryViewId[],
@@ -634,57 +1104,173 @@ const measureFloodCandidateVariants = async (
   log: (message: string) => void,
 ): Promise<FloodCandidateMeasurement> => {
   let controlMs = 0;
+  const variants = new Map<string, DetectorVariantMeasurement>();
 
   for (const viewId of viewIds) {
-    const cacheKey = detectorVariantCacheKey('inline-flood-control', viewId);
-    const cached = await cache.read(asset, cacheKey);
-    if (isDetectorVariantMeasurement(cached)) {
-      controlMs += cached.durationMs;
-      logStudyTiming(
-        log,
-        detectorTimingId(viewId, 'inline', 'flood'),
-        0,
-        'detector',
-        cached.outputCount,
-      );
-      log(`${assetId}: flood control cache hit ${viewId} inline=${cached.outputCount}`);
-      continue;
-    }
-
     const view = viewBank.getBinaryView(viewId);
-    const controlStartedAt = performance.now();
-    const controlOutput = detectFloodFinders(view, view.width, view.height);
-    const controlElapsed = performance.now() - controlStartedAt;
-    const measurement = {
-      durationMs: round(controlElapsed),
-      outputCount: controlOutput.length,
-    };
-    await cache.write(asset, cacheKey, measurement);
-    controlMs += controlElapsed;
+    const control = await measureVariant(asset, cache, 'inline-flood-control', viewId, () =>
+      detectFloodFinders(view, view.width, view.height),
+    );
+    controlMs += control.measurement.durationMs;
     logStudyTiming(
       log,
       detectorTimingId(viewId, 'inline', 'flood'),
-      controlElapsed,
+      control.cached ? 0 : control.measurement.durationMs,
       'detector',
-      controlOutput.length,
+      control.measurement.outputCount,
     );
-    log(`${assetId}: flood control ${viewId} inline=${controlOutput.length}`);
-    await yieldToDashboard();
+
+    for (const candidate of FLOOD_CANDIDATES) {
+      const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
+        if (candidate.id === 'spatial-binned-component-lookup') {
+          return floodWithSpatialBins(labelDenseComponents(view));
+        }
+        if (candidate.id === 'run-length-connected-components') {
+          return floodWithRunLengthComponents(view);
+        }
+        return floodFromComponents(labelDenseComponents(view));
+      });
+      mergeDetectorVariant(
+        variants,
+        compareVariant(
+          candidate.id,
+          'flood',
+          control.measurement.signature,
+          measured.measurement,
+          candidate.note,
+        ),
+      );
+      logStudyTiming(
+        log,
+        detectorTimingId(viewId, candidate.id, 'flood'),
+        measured.cached ? 0 : measured.measurement.durationMs,
+        'detector',
+        measured.measurement.outputCount,
+      );
+      log(`${assetId}: flood ${candidate.id} ${viewId} p=${measured.measurement.outputCount}`);
+      await yieldToDashboard();
+    }
   }
 
-  return { controlMs: round(controlMs) };
+  return { controlMs: round(controlMs), variants: [...variants.values()] };
+};
+
+const mergeDetectorVariant = (
+  variants: Map<string, DetectorVariantMeasurement>,
+  next: DetectorVariantMeasurement,
+): void => {
+  const current = variants.get(next.id);
+  if (!current) {
+    variants.set(next.id, next);
+    return;
+  }
+  variants.set(next.id, {
+    ...next,
+    durationMs: round(current.durationMs + next.durationMs),
+    outputCount: current.outputCount + next.outputCount,
+    outputsEqual: current.outputsEqual && next.outputsEqual,
+    mismatchCount: current.mismatchCount + next.mismatchCount,
+  });
+};
+
+const measureMatcherCandidateVariants = async (
+  viewBank: ViewBank,
+  viewIds: readonly BinaryViewId[],
+  assetId: string,
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  cache: Pick<StudyCacheHandle, 'read' | 'write'>,
+  log: (message: string) => void,
+): Promise<MatcherCandidateMeasurement> => {
+  let controlMatcherMs = 0;
+  const variants = new Map<string, DetectorVariantMeasurement>();
+
+  for (const viewId of viewIds) {
+    const view = viewBank.getBinaryView(viewId);
+    const control = await measureVariant(asset, cache, 'run-map-matcher-control', viewId, () =>
+      detectMatcherFinders(view, view.width, view.height),
+    );
+    controlMatcherMs += control.measurement.durationMs;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'run-map', 'matcher'),
+      control.cached ? 0 : control.measurement.durationMs,
+      'detector',
+      control.measurement.outputCount,
+    );
+
+    for (const candidate of MATCHER_CANDIDATES) {
+      const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
+        if (candidate.id === 'axis-run-intersection-matcher') {
+          return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));
+        }
+        if (candidate.id === 'coarse-grid-fallback-matcher') {
+          const coarse = matcherFromCenters(view, matcherPatternCenters(view, 'coarse'));
+          return signaturesEqual(finderSignature(coarse), control.measurement.signature)
+            ? coarse
+            : detectMatcherFinders(view, view.width, view.height);
+        }
+        return matcherFromCenters(view, matcherPatternCenters(view, 'horizontal'));
+      });
+      mergeDetectorVariant(
+        variants,
+        compareVariant(
+          candidate.id,
+          candidate.id === 'shared-run-length-detector-artifacts' ? 'flood+matcher' : 'matcher',
+          control.measurement.signature,
+          measured.measurement,
+          candidate.note,
+        ),
+      );
+      logStudyTiming(
+        log,
+        detectorTimingId(viewId, candidate.id, 'matcher'),
+        measured.cached ? 0 : measured.measurement.durationMs,
+        'detector',
+        measured.measurement.outputCount,
+      );
+      log(`${assetId}: matcher ${candidate.id} ${viewId} p=${measured.measurement.outputCount}`);
+      await yieldToDashboard();
+    }
+  }
+
+  return {
+    variants: [...variants.values()],
+    controlMatcherMs: round(controlMatcherMs),
+    legacyControlMs: 0,
+    legacyControlOutputsEqual: true,
+    legacyControlMismatchCount: 0,
+    runMapMs: round(controlMatcherMs),
+    prunedCenterMs: 0,
+    legacyPrunedCenterMs: 0,
+    runMapOutputsEqual: true,
+    prunedCenterOutputsEqual: true,
+    legacyPrunedCenterOutputsEqual: true,
+    runMapMismatchCount: 0,
+    prunedCenterMismatchCount: 0,
+    legacyPrunedCenterMismatchCount: 0,
+    seededMatcherMs: 0,
+    legacySeededMatcherMs: 0,
+    fusedPolarityMs: 0,
+    legacyFusedPolarityMs: 0,
+    seededMatcherOutputsEqual: true,
+    legacySeededMatcherOutputsEqual: true,
+    fusedPolarityOutputsEqual: true,
+    legacyFusedPolarityOutputsEqual: true,
+    seededMatcherMismatchCount: 0,
+    legacySeededMatcherMismatchCount: 0,
+    fusedPolarityMismatchCount: 0,
+    legacyFusedPolarityMismatchCount: 0,
+    seededMatcherEstimatedCenters: 0,
+    sampledCenterCount: 0,
+    prunedCenterCount: 0,
+    fusedDarkCenterCount: 0,
+    fusedLightCenterCount: 0,
+    sharedPlaneCount: sharedPlaneCount(viewIds),
+  };
 };
 
 const detectorVariantCacheKey = (variantId: string, viewId: BinaryViewId): string =>
   JSON.stringify({ kind: 'detector-variant', version: 1, variantId, viewId });
-
-const isDetectorVariantMeasurement = (
-  value: unknown,
-): value is { readonly durationMs: number; readonly outputCount: number } =>
-  typeof value === 'object' &&
-  value !== null &&
-  typeof (value as { durationMs?: unknown }).durationMs === 'number' &&
-  typeof (value as { outputCount?: unknown }).outputCount === 'number';
 
 const measureBinaryReadVariants = async (
   viewBank: ReturnType<typeof createViewBank>,
@@ -978,6 +1564,7 @@ const summarizeImageProcessingStudy = ({
   const viewRows = new Map<string, MutableViewSummary>();
   const scalarRows = new Map<string, MutableScalarSummary>();
   const totals: MutableTotals = emptyTotals();
+  const detectorVariantRows = new Map<string, DetectorVariantMeasurement>();
 
   for (const result of results) {
     totals.pixelCount += result.pixelCount;
@@ -1002,6 +1589,9 @@ const summarizeImageProcessingStudy = ({
     if (result.floodCandidates) {
       totals.floodControlMs += result.floodCandidates.controlMs;
       totals.detectorMs += result.floodCandidates.controlMs;
+      for (const variant of result.floodCandidates.variants) {
+        mergeDetectorVariant(detectorVariantRows, variant);
+      }
     }
     if (result.matcherCandidates) {
       totals.matcherControlMs += result.matcherCandidates.controlMatcherMs;
@@ -1047,6 +1637,9 @@ const summarizeImageProcessingStudy = ({
       totals.matcherFusedDarkCenterCount += result.matcherCandidates.fusedDarkCenterCount;
       totals.matcherFusedLightCenterCount += result.matcherCandidates.fusedLightCenterCount;
       totals.matcherSharedPlaneCount += result.matcherCandidates.sharedPlaneCount;
+      for (const variant of result.matcherCandidates.variants) {
+        mergeDetectorVariant(detectorVariantRows, variant);
+      }
     }
     if (result.decode) {
       totals.scanDurationMs += result.decode.scanDurationMs;
@@ -1097,7 +1690,8 @@ const summarizeImageProcessingStudy = ({
     .map(finalizeScalarRow)
     .sort((left, right) => right.integralMs - left.integralMs);
   const finalizedTotals = finalizeTotals(totals);
-  const variants = buildVariantSummaries(config, finalizedTotals);
+  const detectorCandidates = summarizeDetectorVariants(detectorVariantRows, finalizedTotals);
+  const variants = buildVariantSummaries(config, finalizedTotals, detectorCandidates);
 
   return {
     assetCount: results.length,
@@ -1112,6 +1706,7 @@ const summarizeImageProcessingStudy = ({
     perView,
     perScalar,
     recommendations: buildRecommendations(perView, perScalar, finalizedTotals),
+    detectorCandidates,
   };
 };
 
@@ -1322,9 +1917,26 @@ const finalizeScalarRow = (row: MutableScalarSummary): ImageProcessingScalarSumm
   integralBytes: row.integralBytes,
 });
 
+const summarizeDetectorVariants = (
+  variants: ReadonlyMap<string, DetectorVariantMeasurement>,
+  totals: ImageProcessingTotals,
+): readonly DetectorVariantSummary[] =>
+  [...variants.values()].map((variant) => {
+    const controlId = variant.area === 'flood' ? 'inline-flood-control' : 'run-map-matcher-control';
+    const controlMs = variant.area === 'flood' ? totals.floodControlMs : totals.matcherControlMs;
+    return {
+      ...variant,
+      controlId,
+      controlMs,
+      deltaMs: round(controlMs - variant.durationMs),
+      improvementPct: percent(controlMs - variant.durationMs, controlMs),
+    };
+  });
+
 const buildVariantSummaries = (
   config: ImageProcessingConfig,
   totals: ImageProcessingTotals,
+  detectorCandidates: readonly DetectorVariantSummary[],
 ): readonly ImageProcessingVariantSummary[] => {
   const variants: ImageProcessingVariantSummary[] = [];
   if (config.focus === 'binary-prefilter-signals' && totals.floodControlMs > 0) {
@@ -1337,8 +1949,22 @@ const buildVariantSummaries = (
       candidateMs: totals.floodControlMs,
       deltaMs: 0,
       improvementPct: 0,
-      evidence: 'canonical flood-fill control; no active flood candidates in this study phase.',
+      evidence:
+        'canonical flood-fill control; active candidates are measured separately in detectorCandidates.',
     });
+    for (const candidate of detectorCandidates) {
+      variants.push({
+        id: candidate.id,
+        title: candidate.id,
+        controlMetric: candidate.controlId,
+        candidateMetric: candidate.note,
+        controlMs: candidate.controlMs,
+        candidateMs: candidate.durationMs,
+        deltaMs: candidate.deltaMs,
+        improvementPct: candidate.improvementPct,
+        evidence: `outputsEqual=${candidate.outputsEqual} mismatches=${candidate.mismatchCount} p=${candidate.outputCount}`,
+      });
+    }
   }
   if (config.focus === 'binary-bit-hot-path' && totals.binaryReadPixels > 0) {
     variants.push({

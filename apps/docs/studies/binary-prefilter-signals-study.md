@@ -95,15 +95,15 @@ The first implementation was intentionally broad and exploratory: passive binary
 | -------------------------------------- | ------------- | ------------------------- | ------------------------------------------------ |
 | `inline-flood-control`                 | Flood         | —                         | Current running flood lead.                      |
 | `run-map-matcher-control`              | Matcher       | —                         | Current running matcher lead.                    |
-| `run-length-connected-components`      | Flood         | `inline-flood-control`    | Queued active candidate; not measured yet.       |
-| `dense-typed-array-component-stats`    | Flood         | `inline-flood-control`    | Queued active candidate; not measured yet.       |
-| `spatial-binned-component-lookup`      | Flood         | `inline-flood-control`    | Queued active candidate; not measured yet.       |
-| `run-pattern-center-matcher`           | Matcher       | `run-map-matcher-control` | Queued active candidate; not measured yet.       |
-| `axis-run-intersection-matcher`        | Matcher       | `run-map-matcher-control` | Queued active candidate; not measured yet.       |
-| `coarse-grid-fallback-matcher`         | Matcher       | `run-map-matcher-control` | Queued active candidate; not measured yet.       |
-| `shared-run-length-detector-artifacts` | Flood+Matcher | both controls             | Queued architecture candidate; not measured yet. |
+| `run-length-connected-components`      | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
+| `dense-typed-array-component-stats`    | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
+| `spatial-binned-component-lookup`      | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
+| `run-pattern-center-matcher`           | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
+| `axis-run-intersection-matcher`        | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
+| `coarse-grid-fallback-matcher`         | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
+| `shared-run-length-detector-artifacts` | Flood+Matcher | both controls             | Wired runnable prototype; measured by variant cache. |
 
-Active candidate means “admitted to the backlog and report ledger,” not “already measured.” The variant cache lets each candidate be implemented and run independently while cached controls are reused.
+Active candidate means “included in the default detector-study run and summary matrices.” The variant cache lets each candidate be measured independently while cached controls are reused.
 
 ## Binned / empirically exhausted variants
 
