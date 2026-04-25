@@ -56,6 +56,7 @@ export class BenchOpenTuiDashboard {
   private panels: {
     readonly header: OpenTuiText;
     readonly chart: OpenTuiPanel;
+    readonly detectorChart: OpenTuiPanel | null;
     readonly scorecard: OpenTuiPanel;
     readonly active: OpenTuiPanel;
     readonly slowest: OpenTuiPanel;
@@ -69,7 +70,9 @@ export class BenchOpenTuiDashboard {
   private renderPaused = false;
   private stopped = false;
   private refreshTimer: NodeJS.Timeout | null = null;
-  private studyTimingOffset = 0;
+  private studyViewTimingOffset = 0;
+  private studyDetectorTimingOffset = 0;
+  private focusedStudyWidget: 'views' | 'detectors' = 'views';
 
   constructor(
     private readonly dashboard: BenchDashboardModel,
@@ -160,10 +163,20 @@ export class BenchOpenTuiDashboard {
       const isStudy = this.dashboard.commandName === 'study';
       const chart = createPanel(BoxRenderable, TextRenderable, renderer, {
         id: 'chart',
-        title: isStudy ? 'Study progress' : 'Timing by outcome',
+        title: isStudy ? 'Study view timings' : 'Timing by outcome',
         accent: THEME.cyan,
         height: CHART_PANEL_ROWS,
+        ...(isStudy ? { width: '42%' } : {}),
       });
+      const detectorChart = isStudy
+        ? createPanel(BoxRenderable, TextRenderable, renderer, {
+            id: 'detector-chart',
+            title: 'Study detector timings',
+            accent: THEME.purple,
+            height: CHART_PANEL_ROWS,
+            width: '58%',
+          })
+        : null;
       const scorecard = createPanel(BoxRenderable, TextRenderable, renderer, {
         id: 'scorecard',
         title: isStudy ? 'Study events' : 'Accuracy scorecard',
@@ -229,14 +242,26 @@ export class BenchOpenTuiDashboard {
       footerBox.add(footer);
 
       root.add(headerBox);
-      root.add(chart.box);
+      if (detectorChart) {
+        const chartRow = new BoxRenderable(renderer, {
+          id: 'bench-dashboard-study-chart-row',
+          width: '100%',
+          height: CHART_PANEL_ROWS,
+          flexDirection: 'row',
+        });
+        chartRow.add(chart.box);
+        chartRow.add(detectorChart.box);
+        root.add(chartRow);
+      } else {
+        root.add(chart.box);
+      }
       root.add(scorecard.box);
       root.add(tablesRow);
       root.add(footerBox);
       renderer.root.add(root);
       renderer.start();
 
-      this.panels = { header, chart, scorecard, active, slowest, recent, footer };
+      this.panels = { header, chart, detectorChart, scorecard, active, slowest, recent, footer };
       this.render();
     } catch (error) {
       this.cleanup();
@@ -258,12 +283,16 @@ export class BenchOpenTuiDashboard {
         this.renderNow();
         return;
       }
+      if (this.dashboard.commandName === 'study' && isTabKey(key)) {
+        this.focusNextStudyWidget();
+        return;
+      }
       if (this.dashboard.commandName === 'study' && isScrollDownKey(key)) {
-        this.scrollStudyTimings(1);
+        this.scrollFocusedStudyWidget(1);
         return;
       }
       if (this.dashboard.commandName === 'study' && isScrollUpKey(key)) {
-        this.scrollStudyTimings(-1);
+        this.scrollFocusedStudyWidget(-1);
         return;
       }
       if ((key.name === 'c' && key.ctrl) || key.sequence === '\u0003') {
@@ -285,9 +314,26 @@ export class BenchOpenTuiDashboard {
     this.onQuit();
   }
 
-  private scrollStudyTimings(delta: number): void {
+  private focusNextStudyWidget(): void {
+    this.focusedStudyWidget = this.focusedStudyWidget === 'views' ? 'detectors' : 'views';
+    this.renderNow();
+  }
+
+  private scrollFocusedStudyWidget(delta: number): void {
+    if (this.focusedStudyWidget === 'detectors') {
+      const maxOffset = Math.max(0, this.dashboard.studyDetectorTimings.size - 1);
+      this.studyDetectorTimingOffset = Math.min(
+        maxOffset,
+        Math.max(0, this.studyDetectorTimingOffset + delta),
+      );
+      this.renderNow();
+      return;
+    }
     const maxOffset = Math.max(0, this.dashboard.studyTimings.size - 1);
-    this.studyTimingOffset = Math.min(maxOffset, Math.max(0, this.studyTimingOffset + delta));
+    this.studyViewTimingOffset = Math.min(
+      maxOffset,
+      Math.max(0, this.studyViewTimingOffset + delta),
+    );
     this.renderNow();
   }
 
@@ -315,6 +361,13 @@ export class BenchOpenTuiDashboard {
     this.renderer?.requestRender();
   }
 
+  private updateStudyFocusBorders(panels: NonNullable<BenchOpenTuiDashboard['panels']>): void {
+    if (this.dashboard.commandName !== 'study' || !panels.detectorChart) return;
+    panels.chart.box.borderColor = this.focusedStudyWidget === 'views' ? THEME.white : THEME.cyan;
+    panels.detectorChart.box.borderColor =
+      this.focusedStudyWidget === 'detectors' ? THEME.white : THEME.purple;
+  }
+
   private render(force = false): void {
     const panels = this.panels;
     if (!panels || this.stopped || (this.renderPaused && !force)) return;
@@ -322,6 +375,8 @@ export class BenchOpenTuiDashboard {
     const width = process.stdout.columns ?? process.stderr.columns ?? 120;
     const height = process.stdout.rows ?? process.stderr.rows ?? 40;
     const contentWidth = Math.max(36, width - ROOT_HORIZONTAL_PADDING);
+    const studyViewChartWidth = Math.max(34, Math.floor(contentWidth * 0.42) - 4);
+    const studyDetectorChartWidth = Math.max(40, contentWidth - studyViewChartWidth - 8);
     const leftWidth = Math.max(34, Math.floor(contentWidth * LEFT_COLUMN_RATIO) - 4);
     const recentWidth = Math.max(40, contentWidth - leftWidth - 8);
     const fallbackTableRows = Math.max(4, Math.floor((height - TABLE_LAYOUT_RESERVED_ROWS) / 2));
@@ -337,13 +392,15 @@ export class BenchOpenTuiDashboard {
     );
 
     panels.header.content = headerText(this.dashboard);
+    this.updateStudyFocusBorders(panels);
     const chartBodyRows = panelBodyRows(CHART_PANEL_ROWS);
     panels.chart.body.content = panelBody(
       this.dashboard.commandName === 'study'
-        ? renderStudyProgress(this.dashboard, {
-            width: contentWidth,
+        ? renderStudyViewTimings(this.dashboard, {
+            width: studyViewChartWidth,
             maxRows: chartBodyRows,
-            offset: this.studyTimingOffset,
+            offset: this.studyViewTimingOffset,
+            focused: this.focusedStudyWidget === 'views',
           })
         : renderTimingChart(this.dashboard, {
             width: contentWidth,
@@ -351,6 +408,17 @@ export class BenchOpenTuiDashboard {
           }),
       chartBodyRows,
     );
+    if (panels.detectorChart) {
+      panels.detectorChart.body.content = panelBody(
+        renderStudyDetectorTimings(this.dashboard, {
+          width: studyDetectorChartWidth,
+          maxRows: chartBodyRows,
+          offset: this.studyDetectorTimingOffset,
+          focused: this.focusedStudyWidget === 'detectors',
+        }),
+        chartBodyRows,
+      );
+    }
     panels.scorecard.body.content = panelBody(
       this.dashboard.commandName === 'study'
         ? renderStudyEvents(this.dashboard, { width: contentWidth })
@@ -373,10 +441,13 @@ export class BenchOpenTuiDashboard {
       renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
       recentRows + 1,
     );
-    panels.footer.content = `${renderRunFooter(this.dashboard)} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ' | ↑/↓ j/k=scroll timings' : ''}`;
+    panels.footer.content = `${renderRunFooter(this.dashboard)} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | ↑/↓ j/k=scroll focused` : ''}`;
     this.renderer?.requestRender();
   }
 }
+
+const isTabKey = (key: OpenTuiKeyEvent): boolean =>
+  (key.name === 'tab' || key.sequence === '\t') && !key.ctrl && !key.meta;
 
 const isScrollDownKey = (key: OpenTuiKeyEvent): boolean =>
   (key.name === 'down' || key.name === 'j' || key.sequence === 'j') && !key.ctrl && !key.meta;
@@ -394,11 +465,12 @@ const createPanel = (
     readonly accent: string;
     readonly height?: number;
     readonly flexGrow?: number;
+    readonly width?: number | 'auto' | `${number}%`;
   },
 ): OpenTuiPanel => {
   const boxOptions = {
     id: `bench-dashboard-${options.id}-panel`,
-    width: '100%',
+    width: options.width ?? '100%',
     flexShrink: 1,
     flexDirection: 'column',
     border: true,
@@ -451,53 +523,69 @@ const panelBody = (lines: readonly string[], maxRows: number): string => {
   return lines.slice(1, maxRows + 1).join('\n');
 };
 
-const renderStudyProgress = (
+const renderStudyViewTimings = (
   dashboard: BenchDashboardModel,
-  options: { readonly width: number; readonly maxRows: number; readonly offset: number },
+  options: {
+    readonly width: number;
+    readonly maxRows: number;
+    readonly offset: number;
+    readonly focused: boolean;
+  },
 ): readonly string[] => {
   const cache = cacheTotals(dashboard);
   const lines = [
-    'study timing by view/path',
+    'study view timings',
     truncateLine(
-      `phase=${dashboard.stage} workers=${dashboard.workerCount || '-'} a/b/d=candidates c=control ${dashboard.message}`,
+      `${focusBadge(options.focused)} phase=${dashboard.stage} workers=${dashboard.workerCount || '-'} ${dashboard.message}`,
       options.width,
     ),
     truncateLine(
-      `assets ${dashboard.preparedAssets}/${dashboard.assetCount} units ${dashboard.completedJobs}/${dashboard.totalJobs} active=${dashboard.activeScans.size} cache=${dashboard.cacheEnabled ? 'on' : 'off'} h/m/w=${cache.hits}/${cache.misses}/${cache.writes}`,
+      `assets ${dashboard.preparedAssets}/${dashboard.assetCount} units ${dashboard.completedJobs}/${dashboard.totalJobs} active=${dashboard.activeScans.size}`,
+      options.width,
+    ),
+    truncateLine(
+      `cache=${dashboard.cacheEnabled ? 'on' : 'off'} h/m/w=${cache.hits}/${cache.misses}/${cache.writes}`,
       options.width,
     ),
   ];
   const chartRows = Math.max(4, options.maxRows - lines.length);
-  lines.push(...renderSideBySideStudyCharts(dashboard, { ...options, maxRows: chartRows }));
+  lines.push(
+    ...renderStudyTimingBars('views', [...dashboard.studyTimings.values()], {
+      width: options.width,
+      maxRows: chartRows,
+      offset: options.offset,
+      maxLabelWidth: 30,
+    }),
+  );
   return lines;
 };
 
-const renderSideBySideStudyCharts = (
+const renderStudyDetectorTimings = (
   dashboard: BenchDashboardModel,
-  options: { readonly width: number; readonly maxRows: number; readonly offset: number },
+  options: {
+    readonly width: number;
+    readonly maxRows: number;
+    readonly offset: number;
+    readonly focused: boolean;
+  },
 ): readonly string[] => {
-  const gap = 3;
-  const leftWidth = Math.floor((options.width - gap) * 0.42);
-  const rightWidth = options.width - gap - leftWidth;
-  const left = renderStudyTimingBars('views', [...dashboard.studyTimings.values()], {
-    width: leftWidth,
-    maxRows: options.maxRows,
-    offset: options.offset,
-    maxLabelWidth: 30,
-  });
-  const right = renderStudyTimingBars('detectors', [...dashboard.studyDetectorTimings.values()], {
-    width: rightWidth,
-    maxRows: options.maxRows,
-    offset: options.offset,
-    maxLabelWidth: 44,
-  });
-  const height = Math.max(left.length, right.length);
-  return Array.from({ length: height }, (_, index) => {
-    const leftLine = padStudyCell(left[index] ?? '', leftWidth);
-    const rightLine = right[index] ?? '';
-    return truncateLine(`${leftLine}${' '.repeat(gap)}${rightLine}`, options.width);
-  });
+  const lines = [
+    'study detector timings',
+    truncateLine(`${focusBadge(options.focused)} a/b/d=candidates c=control`, options.width),
+  ];
+  const chartRows = Math.max(4, options.maxRows - lines.length);
+  lines.push(
+    ...renderStudyTimingBars('detectors', [...dashboard.studyDetectorTimings.values()], {
+      width: options.width,
+      maxRows: chartRows,
+      offset: options.offset,
+      maxLabelWidth: 44,
+    }),
+  );
+  return lines;
 };
+
+const focusBadge = (focused: boolean): string => (focused ? '[focus]' : '[tab]');
 
 const renderStudyTimingBars = (
   title: string,
