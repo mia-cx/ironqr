@@ -107,7 +107,7 @@ export const listStudyPlugins = (): readonly StudyPlugin[] => createDefaultStudy
 
 const defaultStudyWorkerCount = (): number => {
   const available = typeof os.availableParallelism === 'function' ? os.availableParallelism() : 4;
-  return Math.max(1, Math.floor(available * 0.9));
+  return Math.max(1, Math.min(available - 1, Math.floor(available * 0.9)));
 };
 
 const resolveStudyWorkerCount = (requested?: number): number => {
