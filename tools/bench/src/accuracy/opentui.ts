@@ -350,8 +350,17 @@ export class BenchOpenTuiDashboard {
   }
 
   private focusNextStudyWidget(): void {
+    if (!this.hasStudyViewTimings()) {
+      this.focusedStudyWidget = 'detectors';
+      this.renderNow();
+      return;
+    }
     this.focusedStudyWidget = this.focusedStudyWidget === 'views' ? 'detectors' : 'views';
     this.renderNow();
+  }
+
+  private hasStudyViewTimings(): boolean {
+    return this.dashboard.studyTimings.size > 0;
   }
 
   private scrollFocusedStudyWidget(delta: number, singleRow: boolean): void {
@@ -446,8 +455,14 @@ export class BenchOpenTuiDashboard {
     const width = process.stdout.columns ?? process.stderr.columns ?? 120;
     const height = process.stdout.rows ?? process.stderr.rows ?? 40;
     const contentWidth = Math.max(36, width - ROOT_HORIZONTAL_PADDING);
+    const showStudyViewChart = this.dashboard.commandName !== 'study' || this.hasStudyViewTimings();
+    if (this.dashboard.commandName === 'study' && !showStudyViewChart) {
+      this.focusedStudyWidget = 'detectors';
+    }
     const studyViewChartWidth = Math.max(34, Math.floor(contentWidth * 0.42) - 4);
-    const studyDetectorChartWidth = Math.max(40, contentWidth - studyViewChartWidth - 8);
+    const studyDetectorChartWidth = showStudyViewChart
+      ? Math.max(40, contentWidth - studyViewChartWidth - 8)
+      : Math.max(40, contentWidth - 4);
     const leftWidth = Math.max(34, Math.floor(contentWidth * LEFT_COLUMN_RATIO) - 4);
     const recentWidth = Math.max(40, contentWidth - leftWidth - 8);
     const fallbackTableRows = Math.max(4, Math.floor((height - TABLE_LAYOUT_RESERVED_ROWS) / 2));
@@ -456,23 +471,30 @@ export class BenchOpenTuiDashboard {
     const recentRows = fallbackRecentRows;
 
     panels.header.content = headerText(this.dashboard);
+    if (this.dashboard.commandName === 'study' && panels.detectorChart) {
+      panels.chart.box.visible = showStudyViewChart;
+      panels.chart.box.width = showStudyViewChart ? '42%' : 0;
+      panels.detectorChart.box.width = showStudyViewChart ? '58%' : '100%';
+    }
     this.updateStudyFocusBorders(panels);
     const chartBodyRows = panelBodyRows(CHART_PANEL_ROWS);
-    panels.chart.body.content = panelBody(
-      this.dashboard.commandName === 'study'
-        ? renderStudyViewTimings(this.dashboard, {
-            width: studyViewChartWidth,
-            maxRows: chartBodyRows,
-            offset: this.studyViewTimingOffset,
-            focused: this.focusedStudyWidget === 'views',
-            filters: this.studyFilters.views,
-          })
-        : renderTimingChart(this.dashboard, {
-            width: contentWidth,
-            barHeight: height < 34 ? 4 : 6,
-          }),
-      chartBodyRows,
-    );
+    panels.chart.body.content = showStudyViewChart
+      ? panelBody(
+          this.dashboard.commandName === 'study'
+            ? renderStudyViewTimings(this.dashboard, {
+                width: studyViewChartWidth,
+                maxRows: chartBodyRows,
+                offset: this.studyViewTimingOffset,
+                focused: this.focusedStudyWidget === 'views',
+                filters: this.studyFilters.views,
+              })
+            : renderTimingChart(this.dashboard, {
+                width: contentWidth,
+                barHeight: height < 34 ? 4 : 6,
+              }),
+          chartBodyRows,
+        )
+      : '';
     if (panels.detectorChart) {
       panels.detectorChart.body.content = panelBody(
         renderStudyDetectorTimings(this.dashboard, {
@@ -518,7 +540,10 @@ export class BenchOpenTuiDashboard {
       this.dashboard.commandName === 'study'
         ? renderStudyFooterStatus(this.dashboard)
         : renderRunFooter(this.dashboard);
-    panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? ` | tab=focus ${this.focusedStudyWidget} | f=filters | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
+    const focusHint = this.hasStudyViewTimings()
+      ? ` | tab=focus ${this.focusedStudyWidget}`
+      : ' | focus detectors';
+    panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? `${focusHint} | f=filters | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
     this.renderer?.requestRender();
   }
 }
