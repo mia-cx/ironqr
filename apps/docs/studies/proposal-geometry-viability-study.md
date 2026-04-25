@@ -31,6 +31,9 @@ Variants:
 | `aspect-reject-conservative` | Hard-reject only extreme opposite aspect contradictions. | Can obvious aspect contradictions be filtered safely? |
 | `scale-consistency-penalty` | Penalize aligned finder pairs with inconsistent module/h/v scale estimates. | Does local scale consistency provide useful ranking signal? |
 | `aspect-scale-penalty` | Combined aspect and scale penalty. | Do the two realism signals compose? |
+| `timing-corridor-penalty` | Penalize triples whose inferred timing corridors do not show alternating structure. | Does direct binary-pixel timing evidence improve frontier realism? |
+| `timing-corridor-reject-conservative` | Hard-reject only strongly unsupported timing corridors. | Can timing corridors safely justify proposal rejection? |
+| `aspect-timing-penalty` | Combined aspect and timing-corridor penalty. | Do local aspect and direct timing evidence compose? |
 
 Default corpus: all approved assets, all default binary views.
 
@@ -69,7 +72,7 @@ triple/proposal reduction is meaningful
 follow-up decode confirmation accepts the reduced frontier
 ```
 
-Do not canonize semantic filtering from proposal-only evidence if proposal signatures change. Use this study to select decode-confirmation candidates.
+Do not canonize semantic filtering from proposal-only evidence if proposal signatures change. Timing-corridor hard rejection can be treated as stronger proposal-level justification than aspect-only rejection, but still needs decode confirmation before production use.
 
 ## Results
 
@@ -110,7 +113,7 @@ asset-53cd380c4515b85b -NEG: -149 proposals, -347 triples
 
 ## Interpretation plan
 
-First compare asset-level proposal coverage against `baseline`. No variant lost a positive asset, so all remain viable for follow-up. The soft penalties are ranking/frontier-shape candidates: they changed proposal signatures on many assets but did not reduce count. `aspect-reject-conservative` is the only variant that materially reduces triples/proposals, but because it removes triples it requires decode confirmation before production use.
+First compare asset-level proposal coverage against `baseline`. Any variant that loses a positive asset is binned. Then inspect proposal and triple count deltas to distinguish useful frontier reduction from harmless reshuffling. Timing-corridor variants are the strongest proposal-level rejection evidence because they sample the expected alternating timing structure between aligned finders. Soft penalties with zero positive loss should move to decode confirmation; conservative hard rejection needs stronger evidence because it removes triples.
 
 The timing data should not drive promotion: semantic penalties add triple-scoring work (`+41ms` to `+84ms` triple assembly), while scan-time decreases are dominated by detector/view timing variance from rerunning each variant.
 

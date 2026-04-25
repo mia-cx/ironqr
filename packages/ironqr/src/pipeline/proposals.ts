@@ -241,7 +241,10 @@ export type ProposalGeometryVariant =
   | 'aspect-penalty'
   | 'aspect-reject-conservative'
   | 'scale-consistency-penalty'
-  | 'aspect-scale-penalty';
+  | 'aspect-scale-penalty'
+  | 'timing-corridor-penalty'
+  | 'timing-corridor-reject-conservative'
+  | 'aspect-timing-penalty';
 
 /**
  * Per-view proposal-generation options.
@@ -455,6 +458,7 @@ const generateProposalsForView = (
           MAX_TRIPLE_COMBINATIONS,
           assemblyVariant,
           geometryVariant,
+          binaryView,
         );
   const tripleAssemblyDurationMs = nowMs() - tripleAssemblyStartedAt;
 
@@ -572,12 +576,14 @@ const assembleFinderTriples = (
   maxTriples: number,
   variant: ProposalAssemblyVariant = DEFAULT_PROPOSAL_ASSEMBLY_VARIANT,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): readonly FinderTripleCandidate[] => {
   return buildFinderTriples(
     evidenceForAssemblyVariant(evidence, variant),
     maxTriples,
     variant,
     geometryVariant,
+    binaryView,
   );
 };
 
@@ -786,26 +792,60 @@ const buildFinderTriples = (
   maxCombinations: number,
   variant: ProposalAssemblyVariant = DEFAULT_PROPOSAL_ASSEMBLY_VARIANT,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): readonly FinderTripleCandidate[] => {
   if (variant === 'streaming-topk') {
-    return buildFinderTriplesStreamingTopK(evidence, maxCombinations, geometryVariant);
+    return buildFinderTriplesStreamingTopK(
+      evidence,
+      maxCombinations,
+      geometryVariant,
+      false,
+      binaryView,
+    );
   }
   if (variant === 'fixed-array-topk') {
-    return buildFinderTriplesFixedArrayTopK(evidence, maxCombinations, geometryVariant);
+    return buildFinderTriplesFixedArrayTopK(evidence, maxCombinations, geometryVariant, binaryView);
   }
   if (variant === 'min-heap-topk') {
-    return buildFinderTriplesMinHeapTopK(evidence, maxCombinations, geometryVariant);
+    return buildFinderTriplesMinHeapTopK(evidence, maxCombinations, geometryVariant, binaryView);
   }
   if (variant === 'distance-matrix-sort-all') {
-    return buildFinderTriplesBySorting(evidence, maxCombinations, geometryVariant, true);
+    return buildFinderTriplesBySorting(
+      evidence,
+      maxCombinations,
+      geometryVariant,
+      true,
+      false,
+      binaryView,
+    );
   }
   if (variant === 'distance-matrix-streaming') {
-    return buildFinderTriplesStreamingTopK(evidence, maxCombinations, geometryVariant, true);
+    return buildFinderTriplesStreamingTopK(
+      evidence,
+      maxCombinations,
+      geometryVariant,
+      true,
+      binaryView,
+    );
   }
   if (variant === 'no-allocation-score') {
-    return buildFinderTriplesBySorting(evidence, maxCombinations, geometryVariant, false, true);
+    return buildFinderTriplesBySorting(
+      evidence,
+      maxCombinations,
+      geometryVariant,
+      false,
+      true,
+      binaryView,
+    );
   }
-  return buildFinderTriplesBySorting(evidence, maxCombinations, geometryVariant);
+  return buildFinderTriplesBySorting(
+    evidence,
+    maxCombinations,
+    geometryVariant,
+    false,
+    false,
+    binaryView,
+  );
 };
 
 const buildFinderTriplesBySorting = (
@@ -814,11 +854,12 @@ const buildFinderTriplesBySorting = (
   geometryVariant: ProposalGeometryVariant = 'baseline',
   useDistanceMatrix = false,
   useNoAllocationScore = false,
+  binaryView?: BinaryView,
 ): readonly FinderTripleCandidate[] => {
   const scored: FinderTripleCandidate[] = [];
   forEachScoredTriple(
     evidence,
-    { geometryVariant, useDistanceMatrix, useNoAllocationScore },
+    { geometryVariant, useDistanceMatrix, useNoAllocationScore, binaryView },
     (candidate) => scored.push(candidate),
   );
   return scored.sort(compareTripleCandidates).slice(0, maxCombinations);
@@ -829,9 +870,10 @@ const buildFinderTriplesStreamingTopK = (
   maxCombinations: number,
   geometryVariant: ProposalGeometryVariant = 'baseline',
   useDistanceMatrix = false,
+  binaryView?: BinaryView,
 ): readonly FinderTripleCandidate[] => {
   const top: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, { geometryVariant, useDistanceMatrix }, (candidate) =>
+  forEachScoredTriple(evidence, { geometryVariant, useDistanceMatrix, binaryView }, (candidate) =>
     insertTopTripleCandidate(top, candidate, maxCombinations),
   );
   return top;
@@ -841,10 +883,11 @@ const buildFinderTriplesFixedArrayTopK = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): readonly FinderTripleCandidate[] => {
   const top = new Array<FinderTripleCandidate | undefined>(maxCombinations);
   let topLength = 0;
-  forEachScoredTriple(evidence, { geometryVariant }, (candidate) => {
+  forEachScoredTriple(evidence, { geometryVariant, binaryView }, (candidate) => {
     if (topLength === 0) {
       top[0] = candidate;
       topLength = 1;
@@ -869,9 +912,10 @@ const buildFinderTriplesMinHeapTopK = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): readonly FinderTripleCandidate[] => {
   const heap: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, { geometryVariant }, (candidate) => {
+  forEachScoredTriple(evidence, { geometryVariant, binaryView }, (candidate) => {
     if (heap.length < maxCombinations) {
       heapPushWorstFirst(heap, candidate);
       return;
@@ -890,6 +934,7 @@ const forEachScoredTriple = (
     readonly geometryVariant?: ProposalGeometryVariant;
     readonly useDistanceMatrix?: boolean;
     readonly useNoAllocationScore?: boolean;
+    readonly binaryView?: BinaryView | undefined;
   },
   visit: (candidate: FinderTripleCandidate) => void,
 ): void => {
@@ -928,6 +973,7 @@ const scoreTripleForVariant = (
     readonly geometryVariant?: ProposalGeometryVariant;
     readonly useDistanceMatrix?: boolean;
     readonly useNoAllocationScore?: boolean;
+    readonly binaryView?: BinaryView | undefined;
   },
 ): number | null => {
   const geometryVariant = options.geometryVariant ?? 'baseline';
@@ -941,12 +987,13 @@ const scoreTripleForVariant = (
       distances[distanceMatrixIndex(i, k, count)]!,
       distances[distanceMatrixIndex(j, k, count)]!,
       geometryVariant,
+      options.binaryView,
     );
   }
   if (options.useNoAllocationScore) {
-    return scoreTripleGeometryNoAllocation(a, b, c, geometryVariant);
+    return scoreTripleGeometryNoAllocation(a, b, c, geometryVariant, options.binaryView);
   }
-  return scoreTripleGeometry(a, b, c, geometryVariant);
+  return scoreTripleGeometry(a, b, c, geometryVariant, options.binaryView);
 };
 
 const insertTopTripleCandidate = (
@@ -1038,6 +1085,7 @@ const scoreTripleGeometry = (
   b: FinderEvidence,
   c: FinderEvidence,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): number | null => {
   const lengths = [
     { left: a, right: b, length: distance(a, b), opposite: c },
@@ -1052,6 +1100,7 @@ const scoreTripleGeometry = (
     lengths[1]!,
     lengths[2]!,
     geometryVariant,
+    binaryView,
   );
 };
 
@@ -1060,6 +1109,7 @@ const scoreTripleGeometryNoAllocation = (
   b: FinderEvidence,
   c: FinderEvidence,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): number | null =>
   scoreTripleGeometryFromLengths(
     a,
@@ -1069,6 +1119,7 @@ const scoreTripleGeometryNoAllocation = (
     distance(a, c),
     distance(b, c),
     geometryVariant,
+    binaryView,
   );
 
 const scoreTripleGeometryFromLengths = (
@@ -1079,23 +1130,24 @@ const scoreTripleGeometryFromLengths = (
   ac: number,
   bc: number,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): number | null => {
   const abSide = { left: a, right: b, length: ab, opposite: c } satisfies TripleSide;
   const acSide = { left: a, right: c, length: ac, opposite: b } satisfies TripleSide;
   const bcSide = { left: b, right: c, length: bc, opposite: a } satisfies TripleSide;
   if (ab >= ac && ab >= bc) {
     return ac >= bc
-      ? scoreTripleGeometryFromSides(a, b, c, abSide, acSide, bcSide, geometryVariant)
-      : scoreTripleGeometryFromSides(a, b, c, abSide, bcSide, acSide, geometryVariant);
+      ? scoreTripleGeometryFromSides(a, b, c, abSide, acSide, bcSide, geometryVariant, binaryView)
+      : scoreTripleGeometryFromSides(a, b, c, abSide, bcSide, acSide, geometryVariant, binaryView);
   }
   if (ac >= bc) {
     return ab >= bc
-      ? scoreTripleGeometryFromSides(a, b, c, acSide, abSide, bcSide, geometryVariant)
-      : scoreTripleGeometryFromSides(a, b, c, acSide, bcSide, abSide, geometryVariant);
+      ? scoreTripleGeometryFromSides(a, b, c, acSide, abSide, bcSide, geometryVariant, binaryView)
+      : scoreTripleGeometryFromSides(a, b, c, acSide, bcSide, abSide, geometryVariant, binaryView);
   }
   return ab >= ac
-    ? scoreTripleGeometryFromSides(a, b, c, bcSide, abSide, acSide, geometryVariant)
-    : scoreTripleGeometryFromSides(a, b, c, bcSide, acSide, abSide, geometryVariant);
+    ? scoreTripleGeometryFromSides(a, b, c, bcSide, abSide, acSide, geometryVariant, binaryView)
+    : scoreTripleGeometryFromSides(a, b, c, bcSide, acSide, abSide, geometryVariant, binaryView);
 };
 
 const scoreTripleGeometryFromSides = (
@@ -1106,6 +1158,7 @@ const scoreTripleGeometryFromSides = (
   leg1: TripleSide,
   leg2: TripleSide,
   geometryVariant: ProposalGeometryVariant = 'baseline',
+  binaryView?: BinaryView,
 ): number | null => {
   const topLeft = hyp.opposite;
   const armA = leg1.left === topLeft || leg1.right === topLeft ? leg1 : leg2;
@@ -1123,7 +1176,13 @@ const scoreTripleGeometryFromSides = (
   const version = Math.max(1, Math.min(40, Math.round((averageLeg / averageModule - 10) / 4)));
   const expectedLeg = averageModule * (version * 4 + 10);
   const versionPlausibility = 1 - Math.abs(averageLeg - expectedLeg) / Math.max(1, expectedLeg);
-  const viabilityAdjustment = geometryViabilityAdjustment(topLeft, armA, armB, geometryVariant);
+  const viabilityAdjustment = geometryViabilityAdjustment(
+    topLeft,
+    armA,
+    armB,
+    geometryVariant,
+    binaryView,
+  );
   if (viabilityAdjustment === null) return null;
   return asymmetry + pythagorean + versionPlausibility + (2 - sizeRatio) + viabilityAdjustment;
 };
@@ -1133,6 +1192,7 @@ const geometryViabilityAdjustment = (
   armA: TripleSide,
   armB: TripleSide,
   variant: ProposalGeometryVariant,
+  binaryView?: BinaryView,
 ): number | null => {
   if (variant === 'baseline') return 0;
   const armAEnd = oppositeSideEndpoint(armA, topLeft);
@@ -1141,14 +1201,21 @@ const geometryViabilityAdjustment = (
     aspectCompatibilityPenalty(topLeft, armAEnd) + aspectCompatibilityPenalty(topLeft, armBEnd);
   const scalePenalty =
     scaleConsistencyPenalty(topLeft, armAEnd) + scaleConsistencyPenalty(topLeft, armBEnd);
+  const timingPenalty =
+    binaryView === undefined ? 0 : timingCorridorPenalty(binaryView, topLeft, armAEnd, armBEnd);
   if (variant === 'aspect-reject-conservative') {
     return isExtremeAspectContradiction(topLeft, armAEnd) ||
       isExtremeAspectContradiction(topLeft, armBEnd)
       ? null
       : 0;
   }
+  if (variant === 'timing-corridor-reject-conservative') {
+    return timingPenalty > 0.9 ? null : -timingPenalty;
+  }
   if (variant === 'aspect-penalty') return -aspectPenalty;
   if (variant === 'scale-consistency-penalty') return -scalePenalty;
+  if (variant === 'timing-corridor-penalty') return -timingPenalty;
+  if (variant === 'aspect-timing-penalty') return -(aspectPenalty + timingPenalty);
   return -(aspectPenalty + scalePenalty);
 };
 
@@ -1187,6 +1254,59 @@ const scaleConsistencyPenalty = (left: FinderEvidence, right: FinderEvidence): n
     Math.log(Math.max(1e-6, left.vModuleSize) / Math.max(1e-6, right.vModuleSize)),
   );
   return Math.min(1.2, (modulePenalty + horizontalPenalty + verticalPenalty) / 6);
+};
+
+const timingCorridorPenalty = (
+  binaryView: BinaryView,
+  topLeft: FinderEvidence,
+  armAEnd: FinderEvidence,
+  armBEnd: FinderEvidence,
+): number => {
+  const moduleSize = Math.max(
+    1,
+    (topLeft.moduleSize + armAEnd.moduleSize + armBEnd.moduleSize) / 3,
+  );
+  const armAScore = sampleTimingCorridor(binaryView, topLeft, armAEnd, armBEnd, moduleSize);
+  const armBScore = sampleTimingCorridor(binaryView, topLeft, armBEnd, armAEnd, moduleSize);
+  return Math.max(0, 1 - (armAScore + armBScore) / 2);
+};
+
+const sampleTimingCorridor = (
+  binaryView: BinaryView,
+  startFinder: FinderEvidence,
+  endFinder: FinderEvidence,
+  interiorFinder: FinderEvidence,
+  moduleSize: number,
+): number => {
+  const along = normalise(
+    endFinder.centerX - startFinder.centerX,
+    endFinder.centerY - startFinder.centerY,
+  );
+  const inward = normalise(
+    interiorFinder.centerX - startFinder.centerX,
+    interiorFinder.centerY - startFinder.centerY,
+  );
+  if (along === null || inward === null) return 0;
+  const distanceBetweenFinders = distance(startFinder, endFinder);
+  const sampleCount = Math.floor(distanceBetweenFinders / moduleSize) - 8;
+  if (sampleCount < 5) return 0;
+  let transitions = 0;
+  let samples = 0;
+  let previousDark: boolean | null = null;
+  for (let index = 0; index < sampleCount; index += 1) {
+    const offset = (index + 4) * moduleSize;
+    const pointX = startFinder.centerX + along.x * offset + inward.x * moduleSize * 3;
+    const pointY = startFinder.centerY + along.y * offset + inward.y * moduleSize * 3;
+    const pixel = sampleBinary(binaryView, pointX, pointY);
+    if (pixel === undefined) continue;
+    const dark = pixel === 0;
+    if (previousDark !== null && dark !== previousDark) transitions += 1;
+    previousDark = dark;
+    samples += 1;
+  }
+  if (samples < 5) return 0;
+  const transitionRate = transitions / Math.max(1, samples - 1);
+  return Math.max(0, 1 - Math.abs(transitionRate - 0.75) / 0.75);
 };
 
 export const detectRowScanFinders = (

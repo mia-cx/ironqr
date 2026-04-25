@@ -20,6 +20,9 @@ const VARIANTS = [
   'aspect-reject-conservative',
   'scale-consistency-penalty',
   'aspect-scale-penalty',
+  'timing-corridor-penalty',
+  'timing-corridor-reject-conservative',
+  'aspect-timing-penalty',
 ] as const satisfies readonly ProposalGeometryVariant[];
 
 type DetectorPolicyId = 'no-flood' | 'row-only' | 'matcher-only';
