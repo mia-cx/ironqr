@@ -3,11 +3,20 @@ import type { BenchDashboardModel, RecentScan, SlowScan } from './model.js';
 
 export type StudySlowestMetric = 'avg' | 'p85' | 'p95' | 'p98' | 'p99' | 'max';
 
+export interface StudyTimingFilters {
+  readonly families: ReadonlySet<string>;
+  readonly scalars: ReadonlySet<string>;
+  readonly thresholds: ReadonlySet<string>;
+  readonly polarities: ReadonlySet<string>;
+  readonly cache: ReadonlySet<string>;
+}
+
 export interface TableWidgetOptions {
   readonly width: number;
   readonly nowMs?: number;
   readonly maxRows?: number;
   readonly studySlowestMetric?: StudySlowestMetric;
+  readonly studyTimingFilters?: StudyTimingFilters;
 }
 
 export const renderActiveWorkers = (
@@ -59,6 +68,7 @@ export const renderSlowestFreshScans = (
   if (model.commandName === 'study') {
     const metric = options.studySlowestMetric ?? 'p95';
     const studyRows = [...model.studyDetectorTimings.values(), ...model.studyTimings.values()]
+      .filter((row) => matchesStudyTimingFilters(row, options.studyTimingFilters))
       .sort((left, right) => studyTimingMetric(right, metric) - studyTimingMetric(left, metric))
       .slice(0, normalizeMaxRows(options.maxRows, 8));
     if (studyRows.length === 0) {
@@ -126,6 +136,54 @@ export const renderSideBySide = (
     const rightLine = truncate(right[index] ?? '', rightWidth);
     return `${padRight(leftLine, leftWidth)}${' '.repeat(gap)}${rightLine}`;
   });
+};
+
+const matchesStudyTimingFilters = (
+  row: { readonly id: string; readonly count: number; readonly cachedCount: number },
+  filters: StudyTimingFilters | undefined,
+): boolean => {
+  if (!filters) return true;
+  const parts = parseStudyTimingId(row.id);
+  return (
+    matchesFilter(filters.families, parts.family) &&
+    matchesFilter(filters.scalars, parts.scalar) &&
+    matchesFilter(filters.thresholds, parts.threshold) &&
+    matchesFilter(filters.polarities, parts.polarity) &&
+    matchesCacheFilter(filters.cache, row)
+  );
+};
+
+const parseStudyTimingId = (
+  id: string,
+): {
+  readonly family: string;
+  readonly scalar: string;
+  readonly threshold: string;
+  readonly polarity: string;
+} => {
+  const parts = id.split(':');
+  return {
+    family: parts.length >= 5 ? (parts[1] ?? '') : (parts[0] ?? ''),
+    scalar: parts.at(-3) ?? '',
+    threshold: parts.at(-2) ?? '',
+    polarity: parts.at(-1) ?? '',
+  };
+};
+
+const matchesFilter = (selected: ReadonlySet<string>, value: string): boolean =>
+  selected.size === 0 || selected.has(value);
+
+const matchesCacheFilter = (
+  selected: ReadonlySet<string>,
+  row: { readonly count: number; readonly cachedCount: number },
+): boolean => {
+  if (selected.size === 0) return true;
+  const fresh = row.count - row.cachedCount;
+  const states = new Set<string>();
+  if (fresh > 0) states.add('fresh');
+  if (row.cachedCount > 0) states.add('cached');
+  if (fresh > 0 && row.cachedCount > 0) states.add('mixed');
+  return [...selected].some((entry) => states.has(entry));
 };
 
 const studyTimingMetric = (

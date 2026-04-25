@@ -673,6 +673,9 @@ export class BenchOpenTuiDashboard {
         width: leftWidth,
         maxRows: tableRows,
         studySlowestMetric: this.studySlowestMetric,
+        ...(this.dashboard.commandName === 'study'
+          ? { studyTimingFilters: this.studyFilters[this.focusedStudyWidget] }
+          : {}),
       }),
       tableRows + 1,
     );
