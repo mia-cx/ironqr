@@ -1311,10 +1311,10 @@ const ROW_CANDIDATES = [
   },
 ] as const satisfies readonly { id: RowScanVariant; note: string }[];
 
-const ACTIVE_ROW_CANDIDATES: readonly (typeof ROW_CANDIDATES)[number][] = ROW_CANDIDATES;
-const ACTIVE_FLOOD_FAMILY = false;
-const ACTIVE_MATCHER_FAMILY = false;
-const ACTIVE_DEDUPE_FAMILY = false;
+const ACTIVE_ROW_CANDIDATES: readonly (typeof ROW_CANDIDATES)[number][] = [];
+const ACTIVE_FLOOD_FAMILY = true;
+const ACTIVE_MATCHER_FAMILY = true;
+const ACTIVE_DEDUPE_FAMILY = true;
 
 const FLOOD_CANDIDATES = [
   {
