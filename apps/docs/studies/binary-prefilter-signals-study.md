@@ -87,7 +87,8 @@ Report fitness notes:
 - The run covered all 54 binary view identities on a seeded 25-asset sample, not the full 203-asset corpus.
 - The run is not a decode-capability or prefilter-safety proof because `decode=false`; it cannot report lost positives or false positives for a future gating policy.
 - The run still does not fully match the original designed experiment because signal rows are not joined to exhaustive `view-proposals` trace outcomes. It lacks ranked proposal score, structure pass/fail, decode success, and false-positive outcomes per signal row.
-- Inverted entries are polarity paths/signals over shared threshold planes, not separately materialized inverted planes, except for candidate `a`, which deliberately materializes inverted buffers to measure that hypothesis.
+- Inverted entries are polarity paths/signals over shared threshold planes, not separately materialized inverted planes.
+- The next study iteration removes the old materialized-inverted (`a`) and shared-run-artifact (`b`) candidates; those answered the XOR/polarity-read question. The active candidate set now targets matcher speedups directly.
 
 Question coverage:
 
@@ -98,8 +99,8 @@ Question coverage:
 | Do signals predict decode success? | Unanswered | `decode=false` | No decode success or unique-positive evidence was collected. |
 | Do signals predict false-positive risk? | Unanswered | `decode=false` | No false-positive evidence was collected. |
 | Is signal collection cheap enough for study observability? | Answered for this sample | signalMs vs detectorMs | Yes. Total signal overhead was ~1.15% of detector time; p95 per-asset overhead was ~2.41%, under the 3% rule. |
-| Does materializing inverted buffers beat polarity-proxy reads? | Answered for this smoke sample | `materialized-inverted-detector` variant | Candidate `a` improved total inverted detector+materialization time by 3.5% with equal finder/proposal counts, below the 5% checkpoint threshold. |
-| Is shared polarity-neutral detector structure promising? | Partially answered | `shared-run-artifact-prototype` variant | Candidate `b` shows large headroom, but it only measures shared run construction and is not behavior-equivalent detector replacement yet. |
+| Does materializing inverted buffers beat polarity-proxy reads? | Answered for this smoke sample | retired `materialized-inverted-detector` variant | The old candidate improved total inverted detector+materialization time by 3.5% with equal finder/proposal counts, below the 5% checkpoint threshold; polarity-read/XOR overhead is not the main target. |
+| Is shared polarity-neutral detector structure promising? | Partially answered | retired `shared-run-artifact-prototype` variant | The old candidate showed headroom but was too broad. The active study now decomposes matcher-specific run maps, center pruning, seeded rescue, and fused polarity traversal. |
 | Are component counts/percentiles useful? | Unanswered | not collected | Component stats were optional and not present. |
 | Are duplicate/redundant sibling-view signals useful? | Unanswered | not collected | Similarity to sibling views was not present. |
 
@@ -120,12 +121,21 @@ Headline totals:
 | Study-side OKLab fusion prototype | 1,112.98 ms |
 | Estimated shared polarity artifact saving | 1,192.43 ms |
 
-Variant results:
+Retired variant results:
 
 | Variant | Control | Candidate | Delta | Improvement | Behavior evidence | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `a` materialized inverted detector | 118,662.49 ms | 114,504.65 ms | 4,157.84 ms | 3.5% | proposal/finder counts equal | Below the <5% checkpoint threshold; polarity-read/XOR overhead is unlikely to be the main inverted cost. |
-| `b` shared run artifact prototype | 204,322.80 ms | 1,143.55 ms | 203,179.25 ms | 99.44% | not behavior-equivalent | Strong headroom signal for shared run/component artifacts, but must be implemented as a real detector candidate before adoption. |
+| materialized inverted detector | 118,662.49 ms | 114,504.65 ms | 4,157.84 ms | 3.5% | proposal/finder counts equal | Below the <5% checkpoint threshold; polarity-read/XOR overhead is unlikely to be the main inverted cost. |
+| shared run artifact prototype | 204,322.80 ms | 1,143.55 ms | 203,179.25 ms | 99.44% | not behavior-equivalent | Strong headroom signal, but too broad to identify the matcher implementation shape. Replaced by matcher-specific candidates. |
+
+Active matcher-candidate study revision:
+
+| Variant id | Purpose | Behavior-equivalent? | Notes |
+| --- | --- | --- | --- |
+| `matcher-run-map-crosscheck-prototype` | Measure row/column run-map build cost for a matcher whose cross-checks use reusable runs. | No | Candidate `a` in live timing bars. |
+| `matcher-candidate-pruning-prototype` | Measure cheap local center-signal filtering before expensive matcher checks. | No | Candidate `b`; reports sampled centers and survivors. |
+| `matcher-seeded-rescue-estimate` | Count how many row-scan/flood finder centers could seed matcher refinement/rescue. | No, evidence-count only | Keeps the stylized-QR rescue question visible without pretending to time an implementation. |
+| `matcher-fused-polarity-traversal-prototype` | Measure one shared-plane traversal that classifies normal-dark and inverted-dark centers together. | No | Candidate `d`; answers whether normal+inverted fusion is worth deeper work. |
 
 Detector hotspots by view:
 
@@ -186,9 +196,9 @@ This smoke run supports keeping passive signal collection as study observability
 
 The strongest predictors in this run were deduped finder count, matcher finder count, and dark ratio. Raw transition density and run counts had weaker correlation. The hottest paths again concentrated in inverted Sauvola views with high dark ratios.
 
-Candidate `a` answers the immediate XOR-vs-interaction question for the smoke sample: materializing inverted buffers reduced inverted detector+materialization time by only 3.5% while preserving finder/proposal counts. That suggests polarity-read/XOR overhead is not the main cause of inverted cost. Most of the cost appears to come from detector interaction with inverted semantics and repeated detector traversal.
+The retired materialized-inverted candidate answered the immediate XOR-vs-interaction question for the smoke sample: materializing inverted buffers reduced inverted detector+materialization time by only 3.5% while preserving finder/proposal counts. That suggests polarity-read/XOR overhead is not the main cause of inverted cost. Most of the cost appears to come from matcher interaction with inverted semantics and repeated detector traversal.
 
-Candidate `b` provides strong headroom evidence for shared polarity-neutral run artifacts. However, it is only a prototype measurement of shared run construction, not a detector replacement. The next candidate must consume those run artifacts inside finder row-scan/cross-check/matcher logic and prove behavior equivalence.
+The active candidate set now focuses on matcher-specific implementation shapes: run-map-backed cross-checks, cheap center pruning, row/flood seeded rescue, and fused normal+inverted traversal over the shared threshold plane. These are still prototype/headroom measurements until one is wired into the production matcher and proves finder/proposal equivalence.
 
 `binaryViewMs` remains effectively zero compared with detector time, confirming that inverted view identities are cheap proxies. Optimization should target detector traversal/artifact reuse, not binary-view wrapper construction.
 
@@ -200,8 +210,9 @@ This run does **not** answer the full problem statement. It answers the detector
 
 Checkpoint decisions:
 
-- Do not prioritize cached materialized inverted views yet. Candidate `a` improved only 3.5%, below the predeclared <5% threshold for deprioritization, although a full corpus run could confirm.
-- Prioritize candidate `b`: implement a behavior-equivalent shared run/component artifact detector path, because the prototype shows large potential headroom and directly addresses repeated normal/inverted detector traversal.
+- Do not prioritize cached materialized inverted views yet; the retired materialized-inverted candidate improved only 3.5%, below the predeclared <5% threshold for deprioritization.
+- Prioritize matcher-specific candidates over broad detector-artifact prototypes. The next production candidate should consume run maps or cheap center candidates inside matcher cross-check logic and prove behavior equivalence.
+- Keep the fused normal+inverted traversal candidate as a secondary question: useful if it falls out of shared-plane matcher artifacts, but unlikely to beat pruning/cross-check reuse alone.
 - Do not ship production prefilter gating from this run.
 
 Full refined experiment still needed for prefilter gating:

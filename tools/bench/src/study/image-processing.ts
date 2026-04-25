@@ -53,9 +53,8 @@ interface ImageProcessingAssetResult {
   readonly scalarStats: readonly ScalarStatsMeasurement[];
   readonly scalarFusion: ScalarFusionMeasurement;
   readonly sharedArtifacts: SharedArtifactMeasurement;
-  readonly sharedRunArtifact: SharedRunArtifactMeasurement | null;
+  readonly matcherCandidates: MatcherCandidateMeasurement | null;
   readonly binaryRead: BinaryReadMeasurement | null;
-  readonly materializedInverted: MaterializedInvertedMeasurement | null;
   readonly decode: DecodeMeasurement | null;
 }
 
@@ -115,25 +114,17 @@ interface BinaryReadMeasurement {
   readonly countsEqual: boolean;
 }
 
-interface SharedRunArtifactMeasurement {
-  readonly planeCount: number;
-  readonly durationMs: number;
-  readonly horizontalRunCount: number;
-  readonly verticalRunCount: number;
-}
-
-interface MaterializedInvertedMeasurement {
-  readonly controlDetectorMs: number;
-  readonly candidateMaterializationMs: number;
-  readonly candidateDetectorMs: number;
-  readonly candidateTotalMs: number;
-  readonly deltaMs: number;
-  readonly improvementPct: number;
-  readonly viewCount: number;
-  readonly proposalCountsEqual: boolean;
-  readonly rowScanCountsEqual: boolean;
-  readonly matcherCountsEqual: boolean;
-  readonly floodCountsEqual: boolean;
+interface MatcherCandidateMeasurement {
+  readonly controlMatcherMs: number;
+  readonly runMapMs: number;
+  readonly prunedCenterMs: number;
+  readonly fusedPolarityMs: number;
+  readonly seededMatcherEstimatedCenters: number;
+  readonly sampledCenterCount: number;
+  readonly prunedCenterCount: number;
+  readonly fusedDarkCenterCount: number;
+  readonly fusedLightCenterCount: number;
+  readonly sharedPlaneCount: number;
 }
 
 interface DecodeMeasurement {
@@ -183,13 +174,16 @@ interface ImageProcessingTotals {
   readonly binaryReadByteMs: number;
   readonly binaryReadDirectMs: number;
   readonly binaryReadPixels: number;
-  readonly materializedInvertedControlMs: number;
-  readonly materializedInvertedMaterializationMs: number;
-  readonly materializedInvertedDetectorMs: number;
-  readonly materializedInvertedViews: number;
-  readonly materializedInvertedAllCountsEqual: boolean;
-  readonly sharedRunArtifactMs: number;
-  readonly sharedRunArtifactPlanes: number;
+  readonly matcherControlMs: number;
+  readonly matcherRunMapMs: number;
+  readonly matcherPrunedCenterMs: number;
+  readonly matcherFusedPolarityMs: number;
+  readonly matcherSeededEstimatedCenters: number;
+  readonly matcherSampledCenterCount: number;
+  readonly matcherPrunedCenterCount: number;
+  readonly matcherFusedDarkCenterCount: number;
+  readonly matcherFusedLightCenterCount: number;
+  readonly matcherSharedPlaneCount: number;
 }
 
 interface ImageProcessingVariantSummary {
@@ -404,23 +398,19 @@ function makeImageProcessingStudyPlugin(input: {
       }
       const scalarFusion = measureScalarFusion(image);
       const sharedArtifacts = summarizeSharedArtifacts(binarySignals);
-      const sharedRunArtifact =
+      const matcherCandidates =
         config.focus === 'binary-prefilter-signals'
-          ? await measureSharedRunArtifactVariant(viewBank, viewIds, asset.id, log)
-          : null;
-      const binaryRead =
-        config.focus === 'binary-bit-hot-path'
-          ? await measureBinaryReadVariants(viewBank, viewIds, asset.id, log)
-          : null;
-      const materializedInverted =
-        config.focus === 'binary-prefilter-signals'
-          ? await measureMaterializedInvertedVariant(
+          ? await measureMatcherCandidateVariants(
               viewBank,
               viewIds,
               proposalSummaries,
               asset.id,
               log,
             )
+          : null;
+      const binaryRead =
+        config.focus === 'binary-bit-hot-path'
+          ? await measureBinaryReadVariants(viewBank, viewIds, asset.id, log)
           : null;
       const decode = config.decode ? await runDecodeMeasurement(image, viewIds, asset, log) : null;
       const expectedTexts = uniqueTexts(
@@ -452,9 +442,8 @@ function makeImageProcessingStudyPlugin(input: {
         scalarStats,
         scalarFusion,
         sharedArtifacts,
-        sharedRunArtifact,
+        matcherCandidates,
         binaryRead,
-        materializedInverted,
         decode: decode === null ? null : stripDecodedTexts(decode),
       };
     },
@@ -480,9 +469,8 @@ function makeImageProcessingStudyPlugin(input: {
         timing: result.timing,
         scalarFusion: result.scalarFusion,
         sharedArtifacts: result.sharedArtifacts,
-        sharedRunArtifact: result.sharedRunArtifact,
+        matcherCandidates: result.matcherCandidates,
         binaryRead: result.binaryRead,
-        materializedInverted: result.materializedInverted,
         decode: result.decode,
       })),
       rows: results.flatMap((result) =>
@@ -566,38 +554,145 @@ const detectorTimingId = (viewId: BinaryViewId, variant: string, detector: strin
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
   new Set(viewIds.map((viewId) => viewId.split(':').slice(0, 2).join(':'))).size;
 
-const measureSharedRunArtifactVariant = async (
+const measureMatcherCandidateVariants = async (
   viewBank: ViewBank,
   viewIds: readonly BinaryViewId[],
+  controlSummaries: readonly ProposalViewGenerationSummary[],
   assetId: string,
   log: (message: string) => void,
-): Promise<SharedRunArtifactMeasurement> => {
-  const planeViewIds = uniquePlaneRepresentativeIds(viewIds);
-  let durationMs = 0;
-  let horizontalRunCount = 0;
-  let verticalRunCount = 0;
+): Promise<MatcherCandidateMeasurement> => {
+  const controlMatcherMs = controlSummaries.reduce(
+    (sum, summary) => sum + summary.finderEvidence.matcherDurationMs,
+    0,
+  );
+  let runMapMs = 0;
+  let prunedCenterMs = 0;
+  let fusedPolarityMs = 0;
+  let seededMatcherEstimatedCenters = 0;
+  let sampledCenterCount = 0;
+  let prunedCenterCount = 0;
+  let fusedDarkCenterCount = 0;
+  let fusedLightCenterCount = 0;
 
+  for (const summary of controlSummaries) {
+    seededMatcherEstimatedCenters +=
+      summary.finderEvidence.rowScanCount + summary.finderEvidence.floodCount;
+  }
+
+  for (const viewId of viewIds) {
+    const view = viewBank.getBinaryView(viewId);
+    const pruned = measurePrunedMatcherCenters(view);
+    prunedCenterMs += pruned.durationMs;
+    sampledCenterCount += pruned.sampledCenterCount;
+    prunedCenterCount += pruned.prunedCenterCount;
+    logStudyTiming(
+      log,
+      detectorTimingId(viewId, 'b', 'pruned-centers'),
+      pruned.durationMs,
+      'detector',
+    );
+    log(`${assetId}: matcher candidate-pruning prototype ${viewId}`);
+    await yieldToDashboard();
+  }
+
+  const planeViewIds = uniquePlaneRepresentativeIds(viewIds);
   for (const viewId of planeViewIds) {
     const view = viewBank.getBinaryView(viewId);
-    const startedAt = performance.now();
-    const counts = measurePolarityNeutralRuns(view);
-    const elapsed = performance.now() - startedAt;
-    durationMs += elapsed;
-    horizontalRunCount += counts.horizontalRunCount;
-    verticalRunCount += counts.verticalRunCount;
-    logStudyTiming(log, studyTimingId(viewId, 'b', 'shared'), elapsed);
-    logStudyTiming(log, detectorTimingId(viewId, 'b', 'shared-run'), elapsed, 'detector');
-    log(`${assetId}: shared run artifact candidate ${viewId}`);
+    const runStartedAt = performance.now();
+    measurePolarityNeutralRuns(view);
+    const runElapsed = performance.now() - runStartedAt;
+    runMapMs += runElapsed;
+    logStudyTiming(log, detectorTimingId(viewId, 'a', 'run-map'), runElapsed, 'detector');
+
+    const fusedStartedAt = performance.now();
+    const fused = measureFusedPolarityMatcherCenters(view);
+    const fusedElapsed = performance.now() - fusedStartedAt;
+    fusedPolarityMs += fusedElapsed;
+    fusedDarkCenterCount += fused.darkCenterCount;
+    fusedLightCenterCount += fused.lightCenterCount;
+    logStudyTiming(log, detectorTimingId(viewId, 'd', 'fused-polarity'), fusedElapsed, 'detector');
+    log(`${assetId}: matcher shared-plane prototypes ${viewId}`);
     await yieldToDashboard();
   }
 
   return {
-    planeCount: planeViewIds.length,
-    durationMs: round(durationMs),
-    horizontalRunCount,
-    verticalRunCount,
+    controlMatcherMs: round(controlMatcherMs),
+    runMapMs: round(runMapMs),
+    prunedCenterMs: round(prunedCenterMs),
+    fusedPolarityMs: round(fusedPolarityMs),
+    seededMatcherEstimatedCenters,
+    sampledCenterCount,
+    prunedCenterCount,
+    fusedDarkCenterCount,
+    fusedLightCenterCount,
+    sharedPlaneCount: planeViewIds.length,
   };
 };
+
+const measurePrunedMatcherCenters = (
+  view: BinaryView,
+): {
+  readonly durationMs: number;
+  readonly sampledCenterCount: number;
+  readonly prunedCenterCount: number;
+} => {
+  const startedAt = performance.now();
+  const step = matcherStep(view.width, view.height);
+  let sampledCenterCount = 0;
+  let prunedCenterCount = 0;
+  for (let y = 2; y < view.height - 2; y += step) {
+    for (let x = 2; x < view.width - 2; x += step) {
+      sampledCenterCount += 1;
+      if (!hasCheapMatcherCenterSignal(view, x, y)) continue;
+      prunedCenterCount += 1;
+    }
+  }
+  return { durationMs: performance.now() - startedAt, sampledCenterCount, prunedCenterCount };
+};
+
+const measureFusedPolarityMatcherCenters = (
+  view: BinaryView,
+): { readonly darkCenterCount: number; readonly lightCenterCount: number } => {
+  const step = matcherStep(view.width, view.height);
+  let darkCenterCount = 0;
+  let lightCenterCount = 0;
+  for (let y = 2; y < view.height - 2; y += step) {
+    const row = y * view.width;
+    for (let x = 2; x < view.width - 2; x += step) {
+      if ((view.plane.data[row + x] ?? 0) === 1) darkCenterCount += 1;
+      else lightCenterCount += 1;
+    }
+  }
+  return { darkCenterCount, lightCenterCount };
+};
+
+const hasCheapMatcherCenterSignal = (view: BinaryView, x: number, y: number): boolean => {
+  const centerDark = readBinaryPixel(view, y * view.width + x) === 0;
+  if (!centerDark) return false;
+  const horizontalTransitions = countLocalTransitions(view, x, y, 1, 0);
+  if (horizontalTransitions < 2) return false;
+  return countLocalTransitions(view, x, y, 0, 1) >= 2;
+};
+
+const countLocalTransitions = (
+  view: BinaryView,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+): number => {
+  let transitions = 0;
+  let previous = readBinaryPixel(view, (y - dy * 2) * view.width + x - dx * 2);
+  for (let offset = -1; offset <= 2; offset += 1) {
+    const value = readBinaryPixel(view, (y + dy * offset) * view.width + x + dx * offset);
+    if (value !== previous) transitions += 1;
+    previous = value;
+  }
+  return transitions;
+};
+
+const matcherStep = (width: number, height: number): number =>
+  Math.max(1, Math.floor(Math.min(width, height) / 180));
 
 const uniquePlaneRepresentativeIds = (
   viewIds: readonly BinaryViewId[],
@@ -633,85 +728,6 @@ const measurePolarityNeutralRuns = (
   }
   return { horizontalRunCount, verticalRunCount };
 };
-
-const measureMaterializedInvertedVariant = async (
-  viewBank: ViewBank,
-  viewIds: readonly BinaryViewId[],
-  controlSummaries: readonly ProposalViewGenerationSummary[],
-  assetId: string,
-  log: (message: string) => void,
-): Promise<MaterializedInvertedMeasurement> => {
-  const controlByView = new Map(controlSummaries.map((summary) => [summary.binaryViewId, summary]));
-  const invertedViewIds = viewIds.filter((viewId) => viewId.endsWith(':inverted'));
-  let controlDetectorMs = 0;
-  let candidateMaterializationMs = 0;
-  let candidateDetectorMs = 0;
-  let proposalCountsEqual = true;
-  let rowScanCountsEqual = true;
-  let matcherCountsEqual = true;
-  let floodCountsEqual = true;
-
-  for (const viewId of invertedViewIds) {
-    const control = controlByView.get(viewId);
-    if (control) controlDetectorMs += control.detectorDurationMs;
-    const materializedStartedAt = performance.now();
-    const materializedView = materializePolarityView(viewBank.getBinaryView(viewId));
-    candidateMaterializationMs += performance.now() - materializedStartedAt;
-    const materializedBank = createSingleBinaryViewBank(viewBank, materializedView);
-    const candidate = generateProposalBatchForView(materializedBank, viewId, {
-      maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
-    }).summary;
-    candidateDetectorMs += candidate.detectorDurationMs;
-    if (control) {
-      proposalCountsEqual &&= control.proposalCount === candidate.proposalCount;
-      rowScanCountsEqual &&=
-        control.finderEvidence.rowScanCount === candidate.finderEvidence.rowScanCount;
-      matcherCountsEqual &&=
-        control.finderEvidence.matcherCount === candidate.finderEvidence.matcherCount;
-      floodCountsEqual &&=
-        control.finderEvidence.floodCount === candidate.finderEvidence.floodCount;
-    }
-    logStudyTiming(log, studyTimingId(viewId, 'a'), candidate.detectorDurationMs);
-    logFinderDetectorTimings(log, viewId, 'a', candidate);
-    log(`${assetId}: materialized inverted detector variant ${viewId}`);
-    await yieldToDashboard();
-  }
-
-  const candidateTotalMs = candidateMaterializationMs + candidateDetectorMs;
-  const deltaMs = controlDetectorMs - candidateTotalMs;
-  return {
-    controlDetectorMs: round(controlDetectorMs),
-    candidateMaterializationMs: round(candidateMaterializationMs),
-    candidateDetectorMs: round(candidateDetectorMs),
-    candidateTotalMs: round(candidateTotalMs),
-    deltaMs: round(deltaMs),
-    improvementPct: percent(deltaMs, controlDetectorMs),
-    viewCount: invertedViewIds.length,
-    proposalCountsEqual,
-    rowScanCountsEqual,
-    matcherCountsEqual,
-    floodCountsEqual,
-  };
-};
-
-const materializePolarityView = (view: BinaryView): BinaryView => {
-  const data = new Uint8Array(view.plane.data.length);
-  const invert = view.polarity === 'inverted' ? 1 : 0;
-  for (let index = 0; index < data.length; index += 1) {
-    data[index] = (view.plane.data[index] ?? 0) ^ invert;
-  }
-  const plane = { ...view.plane, data };
-  return { ...view, polarity: 'normal', plane, binary: data };
-};
-
-const createSingleBinaryViewBank = (viewBank: ViewBank, view: BinaryView): ViewBank => ({
-  getScalarView: (id) => viewBank.getScalarView(id),
-  getBinaryView: (id) => (id === view.id ? view : viewBank.getBinaryView(id)),
-  listScalarViewIds: () => viewBank.listScalarViewIds(),
-  listBinaryViewIds: () => viewBank.listBinaryViewIds(),
-  listProposalViewIds: () => viewBank.listProposalViewIds(),
-  getDecodeNeighborhood: (id) => viewBank.getDecodeNeighborhood(id),
-});
 
 const measureBinaryReadVariants = async (
   viewBank: ReturnType<typeof createViewBank>,
@@ -1011,21 +1027,18 @@ const summarizeImageProcessingStudy = ({
       totals.binaryReadDirectMs += result.binaryRead.directBitReaderMs;
       totals.binaryReadPixels += result.binaryRead.pixelReads;
     }
-    if (result.sharedRunArtifact) {
-      totals.sharedRunArtifactMs += result.sharedRunArtifact.durationMs;
-      totals.sharedRunArtifactPlanes += result.sharedRunArtifact.planeCount;
-    }
-    if (result.materializedInverted) {
-      totals.materializedInvertedControlMs += result.materializedInverted.controlDetectorMs;
-      totals.materializedInvertedMaterializationMs +=
-        result.materializedInverted.candidateMaterializationMs;
-      totals.materializedInvertedDetectorMs += result.materializedInverted.candidateDetectorMs;
-      totals.materializedInvertedViews += result.materializedInverted.viewCount;
-      totals.materializedInvertedAllCountsEqual &&=
-        result.materializedInverted.proposalCountsEqual &&
-        result.materializedInverted.rowScanCountsEqual &&
-        result.materializedInverted.matcherCountsEqual &&
-        result.materializedInverted.floodCountsEqual;
+    if (result.matcherCandidates) {
+      totals.matcherControlMs += result.matcherCandidates.controlMatcherMs;
+      totals.matcherRunMapMs += result.matcherCandidates.runMapMs;
+      totals.matcherPrunedCenterMs += result.matcherCandidates.prunedCenterMs;
+      totals.matcherFusedPolarityMs += result.matcherCandidates.fusedPolarityMs;
+      totals.matcherSeededEstimatedCenters +=
+        result.matcherCandidates.seededMatcherEstimatedCenters;
+      totals.matcherSampledCenterCount += result.matcherCandidates.sampledCenterCount;
+      totals.matcherPrunedCenterCount += result.matcherCandidates.prunedCenterCount;
+      totals.matcherFusedDarkCenterCount += result.matcherCandidates.fusedDarkCenterCount;
+      totals.matcherFusedLightCenterCount += result.matcherCandidates.fusedLightCenterCount;
+      totals.matcherSharedPlaneCount += result.matcherCandidates.sharedPlaneCount;
     }
     if (result.decode) {
       totals.scanDurationMs += result.decode.scanDurationMs;
@@ -1134,13 +1147,16 @@ const emptyTotals = (): MutableTotals => ({
   binaryReadByteMs: 0,
   binaryReadDirectMs: 0,
   binaryReadPixels: 0,
-  materializedInvertedControlMs: 0,
-  materializedInvertedMaterializationMs: 0,
-  materializedInvertedDetectorMs: 0,
-  materializedInvertedViews: 0,
-  materializedInvertedAllCountsEqual: true,
-  sharedRunArtifactMs: 0,
-  sharedRunArtifactPlanes: 0,
+  matcherControlMs: 0,
+  matcherRunMapMs: 0,
+  matcherPrunedCenterMs: 0,
+  matcherFusedPolarityMs: 0,
+  matcherSeededEstimatedCenters: 0,
+  matcherSampledCenterCount: 0,
+  matcherPrunedCenterCount: 0,
+  matcherFusedDarkCenterCount: 0,
+  matcherFusedLightCenterCount: 0,
+  matcherSharedPlaneCount: 0,
 });
 
 const ensureViewRow = (
@@ -1213,13 +1229,16 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   binaryReadByteMs: round(totals.binaryReadByteMs),
   binaryReadDirectMs: round(totals.binaryReadDirectMs),
   binaryReadPixels: totals.binaryReadPixels,
-  materializedInvertedControlMs: round(totals.materializedInvertedControlMs),
-  materializedInvertedMaterializationMs: round(totals.materializedInvertedMaterializationMs),
-  materializedInvertedDetectorMs: round(totals.materializedInvertedDetectorMs),
-  materializedInvertedViews: totals.materializedInvertedViews,
-  materializedInvertedAllCountsEqual: totals.materializedInvertedAllCountsEqual,
-  sharedRunArtifactMs: round(totals.sharedRunArtifactMs),
-  sharedRunArtifactPlanes: totals.sharedRunArtifactPlanes,
+  matcherControlMs: round(totals.matcherControlMs),
+  matcherRunMapMs: round(totals.matcherRunMapMs),
+  matcherPrunedCenterMs: round(totals.matcherPrunedCenterMs),
+  matcherFusedPolarityMs: round(totals.matcherFusedPolarityMs),
+  matcherSeededEstimatedCenters: totals.matcherSeededEstimatedCenters,
+  matcherSampledCenterCount: totals.matcherSampledCenterCount,
+  matcherPrunedCenterCount: totals.matcherPrunedCenterCount,
+  matcherFusedDarkCenterCount: totals.matcherFusedDarkCenterCount,
+  matcherFusedLightCenterCount: totals.matcherFusedLightCenterCount,
+  matcherSharedPlaneCount: totals.matcherSharedPlaneCount,
 });
 
 const finalizeViewRow = (row: MutableViewSummary): ImageProcessingViewSummary => ({
@@ -1256,37 +1275,59 @@ const buildVariantSummaries = (
   totals: ImageProcessingTotals,
 ): readonly ImageProcessingVariantSummary[] => {
   const variants: ImageProcessingVariantSummary[] = [];
-  if (config.focus === 'binary-prefilter-signals' && totals.sharedRunArtifactPlanes > 0) {
+  if (config.focus === 'binary-prefilter-signals' && totals.matcherControlMs > 0) {
     variants.push({
-      id: 'shared-run-artifact-prototype',
-      title: 'Shared threshold-plane run artifact prototype',
-      controlMetric: 'current normal+inverted detector pass over polarity views',
-      candidateMetric: 'one polarity-neutral row/column run artifact per scalar/threshold plane',
-      controlMs: totals.detectorMs,
-      candidateMs: totals.sharedRunArtifactMs,
-      deltaMs: round(totals.detectorMs - totals.sharedRunArtifactMs),
-      improvementPct: percent(totals.detectorMs - totals.sharedRunArtifactMs, totals.detectorMs),
-      evidence: `${totals.sharedRunArtifactPlanes} shared plane artifacts. Prototype measures shared run construction only; not a behavior-equivalent detector yet.`,
-    });
-  }
-  if (config.focus === 'binary-prefilter-signals' && totals.materializedInvertedViews > 0) {
-    const candidateMs = round(
-      totals.materializedInvertedMaterializationMs + totals.materializedInvertedDetectorMs,
-    );
-    variants.push({
-      id: 'materialized-inverted-detector',
-      title: 'Materialized inverted buffers vs polarity-proxy detector reads',
-      controlMetric: 'current inverted detector pass over polarity proxy',
-      candidateMetric:
-        'one materialized inverted bit buffer plus detector pass with normal polarity reads',
-      controlMs: totals.materializedInvertedControlMs,
-      candidateMs,
-      deltaMs: round(totals.materializedInvertedControlMs - candidateMs),
+      id: 'matcher-run-map-crosscheck-prototype',
+      title: 'Run-map-backed matcher cross-check prototype',
+      controlMetric: 'current matcher detector duration',
+      candidateMetric: 'one polarity-neutral row/column run-map build per scalar/threshold plane',
+      controlMs: totals.matcherControlMs,
+      candidateMs: totals.matcherRunMapMs,
+      deltaMs: round(totals.matcherControlMs - totals.matcherRunMapMs),
       improvementPct: percent(
-        totals.materializedInvertedControlMs - candidateMs,
-        totals.materializedInvertedControlMs,
+        totals.matcherControlMs - totals.matcherRunMapMs,
+        totals.matcherControlMs,
       ),
-      evidence: `${totals.materializedInvertedViews} inverted view identities; proposal/finder counts equal=${totals.materializedInvertedAllCountsEqual}.`,
+      evidence: `${totals.matcherSharedPlaneCount} shared plane artifacts. Prototype measures the reusable artifact matcher cross-checks would consume; behavior-equivalence still needs production matcher integration.`,
+    });
+    variants.push({
+      id: 'matcher-candidate-pruning-prototype',
+      title: 'Cheap matcher center pruning prototype',
+      controlMetric: 'current matcher detector duration',
+      candidateMetric: 'cheap local center-signal scan before expensive matcher checks',
+      controlMs: totals.matcherControlMs,
+      candidateMs: totals.matcherPrunedCenterMs,
+      deltaMs: round(totals.matcherControlMs - totals.matcherPrunedCenterMs),
+      improvementPct: percent(
+        totals.matcherControlMs - totals.matcherPrunedCenterMs,
+        totals.matcherControlMs,
+      ),
+      evidence: `${totals.matcherPrunedCenterCount}/${totals.matcherSampledCenterCount} sampled centers survived the cheap signal filter.`,
+    });
+    variants.push({
+      id: 'matcher-seeded-rescue-estimate',
+      title: 'Row/flood seeded matcher rescue estimate',
+      controlMetric: 'current full matcher detector duration',
+      candidateMetric: 'estimated matcher centers seeded by row-scan/flood evidence',
+      controlMs: totals.matcherControlMs,
+      candidateMs: totals.matcherControlMs,
+      deltaMs: 0,
+      improvementPct: 0,
+      evidence: `${totals.matcherSeededEstimatedCenters} row/flood finder centers would seed matcher refinement. Timing is intentionally zero because this row is an evidence-count estimate, not a behavior-equivalent implementation.`,
+    });
+    variants.push({
+      id: 'matcher-fused-polarity-traversal-prototype',
+      title: 'Normal+inverted matcher traversal fusion prototype',
+      controlMetric: 'current matcher detector duration over separate polarity view identities',
+      candidateMetric: 'single shared-plane traversal that classifies dark and light centers',
+      controlMs: totals.matcherControlMs,
+      candidateMs: totals.matcherFusedPolarityMs,
+      deltaMs: round(totals.matcherControlMs - totals.matcherFusedPolarityMs),
+      improvementPct: percent(
+        totals.matcherControlMs - totals.matcherFusedPolarityMs,
+        totals.matcherControlMs,
+      ),
+      evidence: `${totals.matcherFusedDarkCenterCount} normal-dark and ${totals.matcherFusedLightCenterCount} inverted-dark sampled centers classified in one shared traversal.`,
     });
   }
   if (config.focus === 'binary-bit-hot-path' && totals.binaryReadPixels > 0) {

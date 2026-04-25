@@ -459,7 +459,7 @@ const renderStudyProgress = (
   const lines = [
     'study timing by view/path',
     truncateLine(
-      `phase=${dashboard.stage} workers=${dashboard.workerCount || '-'} ${dashboard.message}`,
+      `phase=${dashboard.stage} workers=${dashboard.workerCount || '-'} a/b/d=candidates c=control ${dashboard.message}`,
       options.width,
     ),
     truncateLine(
