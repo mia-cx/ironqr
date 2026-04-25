@@ -57,6 +57,7 @@ describe('study plugin contract', () => {
         read: async () => null,
         write: async () => {},
         remove: async () => false,
+        purge: async () => 0,
         summary: () => ({
           enabled: true,
           file: '/repo/tools/bench/.cache/studies/view-order.json',
@@ -64,6 +65,7 @@ describe('study plugin contract', () => {
           misses: 0,
           writes: 0,
           invalidRows: 0,
+          purgedRows: 0,
         }),
       },
       log: () => {},

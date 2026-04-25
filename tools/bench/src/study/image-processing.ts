@@ -394,6 +394,7 @@ function makeImageProcessingStudyPlugin(input: {
   readonly focus: ImageProcessingFocus;
   readonly decodeDefault: boolean;
 }): StudyPlugin<ImageProcessingSummary, ImageProcessingConfig, ImageProcessingAssetResult> {
+  let redundantDetectorCachePurged = false;
   return {
     id: input.id,
     title: input.title,
@@ -444,13 +445,20 @@ function makeImageProcessingStudyPlugin(input: {
         : null,
     readCachedAsset: async ({ asset, config, cache, signal, log }) => {
       if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
-      return config.focus === 'binary-prefilter-signals'
-        ? readCachedDetectorAssetResult(asset, config, cache, log)
-        : null;
+      if (config.focus !== 'binary-prefilter-signals') return null;
+      if (!redundantDetectorCachePurged) {
+        redundantDetectorCachePurged = true;
+        await purgeRedundantDetectorCacheRows(cache, log);
+      }
+      return readCachedDetectorAssetResult(asset, config, cache, log);
     },
     runAsset: async ({ asset, config, cache, signal, log }) => {
       if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
       if (config.focus === 'binary-prefilter-signals') {
+        if (!redundantDetectorCachePurged) {
+          redundantDetectorCachePurged = true;
+          await purgeRedundantDetectorCacheRows(cache, log);
+        }
         const cached = await readCachedDetectorAssetResult(asset, config, cache, log);
         if (cached) return cached;
       }
@@ -702,16 +710,6 @@ const activeDetectorPatternIds = (): readonly string[] => [
   ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
 ];
 
-const BINNED_DETECTOR_PATTERN_IDS = [
-  'coarse-grid-fallback-matcher',
-  'center-signal-matcher',
-  'center-pruned-matcher',
-  'seeded-matcher-replacement',
-  'row-flood-seeded-matcher',
-  'fused-polarity-matcher',
-  'filtered-components-flood',
-] as const;
-
 const readCachedDetectorAssetResult = async (
   asset: Parameters<StudyCacheHandle['read']>[0],
   config: ImageProcessingConfig,
@@ -719,7 +717,6 @@ const readCachedDetectorAssetResult = async (
   log: (message: string) => void,
 ): Promise<ImageProcessingAssetResult | null> => {
   const viewIds = detectorStudyViewIds(config);
-  await purgeBinnedDetectorCacheRows(asset, viewIds, cache, log);
   const requiredIds = activeDetectorPatternIds();
   const missing = viewIds.flatMap((viewId) =>
     requiredIds
@@ -840,21 +837,41 @@ const readCachedDetectorAssetResult = async (
   };
 };
 
-const purgeBinnedDetectorCacheRows = async (
-  asset: Parameters<StudyCacheHandle['read']>[0],
-  viewIds: readonly BinaryViewId[],
-  cache: Pick<StudyCacheHandle, 'remove'>,
+const purgeRedundantDetectorCacheRows = async (
+  cache: Pick<StudyCacheHandle, 'purge'>,
   log: (message: string) => void,
 ): Promise<void> => {
-  let purged = 0;
-  for (const viewId of viewIds) {
-    for (const variantId of BINNED_DETECTOR_PATTERN_IDS) {
-      for (const cacheKey of detectorVariantCacheKeys(variantId, viewId)) {
-        if (await cache.remove(asset, cacheKey)) purged += 1;
-      }
+  const activeIds = new Set(activeDetectorPatternIds());
+  const activePatternPrefixes = new Set(
+    [...activeIds].map((variantId) => detectorPatternPrefix(variantId)),
+  );
+  const purged = await cache.purge((cacheKey) => {
+    const parsed = parseDetectorCacheKey(cacheKey);
+    if (!parsed) return false;
+    if (parsed.kind === 'detector-variant') return !activeIds.has(parsed.variantId);
+    return ![...activePatternPrefixes].some((prefix) => parsed.patternId.startsWith(prefix));
+  });
+  if (purged > 0) log(`purged ${purged} redundant detector cache rows for inactive patterns`);
+};
+
+const parseDetectorCacheKey = (
+  cacheKey: string,
+):
+  | { readonly kind: 'detector-variant'; readonly variantId: string }
+  | { readonly kind: 'detector-pattern'; readonly patternId: string }
+  | null => {
+  try {
+    const parsed = JSON.parse(cacheKey) as Record<string, unknown>;
+    if (parsed.kind === 'detector-variant' && typeof parsed.variantId === 'string') {
+      return { kind: 'detector-variant', variantId: parsed.variantId };
     }
+    if (parsed.kind === 'detector-pattern' && typeof parsed.patternId === 'string') {
+      return { kind: 'detector-pattern', patternId: parsed.patternId };
+    }
+  } catch {
+    return null;
   }
-  if (purged > 0) log(`${asset.id}: purged ${purged} binned detector cache rows`);
+  return null;
 };
 
 const readVariantMeasurement = async (
@@ -1522,14 +1539,17 @@ const detectorVariantCacheKeys = (variantId: string, viewId: BinaryViewId): read
   JSON.stringify({ kind: 'detector-variant', version: 1, variantId, viewId }),
 ];
 
-const detectorPatternId = (variantId: string, viewId: BinaryViewId): string => {
+const detectorPatternId = (variantId: string, viewId: BinaryViewId): string =>
+  `${detectorPatternPrefix(variantId)}${viewId}`;
+
+const detectorPatternPrefix = (variantId: string): string => {
   const area = variantId.includes('flood') || variantId.includes('component') ? 'flood' : 'matcher';
   const shortId = variantId
     .replace(/-control$/, '')
     .replace(/-candidate$/, '')
     .replace(/-components?/, '')
     .replace(/-connected-/, '-ccl-');
-  return `${shortId}:${area}:${viewId}`;
+  return `${shortId}:${area}:`;
 };
 
 const measureBinaryReadVariants = async (

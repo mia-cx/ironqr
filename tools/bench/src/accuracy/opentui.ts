@@ -496,7 +496,7 @@ export class BenchOpenTuiDashboard {
     const recentRows = fallbackRecentRows;
     const eventRows = fallbackRecentRows;
 
-    panels.header.content = headerText(this.dashboard);
+    panels.header.content = headerText(this.dashboard, contentWidth);
     if (this.dashboard.commandName === 'study' && panels.detectorChart) {
       panels.chart.box.visible = showStudyViewChart;
       panels.chart.box.width = showStudyViewChart ? '42%' : 0;
@@ -968,15 +968,18 @@ const cacheTotals = (dashboard: BenchDashboardModel) => {
 const truncateLine = (value: string, width: number): string =>
   value.length > width ? value.slice(0, Math.max(0, width - 1)) : value;
 
-const headerText = (dashboard: BenchDashboardModel): string => {
+const headerText = (dashboard: BenchDashboardModel, width: number): string => {
   const completed =
     dashboard.commandName === 'study' ? dashboard.studyCompletedUnits : dashboard.completedJobs;
   const total = dashboard.commandName === 'study' ? dashboard.studyTotalUnits : dashboard.totalJobs;
   const percent = clamp01(total > 0 ? completed / total : 0);
-  const completeWidth = Math.round(percent * PROGRESS_BAR_WIDTH);
-  const progress = `${'█'.repeat(completeWidth)}${'░'.repeat(PROGRESS_BAR_WIDTH - completeWidth)}`;
+  const labelWidth = `IRONQR BENCH  ${stageBadge(dashboard.stage)}  `.length;
   const suffix = dashboard.commandName === 'study' ? '' : `  ${dashboard.message}`;
-  return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}  ${completed}/${total} jobs${suffix}`;
+  const countText = `  ${completed}/${total} jobs${suffix}`;
+  const dynamicBarWidth = Math.max(PROGRESS_BAR_WIDTH, width - labelWidth - countText.length - 1);
+  const completeWidth = Math.round(percent * dynamicBarWidth);
+  const progress = `${'█'.repeat(completeWidth)}${'░'.repeat(dynamicBarWidth - completeWidth)}`;
+  return `IRONQR BENCH  ${stageBadge(dashboard.stage)}  ${progress}${countText}`;
 };
 
 const studyJobProgress = (dashboard: BenchDashboardModel): string =>

@@ -31,6 +31,7 @@ export const openStudyCache = async <AssetResult>(
   let misses = 0;
   let writes = 0;
   let invalidRows = 0;
+  let purgedRows = 0;
   let saveCounter = 0;
   let saveTail = Promise.resolve();
 
@@ -91,8 +92,22 @@ export const openStudyCache = async <AssetResult>(
       if (!options.enabled) return false;
       const deleted = entries.delete(entryKey(asset, cacheKey));
       if (!deleted) return false;
+      purgedRows += 1;
       await save();
       return true;
+    },
+    async purge(shouldRemove) {
+      if (!options.enabled) return 0;
+      let removed = 0;
+      for (const [key, entry] of entries) {
+        if (!shouldRemove(entry.cacheKey)) continue;
+        entries.delete(key);
+        removed += 1;
+      }
+      if (removed === 0) return 0;
+      purgedRows += removed;
+      await save();
+      return removed;
     },
     summary() {
       return {
@@ -102,6 +117,7 @@ export const openStudyCache = async <AssetResult>(
         misses,
         writes,
         invalidRows,
+        purgedRows,
       };
     },
   };
