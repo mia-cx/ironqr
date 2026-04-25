@@ -53,6 +53,7 @@ describe('study plugin contract', () => {
       flags: { 'max-assets': 0 },
       reports: { accuracy: async () => null, performance: async () => null },
       cache: {
+        has: () => false,
         read: async () => null,
         write: async () => {},
         summary: () => ({

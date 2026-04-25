@@ -17,6 +17,8 @@ import {
   type BinaryView,
   type BinaryViewId,
   createViewBank,
+  listDefaultBinaryViewIds,
+  listDefaultProposalViewIds,
   readBinaryPixel,
   type ViewBank,
 } from '../../../../packages/ironqr/src/pipeline/views.js';
@@ -40,6 +42,7 @@ interface ImageProcessingConfig extends Record<string, unknown> {
 }
 
 interface ImageProcessingAssetResult {
+  readonly cacheHit?: boolean;
   readonly assetId: string;
   readonly label: 'qr-pos' | 'qr-neg';
   readonly width: number;
@@ -437,13 +440,16 @@ function makeImageProcessingStudyPlugin(input: {
     }),
     runAsset: async ({ asset, config, cache, signal, log }) => {
       if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
+      if (config.focus === 'binary-prefilter-signals') {
+        const cached = await readCachedDetectorAssetResult(asset, config, cache, log);
+        if (cached) return cached;
+      }
       const image = await asset.loadImage();
       const normalized = createNormalizedImage(image);
       const spans: ScanTimingSpan[] = [];
       const metricsSink = { record: (span: ScanTimingSpan) => spans.push(span) };
       const viewBank = createViewBank(normalized, { metricsSink });
-      const viewIds =
-        config.viewSet === 'all' ? viewBank.listBinaryViewIds() : viewBank.listProposalViewIds();
+      const viewIds = detectorStudyViewIds(config);
 
       log(
         `${asset.id}: profiling ${viewIds.length} binary view identities over ${sharedPlaneCount(viewIds)} shared threshold planes (${config.focus})`,
@@ -674,6 +680,162 @@ const detectorTimingId = (viewId: BinaryViewId, variant: string, detector: strin
 
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
   new Set(viewIds.map((viewId) => viewId.split(':').slice(0, 2).join(':'))).size;
+
+const detectorStudyViewIds = (config: ImageProcessingConfig): readonly BinaryViewId[] =>
+  config.viewSet === 'all' ? listDefaultBinaryViewIds() : listDefaultProposalViewIds();
+
+const readCachedDetectorAssetResult = async (
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  config: ImageProcessingConfig,
+  cache: StudyCacheHandle<unknown>,
+  log: (message: string) => void,
+): Promise<ImageProcessingAssetResult | null> => {
+  const viewIds = detectorStudyViewIds(config);
+  const requiredIds = [
+    'inline-flood-control',
+    'run-map-matcher-control',
+    ...FLOOD_CANDIDATES.map((candidate) => candidate.id),
+    ...MATCHER_CANDIDATES.map((candidate) => candidate.id),
+  ];
+  const missing = viewIds.flatMap((viewId) =>
+    requiredIds
+      .filter((variantId) => !cache.has(asset, detectorVariantCacheKey(variantId, viewId)))
+      .map((variantId) => `${variantId}:${viewId}`),
+  );
+  if (missing.length > 0) {
+    log(
+      `${asset.id}: detector cache missing ${missing.length}/${requiredIds.length * viewIds.length} variant-view rows`,
+    );
+    return null;
+  }
+
+  let floodControlMs = 0;
+  let matcherControlMs = 0;
+  const floodVariants = new Map<string, DetectorVariantMeasurement>();
+  const matcherVariants = new Map<string, DetectorVariantMeasurement>();
+
+  for (const viewId of viewIds) {
+    const floodControl = await readVariantMeasurement(asset, cache, 'inline-flood-control', viewId);
+    const matcherControl = await readVariantMeasurement(
+      asset,
+      cache,
+      'run-map-matcher-control',
+      viewId,
+    );
+    if (!floodControl || !matcherControl) return null;
+    floodControlMs += floodControl.durationMs;
+    matcherControlMs += matcherControl.durationMs;
+
+    for (const candidate of FLOOD_CANDIDATES) {
+      const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
+      if (!measured) return null;
+      mergeDetectorVariant(
+        floodVariants,
+        compareVariant(candidate.id, 'flood', floodControl.signature, measured, candidate.note),
+      );
+    }
+    for (const candidate of MATCHER_CANDIDATES) {
+      const measured = await readVariantMeasurement(asset, cache, candidate.id, viewId);
+      if (!measured) return null;
+      mergeDetectorVariant(
+        matcherVariants,
+        compareVariant(
+          candidate.id,
+          candidate.id === 'shared-run-length-detector-artifacts' ? 'flood+matcher' : 'matcher',
+          matcherControl.signature,
+          measured,
+          candidate.note,
+        ),
+      );
+    }
+  }
+
+  log(`${asset.id}: detector cache hit; no variant work queued`);
+  return {
+    cacheHit: true,
+    assetId: asset.id,
+    label: asset.label,
+    width: 0,
+    height: 0,
+    pixelCount: 0,
+    expectedTexts: asset.expectedTexts,
+    decodedTexts: [],
+    matchedTexts: [],
+    falsePositiveTexts: [],
+    success: true,
+    scanDurationMs: 0,
+    proposalGenerationMs: 0,
+    proposalSummaries: [],
+    timing: emptyTimingSummary(),
+    binarySignals: [],
+    scalarStats: [],
+    scalarFusion: emptyScalarFusionMeasurement(),
+    sharedArtifacts: emptySharedArtifactMeasurement(),
+    matcherCandidates: cachedMatcherMeasurement(matcherControlMs, viewIds, matcherVariants),
+    floodCandidates: { controlMs: round(floodControlMs), variants: [...floodVariants.values()] },
+    binaryRead: null,
+    decode: null,
+  };
+};
+
+const readVariantMeasurement = async (
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  cache: StudyCacheHandle<unknown>,
+  variantId: string,
+  viewId: BinaryViewId,
+): Promise<VariantCacheMeasurement | null> => {
+  const value = await cache.read(asset, detectorVariantCacheKey(variantId, viewId));
+  return isVariantCacheMeasurement(value) ? value : null;
+};
+
+const cachedMatcherMeasurement = (
+  controlMatcherMs: number,
+  viewIds: readonly BinaryViewId[],
+  variants: ReadonlyMap<string, DetectorVariantMeasurement>,
+): MatcherCandidateMeasurement => ({
+  variants: [...variants.values()],
+  controlMatcherMs: round(controlMatcherMs),
+  legacyControlMs: 0,
+  legacyControlOutputsEqual: true,
+  legacyControlMismatchCount: 0,
+  runMapMs: round(controlMatcherMs),
+  prunedCenterMs: 0,
+  legacyPrunedCenterMs: 0,
+  runMapOutputsEqual: true,
+  prunedCenterOutputsEqual: true,
+  legacyPrunedCenterOutputsEqual: true,
+  runMapMismatchCount: 0,
+  prunedCenterMismatchCount: 0,
+  legacyPrunedCenterMismatchCount: 0,
+  seededMatcherMs: 0,
+  legacySeededMatcherMs: 0,
+  fusedPolarityMs: 0,
+  legacyFusedPolarityMs: 0,
+  seededMatcherOutputsEqual: true,
+  legacySeededMatcherOutputsEqual: true,
+  fusedPolarityOutputsEqual: true,
+  legacyFusedPolarityOutputsEqual: true,
+  seededMatcherMismatchCount: 0,
+  legacySeededMatcherMismatchCount: 0,
+  fusedPolarityMismatchCount: 0,
+  legacyFusedPolarityMismatchCount: 0,
+  seededMatcherEstimatedCenters: 0,
+  sampledCenterCount: 0,
+  prunedCenterCount: 0,
+  fusedDarkCenterCount: 0,
+  fusedLightCenterCount: 0,
+  sharedPlaneCount: sharedPlaneCount(viewIds),
+});
+
+const emptyTimingSummary = (): ImageProcessingTimingSummary => ({
+  scalarViewMs: 0,
+  binaryPlaneMs: 0,
+  binaryViewMs: 0,
+  proposalViewMs: 0,
+  moduleSamplingMs: 0,
+  decodeAttemptMs: 0,
+  decodeCascadeMs: 0,
+});
 
 const FLOOD_CANDIDATES = [
   {

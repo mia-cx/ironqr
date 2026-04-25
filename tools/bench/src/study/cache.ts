@@ -51,6 +51,11 @@ export const openStudyCache = async <AssetResult>(
   };
 
   return {
+    has(asset, cacheKey) {
+      if (!options.enabled || options.refresh) return false;
+      const entry = entries.get(entryKey(asset, cacheKey));
+      return entry?.assetSha256 === asset.sha256 && entry.cacheKey === cacheKey;
+    },
     async read(asset, cacheKey) {
       if (!options.enabled || options.refresh) {
         misses += 1;

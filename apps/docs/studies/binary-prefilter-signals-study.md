@@ -11,7 +11,7 @@ Settled controls:
 
 The active study should contain only the current controls plus genuinely new candidates that could beat them. Exhausted references like legacy flood, filtered flood, and center-signal matcher are not active variants.
 
-The study uses detector-variant cache keys (`variantId + viewId + asset hash`) instead of one coarse whole-asset cache entry. Adding a new variant should run only that variant for each asset/view while reusing cached measurements for the current control. Retired variants stay in the historical evidence ledger but are excluded from active summary matrices.
+The study uses detector-variant cache keys (`variantId + viewId + asset hash`) instead of one coarse whole-asset cache entry. Adding a new variant should run only that variant for each asset/view while reusing cached measurements for the current control. On startup, the study checks whether all active variant/view rows for an asset already exist; fully cached assets are reported as cache hits and skip image loading/materialization entirely. Partially cached assets run only missing variant/view rows. Retired variants stay in the historical evidence ledger but are excluded from active summary matrices.
 
 ## Scope and safety bar
 

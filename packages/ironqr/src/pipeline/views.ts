@@ -210,6 +210,11 @@ export const listDefaultBinaryViewIds = (): readonly BinaryViewId[] =>
   );
 
 /**
+ * Lists default production proposal-view ids without requiring an image.
+ */
+export const listDefaultProposalViewIds = (): readonly BinaryViewId[] => [...PROPOSAL_VIEW_IDS];
+
+/**
  * Reads one polarity-aware binary bit from a binary view.
  *
  * @returns `1` for dark and `0` for light.

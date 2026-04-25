@@ -23,6 +23,7 @@ export interface StudyReportReaders {
 }
 
 export interface StudyCacheHandle<AssetResult = unknown> {
+  readonly has: (asset: CorpusBenchAsset, cacheKey: string) => boolean;
   readonly read: (asset: CorpusBenchAsset, cacheKey: string) => Promise<AssetResult | null>;
   readonly write: (asset: CorpusBenchAsset, cacheKey: string, result: AssetResult) => Promise<void>;
   readonly summary: () => {

@@ -616,12 +616,16 @@ const runPlugin = async (input: {
           log: input.log,
         });
         if (!input.plugin.usesInternalCache) await input.cache.write(asset, cacheKey, result);
+        const resultWasCached =
+          result !== null &&
+          typeof result === 'object' &&
+          (result as { cacheHit?: unknown }).cacheHit === true;
         input.progress.onScanFinished({
           engineId: input.plugin.id,
           assetId: asset.id,
           relativePath: asset.relativePath,
-          result: studyUnitResult(input.plugin.id, asset, result, false),
-          wroteToCache: input.cache.summary().enabled,
+          result: studyUnitResult(input.plugin.id, asset, result, resultWasCached),
+          wroteToCache: !resultWasCached && input.cache.summary().enabled,
         });
         input.progress.onMessage(`study asset finished ${asset.id}`);
         return result;
