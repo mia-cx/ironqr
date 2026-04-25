@@ -1817,6 +1817,7 @@ const measureFloodCandidateVariants = async (
         control.measurement.outputCount,
         control.cached,
       );
+      await yieldToDashboard();
     }
 
     for (const candidate of ACTIVE_FLOOD_CANDIDATES) {
@@ -1857,8 +1858,8 @@ const measureFloodCandidateVariants = async (
         log(
           `${assetId}: flood ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
         );
-        await yieldToDashboard();
       }
+      await yieldToDashboard();
     }
   }
 
@@ -1918,6 +1919,7 @@ const measureMatcherCandidateVariants = async (
         control.measurement.outputCount,
         control.cached,
       );
+      await yieldToDashboard();
     }
 
     for (const candidate of ACTIVE_MATCHER_CANDIDATES) {
@@ -1969,8 +1971,8 @@ const measureMatcherCandidateVariants = async (
         log(
           `${assetId}: matcher ${shortVariantId(candidate.id)} ${shortBinaryViewId(viewId)} ${measured.cached ? 'cache hit' : 'fresh'} p=${measured.measurement.outputCount}`,
         );
-        await yieldToDashboard();
       }
+      await yieldToDashboard();
     }
   }
 
