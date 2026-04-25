@@ -39,6 +39,7 @@ import { viewOrderStudyPlugin, viewProposalsStudyPlugin } from './view-order.js'
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
 const MAX_STUDY_WORKERS = 8;
+const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 
 type StudyReport = BenchReportEnvelope<'study-report', Record<string, unknown>, StudyReportDetails>;
 
@@ -137,12 +138,13 @@ export const runStudyBenchmark = async (
   progress.onMessage(`study ${studyId} loaded ${assets.length} assets seed=${selection.seed}`);
   const logs: string[] = [];
   const log = (message: string): void => {
-    logs.push(message);
+    if (!message.startsWith(STUDY_TIMING_PREFIX)) logs.push(message);
     if (options.progressEnabled === false) return;
     if (process.stderr.isTTY) {
       progress.onMessage(message);
       return;
     }
+    if (message.startsWith(STUDY_TIMING_PREFIX)) return;
     process.stdout.write(`[bench study:${studyId}] ${message}\n`);
   };
   const reports = createStudyReportReaders(repoRoot);

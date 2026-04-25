@@ -240,6 +240,7 @@ export const viewProposalsStudyPlugin: StudyPlugin<
         if (event.type !== 'proposal-view-generated') return;
         generatedViewCount += 1;
         generatedProposalCount += event.proposalCount;
+        logStudyTiming(log, studyTimingId(event.binaryViewId), event.detectorDurationMs);
         log(
           `${asset.id}: view ${generatedViewCount} ${event.binaryViewId} proposals=${event.proposalCount} total=${generatedProposalCount}`,
         );
@@ -308,6 +309,17 @@ export const viewOrderStudyPlugin: StudyPlugin<
   id: 'view-order',
   title: 'IronQR view-order study',
   description: 'Compatibility alias for the proposal-view study; use view-proposals for new runs.',
+};
+
+const STUDY_TIMING_PREFIX = '__bench_study_timing__';
+
+const logStudyTiming = (log: (message: string) => void, id: string, durationMs: number): void => {
+  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs })}`);
+};
+
+const studyTimingId = (viewId: string): string => {
+  const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
+  return `${threshold}:${polarity}:${scalar}`;
 };
 
 const buildViewRows = (

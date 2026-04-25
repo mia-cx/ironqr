@@ -13,7 +13,10 @@ import {
   onBenchRunManifestStarted,
   onBenchRunScanFinished,
   onBenchRunScanStarted,
+  onBenchRunStudyTiming,
 } from './model.js';
+
+const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 
 export interface BenchProgressReporter {
   onManifestStarted: () => void;
@@ -145,6 +148,12 @@ export const createBenchProgressReporter = (options: {
       queueRender();
     },
     onMessage: (message) => {
+      const studyTiming = parseStudyTimingMessage(message);
+      if (studyTiming) {
+        onBenchRunStudyTiming(dashboard, studyTiming);
+        queueRender();
+        return;
+      }
       dashboard.message = `${options.commandName}: ${message}`;
       dashboard.studyEvents.push(message);
       if (dashboard.studyEvents.length > 20) dashboard.studyEvents.shift();
@@ -162,4 +171,20 @@ export const createBenchProgressReporter = (options: {
       stopped = true;
     },
   };
+};
+
+const parseStudyTimingMessage = (
+  message: string,
+): { readonly id: string; readonly durationMs: number } | null => {
+  if (!message.startsWith(STUDY_TIMING_PREFIX)) return null;
+  try {
+    const payload = JSON.parse(message.slice(STUDY_TIMING_PREFIX.length)) as Record<
+      string,
+      unknown
+    >;
+    if (typeof payload.id !== 'string' || typeof payload.durationMs !== 'number') return null;
+    return { id: payload.id, durationMs: payload.durationMs };
+  } catch {
+    return null;
+  }
 };

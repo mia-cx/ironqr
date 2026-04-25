@@ -63,6 +63,14 @@ export interface SlowScan {
   readonly durationMs: number;
 }
 
+export interface StudyTimingStats {
+  readonly id: string;
+  totalMs: number;
+  count: number;
+  maxMs: number;
+  lastMs: number;
+}
+
 export interface BenchDashboardModel {
   commandName: string;
   stage: DashboardStage;
@@ -81,6 +89,7 @@ export interface BenchDashboardModel {
   readonly recentScans: RecentScan[];
   readonly slowestFreshScans: SlowScan[];
   readonly studyEvents: string[];
+  readonly studyTimings: Map<string, StudyTimingStats>;
 }
 
 export const MAX_SLOWEST_FRESH_SCANS = 8;
@@ -126,6 +135,7 @@ export const createBenchDashboardModel = (): BenchDashboardModel => ({
   recentScans: [],
   slowestFreshScans: [],
   studyEvents: [],
+  studyTimings: new Map(),
 });
 
 export const ensureDashboardEngine = (
@@ -312,6 +322,28 @@ export const onDashboardScanFinished = (
   }
   recordRecentScan(model, event, nowMs);
   model.activeScans.delete(activeScanKey(event.engineId, event.assetId));
+};
+
+export const onDashboardStudyTiming = (
+  model: BenchDashboardModel,
+  event: { readonly id: string; readonly durationMs: number },
+): void => {
+  if (!event.id.trim() || !Number.isFinite(event.durationMs) || event.durationMs < 0) return;
+  const existing = model.studyTimings.get(event.id);
+  if (existing) {
+    existing.totalMs += event.durationMs;
+    existing.count += 1;
+    existing.maxMs = Math.max(existing.maxMs, event.durationMs);
+    existing.lastMs = event.durationMs;
+    return;
+  }
+  model.studyTimings.set(event.id, {
+    id: event.id,
+    totalMs: event.durationMs,
+    count: 1,
+    maxMs: event.durationMs,
+    lastMs: event.durationMs,
+  });
 };
 
 export const onDashboardDone = (model: BenchDashboardModel): void => {

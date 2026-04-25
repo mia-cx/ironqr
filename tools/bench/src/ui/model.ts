@@ -5,6 +5,7 @@ export type {
   DashboardStage as BenchRunPhase,
   RecentScan,
   SlowScan,
+  StudyTimingStats,
   TimingBucketStats,
   TimingBuckets,
 } from '../accuracy/dashboard/model.js';
@@ -24,5 +25,6 @@ export {
   onDashboardManifestStarted as onBenchRunManifestStarted,
   onDashboardScanFinished as onBenchRunScanFinished,
   onDashboardScanStarted as onBenchRunScanStarted,
+  onDashboardStudyTiming as onBenchRunStudyTiming,
   timingBucketKeys,
 } from '../accuracy/dashboard/model.js';

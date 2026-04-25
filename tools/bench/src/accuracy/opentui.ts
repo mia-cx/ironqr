@@ -1,3 +1,4 @@
+import { formatCompactDuration } from './dashboard/format.js';
 import { renderRunFooter } from './dashboard/frame.js';
 import type { BenchDashboardModel } from './dashboard/model.js';
 import { renderScorecard } from './dashboard/scorecard.js';
@@ -423,27 +424,51 @@ const renderStudyProgress = (
   options: { readonly width: number },
 ): readonly string[] => {
   const cache = cacheTotals(dashboard);
-  return [
-    'study progress',
+  const lines = [
+    'study timing by view/path',
     truncateLine(
       `phase=${dashboard.stage} workers=${dashboard.workerCount || '-'} ${dashboard.message}`,
       options.width,
     ),
     truncateLine(
-      `assets prepared ${dashboard.preparedAssets}/${dashboard.assetCount}`,
-      options.width,
-    ),
-    truncateLine(
-      `study units complete ${dashboard.completedJobs}/${dashboard.totalJobs}`,
-      options.width,
-    ),
-    truncateLine(`active units ${dashboard.activeScans.size}`, options.width),
-    truncateLine(
-      `cache ${dashboard.cacheEnabled ? 'on' : 'off'} hits=${cache.hits} misses=${cache.misses} writes=${cache.writes}`,
+      `assets ${dashboard.preparedAssets}/${dashboard.assetCount} units ${dashboard.completedJobs}/${dashboard.totalJobs} active=${dashboard.activeScans.size} cache=${dashboard.cacheEnabled ? 'on' : 'off'} h/m/w=${cache.hits}/${cache.misses}/${cache.writes}`,
       options.width,
     ),
   ];
+  lines.push(...renderStudyTimingBars(dashboard, options.width));
+  return lines;
 };
+
+const renderStudyTimingBars = (
+  dashboard: BenchDashboardModel,
+  width: number,
+): readonly string[] => {
+  const rows = [...dashboard.studyTimings.values()]
+    .sort((left, right) => right.totalMs - left.totalMs)
+    .slice(0, 8);
+  if (rows.length === 0) return [truncateLine('waiting for view timing samples…', width)];
+  const labelWidth = Math.min(26, Math.max(12, Math.floor(width * 0.34)));
+  const valueWidth = 20;
+  const barWidth = Math.max(8, width - labelWidth - valueWidth - 4);
+  const maxTotal = Math.max(1, ...rows.map((row) => row.totalMs));
+  return rows.map((row) => {
+    const filled = Math.max(1, Math.round((row.totalMs / maxTotal) * barWidth));
+    const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, barWidth - filled))}`;
+    const average = row.totalMs / Math.max(1, row.count);
+    return truncateLine(
+      `${padStudyCell(row.id, labelWidth)} ${bar} ${formatStudyTiming(row.totalMs, average, row.count)}`,
+      width,
+    );
+  });
+};
+
+const padStudyCell = (value: string, width: number): string => {
+  const truncated = truncateLine(value, width);
+  return `${truncated}${' '.repeat(Math.max(0, width - truncated.length))}`;
+};
+
+const formatStudyTiming = (totalMs: number, averageMs: number, count: number): string =>
+  `${formatCompactDuration(totalMs)} avg=${formatCompactDuration(averageMs)} n=${count}`;
 
 const renderStudyEvents = (
   dashboard: BenchDashboardModel,

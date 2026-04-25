@@ -354,11 +354,11 @@ function makeImageProcessingStudyPlugin(input: {
       let proposalViewIndex = 0;
       for (const viewId of viewIds) {
         proposalViewIndex += 1;
-        proposalSummaries.push(
-          generateProposalBatchForView(viewBank, viewId, {
-            maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
-          }).summary,
-        );
+        const summary = generateProposalBatchForView(viewBank, viewId, {
+          maxProposalsPerView: EXHAUSTIVE_SCAN_CEILING,
+        }).summary;
+        proposalSummaries.push(summary);
+        logStudyTiming(log, studyTimingId(viewId), summary.detectorDurationMs);
         log(`${asset.id}: proposal path ${proposalViewIndex}/${viewIds.length} ${viewId}`);
         await yieldToDashboard();
       }
@@ -484,6 +484,17 @@ function makeImageProcessingStudyPlugin(input: {
     }),
   };
 }
+
+const STUDY_TIMING_PREFIX = '__bench_study_timing__';
+
+const logStudyTiming = (log: (message: string) => void, id: string, durationMs: number): void => {
+  log(`${STUDY_TIMING_PREFIX}${JSON.stringify({ id, durationMs })}`);
+};
+
+const studyTimingId = (viewId: BinaryViewId): string => {
+  const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
+  return `${threshold}:${polarity}:${scalar}`;
+};
 
 const sharedPlaneCount = (viewIds: readonly BinaryViewId[]): number =>
   new Set(viewIds.map((viewId) => viewId.split(':').slice(0, 2).join(':'))).size;
