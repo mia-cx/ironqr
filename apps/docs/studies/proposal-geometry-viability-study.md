@@ -73,12 +73,49 @@ Do not canonize semantic filtering from proposal-only evidence if proposal signa
 
 ## Results
 
-Pending. Run the study before changing production geometry scoring.
+Full proposal-only geometry run generated `2026-04-25T22:32:17.278Z` from commit `e49f2d09e6ead5ccc0e051300e6d23e6273f073c` with dirty working tree state. Reports:
+
+```text
+tools/bench/reports/full/study/study-proposal-geometry-viability.json
+tools/bench/reports/study/study-proposal-geometry-viability.summary.json
+```
+
+Run shape:
+
+```text
+assets=203 positives=60 negatives=143
+detectorPolicyId=no-flood maxViews=54 maxProposals=24
+cache hits=0 misses=406 writes=203
+```
+
+| Variant | Pos assets with proposals | Neg assets with proposals | Proposals | Triples | Signature-mismatch assets | Count-mismatch assets | Triple assembly ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `baseline` | 60 | 143 | 168,366 | 540,894 | 0 | 0 | 404.17 |
+| `aspect-penalty` | 60 | 143 | 168,366 | 540,894 | 144 | 0 | 461.36 |
+| `aspect-reject-conservative` | 60 | 143 | 160,996 | 497,005 | 186 | 149 | 488.11 |
+| `scale-consistency-penalty` | 60 | 143 | 168,366 | 540,894 | 127 | 0 | 469.53 |
+| `aspect-scale-penalty` | 60 | 143 | 168,366 | 540,894 | 158 | 0 | 445.54 |
+
+All variants preserved asset-level positive proposal coverage (`60/60`) and negative proposal-asset behavior (`143/143`). The soft penalties changed proposal ordering/signatures without changing proposal counts. `aspect-reject-conservative` reduced the frontier by `7,370` proposals (`4.38%`) and `43,889` triples (`8.11%`) while preserving asset-level proposal coverage.
+
+Largest `aspect-reject-conservative` proposal reductions included:
+
+```text
+asset-66fd3d030cd7b6f6 -NEG: -215 proposals, -707 triples
+asset-43d79ea0fc29f9e1 -NEG: -161 proposals, -365 triples
+asset-bd1e51041cfe8d77 +QR:  -160 proposals, -433 triples
+asset-a443559fe831be16 -NEG: -154 proposals, -266 triples
+asset-53cd380c4515b85b -NEG: -149 proposals, -347 triples
+```
 
 ## Interpretation plan
 
-First compare asset-level proposal coverage against `baseline`. Any variant that loses a positive asset is binned. Then inspect proposal and triple count deltas to distinguish useful frontier reduction from harmless reshuffling. Soft penalties with zero positive loss should move to decode confirmation; conservative hard rejection needs stronger evidence because it removes triples.
+First compare asset-level proposal coverage against `baseline`. No variant lost a positive asset, so all remain viable for follow-up. The soft penalties are ranking/frontier-shape candidates: they changed proposal signatures on many assets but did not reduce count. `aspect-reject-conservative` is the only variant that materially reduces triples/proposals, but because it removes triples it requires decode confirmation before production use.
+
+The timing data should not drive promotion: semantic penalties add triple-scoring work (`+41ms` to `+84ms` triple assembly), while scan-time decreases are dominated by detector/view timing variance from rerunning each variant.
 
 ## Conclusion / evidence-backed decision
 
-Pending generated study evidence.
+Advance `aspect-reject-conservative` to decode confirmation as the geometry realism filter candidate: it preserved proposal asset coverage and removed `43,889` triples / `7,370` proposals. Do not canonize it from proposal-only data.
+
+Keep `aspect-scale-penalty` as the soft scoring backup because it combines both signals and had lower added assembly cost than the individual soft penalties in this run. Bin standalone `aspect-penalty` and `scale-consistency-penalty` unless later decode evidence specifically needs them.
