@@ -9,6 +9,12 @@ import {
   getOklabPlanes,
 } from '../../../../packages/ironqr/src/pipeline/frame.js';
 import {
+  detectMatcherFinders,
+  detectMatcherFindersWithCenterSignal,
+  detectMatcherFindersWithRunMaps,
+  type FinderEvidence,
+} from '../../../../packages/ironqr/src/pipeline/proposals.js';
+import {
   type BinaryView,
   type BinaryViewId,
   createViewBank,
@@ -118,6 +124,10 @@ interface MatcherCandidateMeasurement {
   readonly controlMatcherMs: number;
   readonly runMapMs: number;
   readonly prunedCenterMs: number;
+  readonly runMapOutputsEqual: boolean;
+  readonly prunedCenterOutputsEqual: boolean;
+  readonly runMapMismatchCount: number;
+  readonly prunedCenterMismatchCount: number;
   readonly fusedPolarityMs: number;
   readonly seededMatcherEstimatedCenters: number;
   readonly sampledCenterCount: number;
@@ -177,6 +187,10 @@ interface ImageProcessingTotals {
   readonly matcherControlMs: number;
   readonly matcherRunMapMs: number;
   readonly matcherPrunedCenterMs: number;
+  readonly matcherRunMapOutputsEqual: boolean;
+  readonly matcherPrunedCenterOutputsEqual: boolean;
+  readonly matcherRunMapMismatchCount: number;
+  readonly matcherPrunedCenterMismatchCount: number;
   readonly matcherFusedPolarityMs: number;
   readonly matcherSeededEstimatedCenters: number;
   readonly matcherSampledCenterCount: number;
@@ -573,6 +587,10 @@ const measureMatcherCandidateVariants = async (
   let prunedCenterCount = 0;
   let fusedDarkCenterCount = 0;
   let fusedLightCenterCount = 0;
+  let runMapOutputsEqual = true;
+  let prunedCenterOutputsEqual = true;
+  let runMapMismatchCount = 0;
+  let prunedCenterMismatchCount = 0;
 
   for (const summary of controlSummaries) {
     seededMatcherEstimatedCenters +=
@@ -581,29 +599,37 @@ const measureMatcherCandidateVariants = async (
 
   for (const viewId of viewIds) {
     const view = viewBank.getBinaryView(viewId);
+    const controlOutput = detectMatcherFinders(view, view.width, view.height);
+
+    const runStartedAt = performance.now();
+    const runMapOutput = detectMatcherFindersWithRunMaps(view, view.width, view.height);
+    const runElapsed = performance.now() - runStartedAt;
+    runMapMs += runElapsed;
+    const runEqual = finderOutputsEqual(controlOutput, runMapOutput);
+    runMapOutputsEqual &&= runEqual;
+    if (!runEqual) runMapMismatchCount += 1;
+    logStudyTiming(log, detectorTimingId(viewId, 'a', 'run-map-matcher'), runElapsed, 'detector');
+
+    const prunedStartedAt = performance.now();
+    const prunedOutput = detectMatcherFindersWithCenterSignal(view, view.width, view.height);
+    const prunedElapsed = performance.now() - prunedStartedAt;
+    prunedCenterMs += prunedElapsed;
     const pruned = measurePrunedMatcherCenters(view);
-    prunedCenterMs += pruned.durationMs;
     sampledCenterCount += pruned.sampledCenterCount;
     prunedCenterCount += pruned.prunedCenterCount;
-    logStudyTiming(
-      log,
-      detectorTimingId(viewId, 'b', 'pruned-centers'),
-      pruned.durationMs,
-      'detector',
+    const prunedEqual = finderOutputsEqual(controlOutput, prunedOutput);
+    prunedCenterOutputsEqual &&= prunedEqual;
+    if (!prunedEqual) prunedCenterMismatchCount += 1;
+    logStudyTiming(log, detectorTimingId(viewId, 'b', 'pruned-matcher'), prunedElapsed, 'detector');
+    log(
+      `${assetId}: matcher output candidates ${viewId} runEqual=${runEqual} prunedEqual=${prunedEqual}`,
     );
-    log(`${assetId}: matcher candidate-pruning prototype ${viewId}`);
     await yieldToDashboard();
   }
 
   const planeViewIds = uniquePlaneRepresentativeIds(viewIds);
   for (const viewId of planeViewIds) {
     const view = viewBank.getBinaryView(viewId);
-    const runStartedAt = performance.now();
-    measurePolarityNeutralRuns(view);
-    const runElapsed = performance.now() - runStartedAt;
-    runMapMs += runElapsed;
-    logStudyTiming(log, detectorTimingId(viewId, 'a', 'run-map'), runElapsed, 'detector');
-
     const fusedStartedAt = performance.now();
     const fused = measureFusedPolarityMatcherCenters(view);
     const fusedElapsed = performance.now() - fusedStartedAt;
@@ -625,9 +651,34 @@ const measureMatcherCandidateVariants = async (
     prunedCenterCount,
     fusedDarkCenterCount,
     fusedLightCenterCount,
+    runMapOutputsEqual,
+    prunedCenterOutputsEqual,
+    runMapMismatchCount,
+    prunedCenterMismatchCount,
     sharedPlaneCount: planeViewIds.length,
   };
 };
+
+const finderOutputsEqual = (
+  left: readonly FinderEvidence[],
+  right: readonly FinderEvidence[],
+): boolean => finderOutputSignature(left) === finderOutputSignature(right);
+
+const finderOutputSignature = (finders: readonly FinderEvidence[]): string =>
+  finders.map(finderSignature).sort().join('|');
+
+const finderSignature = (finder: FinderEvidence): string =>
+  [
+    finder.source,
+    roundForSignature(finder.centerX),
+    roundForSignature(finder.centerY),
+    roundForSignature(finder.moduleSize),
+    roundForSignature(finder.hModuleSize),
+    roundForSignature(finder.vModuleSize),
+    roundForSignature(finder.score ?? 0),
+  ].join(':');
+
+const roundForSignature = (value: number): string => value.toFixed(3);
 
 const measurePrunedMatcherCenters = (
   view: BinaryView,
@@ -706,27 +757,6 @@ const uniquePlaneRepresentativeIds = (
     representatives.push(viewId);
   }
   return representatives;
-};
-
-const measurePolarityNeutralRuns = (
-  view: BinaryView,
-): { readonly horizontalRunCount: number; readonly verticalRunCount: number } => {
-  const { width, height } = view;
-  const data = view.plane.data;
-  let horizontalRunCount = 0;
-  let verticalRunCount = 0;
-  for (let y = 0; y < height; y += 1) {
-    const row = y * width;
-    for (let x = 0; x < width; x += 1) {
-      const index = row + x;
-      const bit = data[index] ?? 0;
-      if (x === 0) horizontalRunCount += 1;
-      else if ((data[index - 1] ?? 0) !== bit) horizontalRunCount += 1;
-      if (y === 0) verticalRunCount += 1;
-      else if ((data[index - width] ?? 0) !== bit) verticalRunCount += 1;
-    }
-  }
-  return { horizontalRunCount, verticalRunCount };
 };
 
 const measureBinaryReadVariants = async (
@@ -1031,6 +1061,10 @@ const summarizeImageProcessingStudy = ({
       totals.matcherControlMs += result.matcherCandidates.controlMatcherMs;
       totals.matcherRunMapMs += result.matcherCandidates.runMapMs;
       totals.matcherPrunedCenterMs += result.matcherCandidates.prunedCenterMs;
+      totals.matcherRunMapOutputsEqual &&= result.matcherCandidates.runMapOutputsEqual;
+      totals.matcherPrunedCenterOutputsEqual &&= result.matcherCandidates.prunedCenterOutputsEqual;
+      totals.matcherRunMapMismatchCount += result.matcherCandidates.runMapMismatchCount;
+      totals.matcherPrunedCenterMismatchCount += result.matcherCandidates.prunedCenterMismatchCount;
       totals.matcherFusedPolarityMs += result.matcherCandidates.fusedPolarityMs;
       totals.matcherSeededEstimatedCenters +=
         result.matcherCandidates.seededMatcherEstimatedCenters;
@@ -1151,6 +1185,10 @@ const emptyTotals = (): MutableTotals => ({
   matcherRunMapMs: 0,
   matcherPrunedCenterMs: 0,
   matcherFusedPolarityMs: 0,
+  matcherRunMapOutputsEqual: true,
+  matcherPrunedCenterOutputsEqual: true,
+  matcherRunMapMismatchCount: 0,
+  matcherPrunedCenterMismatchCount: 0,
   matcherSeededEstimatedCenters: 0,
   matcherSampledCenterCount: 0,
   matcherPrunedCenterCount: 0,
@@ -1233,6 +1271,10 @@ const finalizeTotals = (totals: MutableTotals): ImageProcessingTotals => ({
   matcherRunMapMs: round(totals.matcherRunMapMs),
   matcherPrunedCenterMs: round(totals.matcherPrunedCenterMs),
   matcherFusedPolarityMs: round(totals.matcherFusedPolarityMs),
+  matcherRunMapOutputsEqual: totals.matcherRunMapOutputsEqual,
+  matcherPrunedCenterOutputsEqual: totals.matcherPrunedCenterOutputsEqual,
+  matcherRunMapMismatchCount: totals.matcherRunMapMismatchCount,
+  matcherPrunedCenterMismatchCount: totals.matcherPrunedCenterMismatchCount,
   matcherSeededEstimatedCenters: totals.matcherSeededEstimatedCenters,
   matcherSampledCenterCount: totals.matcherSampledCenterCount,
   matcherPrunedCenterCount: totals.matcherPrunedCenterCount,
@@ -1280,7 +1322,7 @@ const buildVariantSummaries = (
       id: 'matcher-run-map-crosscheck-prototype',
       title: 'Run-map-backed matcher cross-check prototype',
       controlMetric: 'current matcher detector duration',
-      candidateMetric: 'one polarity-neutral row/column run-map build per scalar/threshold plane',
+      candidateMetric: 'output-producing matcher using row/column run-map cross-checks',
       controlMs: totals.matcherControlMs,
       candidateMs: totals.matcherRunMapMs,
       deltaMs: round(totals.matcherControlMs - totals.matcherRunMapMs),
@@ -1288,13 +1330,13 @@ const buildVariantSummaries = (
         totals.matcherControlMs - totals.matcherRunMapMs,
         totals.matcherControlMs,
       ),
-      evidence: `${totals.matcherSharedPlaneCount} shared plane artifacts. Prototype measures the reusable artifact matcher cross-checks would consume; behavior-equivalence still needs production matcher integration.`,
+      evidence: `finder outputs equal=${totals.matcherRunMapOutputsEqual}; mismatched views=${totals.matcherRunMapMismatchCount}; ${totals.matcherSharedPlaneCount} shared planes measured.`,
     });
     variants.push({
       id: 'matcher-candidate-pruning-prototype',
       title: 'Cheap matcher center pruning prototype',
       controlMetric: 'current matcher detector duration',
-      candidateMetric: 'cheap local center-signal scan before expensive matcher checks',
+      candidateMetric: 'output-producing matcher guarded by cheap local center-signal filter',
       controlMs: totals.matcherControlMs,
       candidateMs: totals.matcherPrunedCenterMs,
       deltaMs: round(totals.matcherControlMs - totals.matcherPrunedCenterMs),
@@ -1302,7 +1344,7 @@ const buildVariantSummaries = (
         totals.matcherControlMs - totals.matcherPrunedCenterMs,
         totals.matcherControlMs,
       ),
-      evidence: `${totals.matcherPrunedCenterCount}/${totals.matcherSampledCenterCount} sampled centers survived the cheap signal filter.`,
+      evidence: `finder outputs equal=${totals.matcherPrunedCenterOutputsEqual}; mismatched views=${totals.matcherPrunedCenterMismatchCount}; ${totals.matcherPrunedCenterCount}/${totals.matcherSampledCenterCount} sampled centers survived the cheap signal filter.`,
     });
     variants.push({
       id: 'matcher-seeded-rescue-estimate',

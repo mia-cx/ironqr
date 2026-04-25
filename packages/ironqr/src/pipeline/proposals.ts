@@ -831,18 +831,53 @@ const createRowScanEvidence = (
   };
 };
 
-const detectMatcherFinders = (
+export const detectMatcherFinders = (
   binary: Uint8Array | BinaryView,
   width: number,
   height: number,
+): FinderEvidence[] => detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck);
+
+export const detectMatcherFindersWithRunMaps = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): FinderEvidence[] => {
+  const runs = buildAxisRuns(binary, width, height);
+  return detectMatcherFindersWithCrossCheck(
+    binary,
+    width,
+    height,
+    (source, sourceWidth, sourceHeight, centerX, centerY, dx, dy) =>
+      runMapCrossCheck(source, sourceWidth, sourceHeight, runs, centerX, centerY, dx, dy),
+  );
+};
+
+export const detectMatcherFindersWithCenterSignal = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): FinderEvidence[] =>
+  detectMatcherFindersWithCrossCheck(binary, width, height, crossCheck, hasMatcherCenterSignal);
+
+const detectMatcherFindersWithCrossCheck = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  crossCheckFn: typeof crossCheck,
+  shouldCheckCenter: (
+    binary: Uint8Array | BinaryView,
+    width: number,
+    x: number,
+    y: number,
+  ) => boolean = isDarkCenter,
 ): FinderEvidence[] => {
   const evidence: FinderEvidence[] = [];
   const step = Math.max(1, Math.floor(Math.min(width, height) / 180));
   for (let y = 2; y < height - 2; y += step) {
     for (let x = 2; x < width - 2; x += step) {
-      if (pixel(binary, width, x, y) !== 0) continue;
-      const horizontal = crossCheck(binary, width, height, x, y, 1, 0);
-      const vertical = crossCheck(binary, width, height, x, y, 0, 1);
+      if (!shouldCheckCenter(binary, width, x, y)) continue;
+      const horizontal = crossCheckFn(binary, width, height, x, y, 1, 0);
+      const vertical = crossCheckFn(binary, width, height, x, y, 0, 1);
       if (!horizontal || !vertical) continue;
       const moduleSize = (horizontal.moduleSize + vertical.moduleSize) / 2;
       if (moduleSize < 0.8) continue;
@@ -922,6 +957,43 @@ const detectFloodFinders = (
     .slice(0, MAX_FINDER_EVIDENCE_TOTAL);
 };
 
+const isDarkCenter = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  x: number,
+  y: number,
+): boolean => pixel(binary, width, x, y) === 0;
+
+const hasMatcherCenterSignal = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  x: number,
+  y: number,
+): boolean => {
+  if (!isDarkCenter(binary, width, x, y)) return false;
+  const horizontalTransitions = countMatcherCenterTransitions(binary, width, x, y, 1, 0);
+  if (horizontalTransitions < 2) return false;
+  return countMatcherCenterTransitions(binary, width, x, y, 0, 1) >= 2;
+};
+
+const countMatcherCenterTransitions = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+): number => {
+  let transitions = 0;
+  let previous = pixel(binary, width, x - dx * 2, y - dy * 2);
+  for (let offset = -1; offset <= 2; offset += 1) {
+    const value = pixel(binary, width, x + dx * offset, y + dy * offset);
+    if (value !== previous) transitions += 1;
+    previous = value;
+  }
+  return transitions;
+};
+
 const crossCheck = (
   binary: Uint8Array | BinaryView,
   width: number,
@@ -995,6 +1067,164 @@ const crossCheck = (
     moduleSize: (counts[0] + counts[1] + counts[2] + counts[3] + counts[4]) / 7,
     score: ratioScore,
   };
+};
+
+interface AxisRuns {
+  readonly horizontalStart: Uint32Array;
+  readonly horizontalEnd: Uint32Array;
+  readonly verticalStart: Uint32Array;
+  readonly verticalEnd: Uint32Array;
+}
+
+const buildAxisRuns = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+): AxisRuns => {
+  const pixelCount = width * height;
+  const horizontalStart = new Uint32Array(pixelCount);
+  const horizontalEnd = new Uint32Array(pixelCount);
+  const verticalStart = new Uint32Array(pixelCount);
+  const verticalEnd = new Uint32Array(pixelCount);
+
+  for (let y = 0; y < height; y += 1) {
+    let x = 0;
+    while (x < width) {
+      const start = x;
+      const bit = pixel(binary, width, x, y);
+      while (x + 1 < width && pixel(binary, width, x + 1, y) === bit) x += 1;
+      const end = x;
+      for (let runX = start; runX <= end; runX += 1) {
+        const index = y * width + runX;
+        horizontalStart[index] = start;
+        horizontalEnd[index] = end;
+      }
+      x += 1;
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    let y = 0;
+    while (y < height) {
+      const start = y;
+      const bit = pixel(binary, width, x, y);
+      while (y + 1 < height && pixel(binary, width, x, y + 1) === bit) y += 1;
+      const end = y;
+      for (let runY = start; runY <= end; runY += 1) {
+        const index = runY * width + x;
+        verticalStart[index] = start;
+        verticalEnd[index] = end;
+      }
+      y += 1;
+    }
+  }
+
+  return { horizontalStart, horizontalEnd, verticalStart, verticalEnd };
+};
+
+const runMapCrossCheck = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  runs: AxisRuns,
+  centerX: number,
+  centerY: number,
+  dx: number,
+  dy: number,
+): ReturnType<typeof crossCheck> => {
+  const x = Math.round(centerX);
+  const y = Math.round(centerY);
+  if (pixel(binary, width, x, y) !== 0) return null;
+  const horizontal = dx !== 0;
+  const index = y * width + x;
+  const centerStart = (horizontal ? runs.horizontalStart[index] : runs.verticalStart[index]) ?? 0;
+  const centerEnd = (horizontal ? runs.horizontalEnd[index] : runs.verticalEnd[index]) ?? 0;
+  const counts: [number, number, number, number, number] = [
+    0,
+    0,
+    centerEnd - centerStart + 1,
+    0,
+    0,
+  ];
+
+  counts[1] = runLengthBefore(binary, width, height, runs, x, y, horizontal, centerStart, 255);
+  counts[0] = runLengthBefore(
+    binary,
+    width,
+    height,
+    runs,
+    x,
+    y,
+    horizontal,
+    centerStart - counts[1],
+    0,
+  );
+  counts[3] = runLengthAfter(binary, width, height, runs, x, y, horizontal, centerEnd, 255);
+  counts[4] = runLengthAfter(
+    binary,
+    width,
+    height,
+    runs,
+    x,
+    y,
+    horizontal,
+    centerEnd + counts[3],
+    0,
+  );
+
+  const ratioScore = finderRatioScore(counts);
+  if (ratioScore <= 0) return null;
+  const before = counts[0] + counts[1] + counts[2] / 2;
+  const after = counts[4] + counts[3] + counts[2] / 2;
+  const refinedX = centerX + dx * ((after - before) / 2);
+  const refinedY = centerY + dy * ((after - before) / 2);
+  return {
+    centerX: refinedX,
+    centerY: refinedY,
+    moduleSize: (counts[0] + counts[1] + counts[2] + counts[3] + counts[4]) / 7,
+    score: ratioScore,
+  };
+};
+
+const runLengthBefore = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  runs: AxisRuns,
+  x: number,
+  y: number,
+  horizontal: boolean,
+  beforeCoordinate: number,
+  expected: 0 | 255,
+): number => {
+  const coordinate = beforeCoordinate - 1;
+  if (coordinate < 0) return 0;
+  if (horizontal) {
+    if (pixel(binary, width, coordinate, y) !== expected) return 0;
+    return coordinate - (runs.horizontalStart[y * width + coordinate] ?? coordinate) + 1;
+  }
+  if (coordinate >= height || pixel(binary, width, x, coordinate) !== expected) return 0;
+  return coordinate - (runs.verticalStart[coordinate * width + x] ?? coordinate) + 1;
+};
+
+const runLengthAfter = (
+  binary: Uint8Array | BinaryView,
+  width: number,
+  height: number,
+  runs: AxisRuns,
+  x: number,
+  y: number,
+  horizontal: boolean,
+  afterCoordinate: number,
+  expected: 0 | 255,
+): number => {
+  const coordinate = afterCoordinate + 1;
+  if (horizontal) {
+    if (coordinate >= width || pixel(binary, width, coordinate, y) !== expected) return 0;
+    return (runs.horizontalEnd[y * width + coordinate] ?? coordinate) - coordinate + 1;
+  }
+  if (coordinate >= height || pixel(binary, width, x, coordinate) !== expected) return 0;
+  return (runs.verticalEnd[coordinate * width + x] ?? coordinate) - coordinate + 1;
 };
 
 const finderRatioScore = (counts: readonly number[]): number => {

@@ -132,8 +132,8 @@ Active matcher-candidate study revision:
 
 | Variant id | Purpose | Behavior-equivalent? | Notes |
 | --- | --- | --- | --- |
-| `matcher-run-map-crosscheck-prototype` | Measure row/column run-map build cost for a matcher whose cross-checks use reusable runs. | No | Candidate `a` in live timing bars. |
-| `matcher-candidate-pruning-prototype` | Measure cheap local center-signal filtering before expensive matcher checks. | No | Candidate `b`; reports sampled centers and survivors. |
+| `matcher-run-map-crosscheck-prototype` | Run the matcher with row/column run-map-backed cross-checks and compare finder output signatures to control. | Yes, study-enforced | Candidate `a` in live timing bars; report includes `finder outputs equal` and mismatch counts. |
+| `matcher-candidate-pruning-prototype` | Run the matcher with cheap local center-signal filtering and compare finder output signatures to control. | Yes, study-enforced | Candidate `b`; report includes sampled centers, survivors, output equality, and mismatch counts. |
 | `matcher-seeded-rescue-estimate` | Count how many row-scan/flood finder centers could seed matcher refinement/rescue. | No, evidence-count only | Keeps the stylized-QR rescue question visible without pretending to time an implementation. |
 | `matcher-fused-polarity-traversal-prototype` | Measure one shared-plane traversal that classifies normal-dark and inverted-dark centers together. | No | Candidate `d`; answers whether normal+inverted fusion is worth deeper work. |
 
@@ -198,7 +198,7 @@ The strongest predictors in this run were deduped finder count, matcher finder c
 
 The retired materialized-inverted candidate answered the immediate XOR-vs-interaction question for the smoke sample: materializing inverted buffers reduced inverted detector+materialization time by only 3.5% while preserving finder/proposal counts. That suggests polarity-read/XOR overhead is not the main cause of inverted cost. Most of the cost appears to come from matcher interaction with inverted semantics and repeated detector traversal.
 
-The active candidate set now focuses on matcher-specific implementation shapes: run-map-backed cross-checks, cheap center pruning, row/flood seeded rescue, and fused normal+inverted traversal over the shared threshold plane. These are still prototype/headroom measurements until one is wired into the production matcher and proves finder/proposal equivalence.
+The active candidate set now focuses on matcher-specific implementation shapes: run-map-backed cross-checks, cheap center pruning, row/flood seeded rescue, and fused normal+inverted traversal over the shared threshold plane. The run-map and center-pruning candidates are output-producing and compare finder signatures to the control matcher. Seeded rescue and fused polarity traversal remain prototype/headroom measurements until they produce matcher finder lists and prove finder/proposal equivalence.
 
 `binaryViewMs` remains effectively zero compared with detector time, confirming that inverted view identities are cheap proxies. Optimization should target detector traversal/artifact reuse, not binary-view wrapper construction.
 
@@ -211,7 +211,7 @@ This run does **not** answer the full problem statement. It answers the detector
 Checkpoint decisions:
 
 - Do not prioritize cached materialized inverted views yet; the retired materialized-inverted candidate improved only 3.5%, below the predeclared <5% threshold for deprioritization.
-- Prioritize matcher-specific candidates over broad detector-artifact prototypes. The next production candidate should consume run maps or cheap center candidates inside matcher cross-check logic and prove behavior equivalence.
+- Prioritize matcher-specific candidates over broad detector-artifact prototypes. The run-map candidate is the first production candidate if full-corpus equality remains true; cheap center pruning needs mismatch analysis before it can gate matcher work.
 - Keep the fused normal+inverted traversal candidate as a secondary question: useful if it falls out of shared-plane matcher artifacts, but unlikely to beat pruning/cross-check reuse alone.
 - Do not ship production prefilter gating from this run.
 
