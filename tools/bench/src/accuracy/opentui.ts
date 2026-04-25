@@ -34,7 +34,7 @@ const PROGRESS_BAR_WIDTH = 56;
 const DASHBOARD_REFRESH_INTERVAL_MS = 250;
 const TABLE_ROW_FILL_SLACK = 6;
 const FILTER_MODAL_MIN_ROWS = 12;
-const FILTER_MODAL_MAX_ROWS = 22;
+const FILTER_MODAL_MAX_ROWS = 16;
 const FILTER_MODAL_WIDTH_RATIO = 0.7;
 
 const panelBodyRows = (panelRows: number): number =>
@@ -463,8 +463,7 @@ export class BenchOpenTuiDashboard {
   }
 
   private filterModalRows(): number {
-    const terminalHeight = this.renderer?.terminalHeight ?? FILTER_MODAL_MAX_ROWS + 8;
-    return Math.min(FILTER_MODAL_MAX_ROWS, Math.max(FILTER_MODAL_MIN_ROWS, terminalHeight - 8));
+    return Math.min(FILTER_MODAL_MAX_ROWS, this.renderer?.terminalHeight ?? FILTER_MODAL_MAX_ROWS);
   }
 
   private filterModalBodyRows(): number {
@@ -765,7 +764,7 @@ const selectableFilterRows = (): readonly Extract<StudyFilterRow, { readonly kin
     (row): row is Extract<StudyFilterRow, { readonly kind: 'option' }> => row.kind === 'option',
   );
 
-const filterVisibleRows = (bodyRows: number): number => Math.max(1, Math.floor((bodyRows - 2) / 2));
+const filterVisibleRows = (bodyRows: number): number => Math.max(1, Math.floor((bodyRows - 3) / 2));
 
 const filterGroupLabel = (group: StudyFilterGroup): string => {
   switch (group) {
@@ -1079,6 +1078,9 @@ const renderStudyFilterModal = (options: {
       `study filters ${options.offset + 1}-${Math.min(selectableFilterRows().length, options.offset + visibleRows)}/${selectableFilterRows().length}`,
       options.width,
     );
+  }
+  while (lines.length > 0 && lines.length > options.maxRows) {
+    lines.pop();
   }
   return lines;
 };
