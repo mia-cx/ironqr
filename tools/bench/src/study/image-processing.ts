@@ -914,10 +914,6 @@ const MATCHER_CANDIDATES = [
     note: 'Centers enumerated from intersecting horizontal and vertical run patterns.',
   },
   {
-    id: 'coarse-grid-fallback-matcher',
-    note: 'Coarse grid first, with measured control fallback when output differs.',
-  },
-  {
     id: 'shared-run-length-detector-artifacts',
     note: 'Shared run-pattern artifact prototype feeding matcher enumeration.',
   },
@@ -1422,12 +1418,6 @@ const measureMatcherCandidateVariants = async (
       const measured = await measureVariant(asset, cache, candidate.id, viewId, () => {
         if (candidate.id === 'axis-run-intersection-matcher') {
           return matcherFromCenters(view, matcherPatternCenters(view, 'intersection'));
-        }
-        if (candidate.id === 'coarse-grid-fallback-matcher') {
-          const coarse = matcherFromCenters(view, matcherPatternCenters(view, 'coarse'));
-          return signaturesEqual(finderSignature(coarse), control.measurement.signature)
-            ? coarse
-            : detectMatcherFinders(view, view.width, view.height);
         }
         return matcherFromCenters(view, matcherPatternCenters(view, 'horizontal'));
       });

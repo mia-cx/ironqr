@@ -30,6 +30,7 @@ A candidate can only move toward production if a full-corpus run reports:
 A faster candidate with mismatches is design input only. Decode pass/fail and false-positive behavior are out of scope for this detector-only study.
 
 ## Latency target context
+
 The product-level scanning target is a complete 60 FPS frame decision:
 
 ```text
@@ -100,42 +101,41 @@ The first implementation was intentionally broad and exploratory: passive binary
 
 ## Active variants
 
-| Variant id                             | Area          | Control                   | Status                                           |
-| -------------------------------------- | ------------- | ------------------------- | ------------------------------------------------ |
-| `inline-flood-control`                 | Flood         | —                         | Current running flood lead.                      |
-| `run-map-matcher-control`              | Matcher       | —                         | Current running matcher lead.                    |
+| Variant id                             | Area          | Control                   | Status                                               |
+| -------------------------------------- | ------------- | ------------------------- | ---------------------------------------------------- |
+| `inline-flood-control`                 | Flood         | —                         | Current running flood lead.                          |
+| `run-map-matcher-control`              | Matcher       | —                         | Current running matcher lead.                        |
 | `run-length-connected-components`      | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
 | `dense-typed-array-component-stats`    | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
 | `spatial-binned-component-lookup`      | Flood         | `inline-flood-control`    | Wired runnable prototype; measured by variant cache. |
 | `run-pattern-center-matcher`           | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
 | `axis-run-intersection-matcher`        | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
-| `coarse-grid-fallback-matcher`         | Matcher       | `run-map-matcher-control` | Wired runnable prototype; measured by variant cache. |
 | `shared-run-length-detector-artifacts` | Flood+Matcher | both controls             | Wired runnable prototype; measured by variant cache. |
 
 Active candidate means “included in the default detector-study run and summary matrices.” The variant cache lets each candidate be measured independently while cached controls are reused.
 
 ## Binned / empirically exhausted variants
 
-| Variant                                         | Area    | Evidence                                                                            | Decision                                                                           |
-| ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Legacy matcher pixel-walk cross-checks          | Matcher | Run-map matcher preserved output over `10,962` comparisons and was `88.93%` faster. | Retired reference; not active.                                                     |
-| Center-signal / center-pruned matcher hard gate | Matcher | 25-asset post-run-map run had `1,097` mismatched views.                             | Binned; do not re-add as hard filtering.                                           |
-| Row/flood seeded matcher replacement            | Matcher | Latest run had `1,104` mismatched views.                                            | Binned as replacement; may only return as prioritization with fallback accounting. |
-| Fused normal+inverted matcher traversal         | Matcher | Output-equivalent in one run but not faster enough to keep active.                  | Binned until a shared-artifact architecture changes the economics.                 |
-| Legacy two-pass flood                           | Flood   | Inline stats preserved output and was `64.72%` faster over the full corpus.         | Retired reference; not active.                                                     |
-| Filtered-components flood over old path         | Flood   | Output-equivalent but only `1.66%` faster over old control.                         | Binned; not worth active runtime.                                                  |
+| Variant                                         | Area    | Evidence                                                                                                                       | Decision                                                                           |
+| ----------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Legacy matcher pixel-walk cross-checks          | Matcher | Run-map matcher preserved output over `10,962` comparisons and was `88.93%` faster.                                            | Retired reference; not active.                                                     |
+| Center-signal / center-pruned matcher hard gate | Matcher | 25-asset post-run-map run had `1,097` mismatched views.                                                                        | Binned; do not re-add as hard filtering.                                           |
+| Row/flood seeded matcher replacement            | Matcher | Latest run had `1,104` mismatched views.                                                                                       | Binned as replacement; may only return as prioritization with fallback accounting. |
+| Fused normal+inverted matcher traversal         | Matcher | Output-equivalent in one run but not faster enough to keep active.                                                             | Binned until a shared-artifact architecture changes the economics.                 |
+| Coarse-grid fallback matcher                    | Matcher | Dashboard evidence showed several views averaging above `400ms` even with cache replay; fallback cost dominates the candidate. | Binned; do not include in active default runs.                                     |
+| Legacy two-pass flood                           | Flood   | Inline stats preserved output and was `64.72%` faster over the full corpus.                                                    | Retired reference; not active.                                                     |
+| Filtered-components flood over old path         | Flood   | Output-equivalent but only `1.66%` faster over old control.                                                                    | Binned; not worth active runtime.                                                  |
 
 ## Candidate rationale
 
-| Candidate                              | Area          | Rationale                                                                                                     | Admission bar                                                                               |
-| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Run-length connected components        | Flood         | Work scales with horizontal runs rather than pixels; could be the next large improvement after inline stats.  | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.                   |
-| Dense typed-array component stats      | Flood         | Replaces object-heavy component stats with dense arrays indexed by component id.                              | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.                   |
-| Spatial bins for ring/gap/stone lookup | Flood         | Reduces nested component containment scans if matching dominates after inline stats.                          | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.                   |
-| Run-pattern center matcher             | Matcher       | Enumerates centers from `1:1:3:1:1` run patterns instead of arbitrary grid probes.                            | Must beat run-map matcher and preserve sorted `FinderEvidence[]` signatures.                |
-| Axis-run intersection matcher          | Matcher       | Intersects plausible horizontal and vertical run-pattern centers without the retired hard center-signal gate. | Must beat run-map matcher and preserve sorted `FinderEvidence[]` signatures.                |
-| Coarse-grid fallback matcher           | Matcher       | Measures priority-first probing plus fallback accounting; can be safe only if fallback restores equality.     | Must report coarse-only mismatch and fallback cost; production candidate requires equality. |
-| Shared run-length detector artifacts   | Flood+Matcher | One run-length threshold-plane pass could feed both flood CCL and matcher center enumeration.                 | Must show combined detector savings, not just local wins.                                   |
+| Candidate                              | Area          | Rationale                                                                                                     | Admission bar                                                                |
+| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Run-length connected components        | Flood         | Work scales with horizontal runs rather than pixels; could be the next large improvement after inline stats.  | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.    |
+| Dense typed-array component stats      | Flood         | Replaces object-heavy component stats with dense arrays indexed by component id.                              | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.    |
+| Spatial bins for ring/gap/stone lookup | Flood         | Reduces nested component containment scans if matching dominates after inline stats.                          | Must beat inline flood and preserve sorted `FinderEvidence[]` signatures.    |
+| Run-pattern center matcher             | Matcher       | Enumerates centers from `1:1:3:1:1` run patterns instead of arbitrary grid probes.                            | Must beat run-map matcher and preserve sorted `FinderEvidence[]` signatures. |
+| Axis-run intersection matcher          | Matcher       | Intersects plausible horizontal and vertical run-pattern centers without the retired hard center-signal gate. | Must beat run-map matcher and preserve sorted `FinderEvidence[]` signatures. |
+| Shared run-length detector artifacts   | Flood+Matcher | One run-length threshold-plane pass could feed both flood CCL and matcher center enumeration.                 | Must show combined detector savings, not just local wins.                    |
 
 ## Report contract
 

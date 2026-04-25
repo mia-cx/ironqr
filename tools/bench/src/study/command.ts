@@ -428,9 +428,9 @@ const buildExploredAvenues = (
     {
       id: 'coarse-grid-fallback-matcher',
       area: 'matcher',
-      status: 'active-candidate',
+      status: 'binned',
       finding:
-        'Measure coarse matcher probing plus fallback accounting to learn whether a priority-first matcher can preserve output while avoiding full scans on easy views.',
+        'Priority-first coarse probing with control fallback preserved safety but made several views average above 400ms; fallback cost overwhelms any easy-view benefit.',
     },
     {
       id: 'shared-run-length-detector-artifacts',
@@ -461,7 +461,7 @@ const buildStudyConclusions = (
     'No exhausted legacy flood, filtered flood, or center-signal matcher variants are active in this study phase.',
   );
   conclusions.push(
-    'Active runnable candidates are run-length CCL, dense typed-array stats, spatial-binned component lookup, run-pattern matcher centers, axis-run matcher intersections, coarse-grid fallback, and shared run-length detector artifacts.',
+    'Active runnable candidates are run-length CCL, dense typed-array stats, spatial-binned component lookup, run-pattern matcher centers, axis-run matcher intersections, and shared run-length detector artifacts.',
   );
   conclusions.push(
     'Decode success and false-positive impact remain out of scope for this detector-evidence report.',
@@ -481,7 +481,7 @@ const buildQuestionCoverage = (
       {
         question: 'What is the current detector control baseline?',
         status: 'answered-for-control-with-active-candidates',
-        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidates=7`,
+        evidence: `inlineFlood=${formatMs(floodControlMs)} activeCandidates=6`,
       },
       {
         question: 'Do flood variants prove decode success or false positives?',
