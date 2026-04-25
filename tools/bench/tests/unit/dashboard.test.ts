@@ -393,7 +393,7 @@ describe('timing chart widget', () => {
     expect(output).toContain('2.3s 12s  1.7s  - ');
     expect(output).toContain('1    1    1    0');
     expect(output).toContain('c         0    0    0    0');
-    expect(output).toContain('···');
+    expect(output).not.toContain('░');
   });
 
   it('tracks cached timing buckets without including cached durations in fresh averages', () => {
@@ -423,7 +423,8 @@ describe('timing chart widget', () => {
 
     const output = renderTimingChart(model, { width: 80, barHeight: 4 }).join('\n');
     expect(output).toContain('c=cache hits');
-    expect(output).toContain('▒▒▒');
+    expect(output).toContain(' c ');
+    expect(output).not.toContain('▒');
     expect(output).toContain('n         1    0    0    0');
     expect(output).toContain('c         1    0    0    0');
     expect(output).toContain('avg        -    -    -    -');

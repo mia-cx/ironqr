@@ -106,7 +106,9 @@ export const renderRecentScans = (
 ): readonly string[] => {
   const width = options.width;
   const maxRows = normalizeMaxRows(options.maxRows, 8);
-  const rows = maxRows === 0 ? [] : model.recentScans.slice(-maxRows);
+  const offset = Math.max(0, options.offset ?? 0);
+  const orderedRows = [...model.recentScans].reverse();
+  const rows = maxRows === 0 ? [] : orderedRows.slice(offset, offset + maxRows);
   const lines = [
     model.commandName === 'study' ? 'recent study assets' : 'recent scans',
     truncate(

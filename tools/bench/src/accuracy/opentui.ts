@@ -1,3 +1,4 @@
+import { clamp01, fractionalBar, truncateLine } from './dashboard/components.js';
 import { formatCompactDuration } from './dashboard/format.js';
 import { renderRunFooter } from './dashboard/frame.js';
 import type { BenchDashboardModel } from './dashboard/model.js';
@@ -15,7 +16,16 @@ type OpenTuiRenderer = Awaited<ReturnType<OpenTuiCore['createCliRenderer']>>;
 type OpenTuiBox = InstanceType<OpenTuiCore['BoxRenderable']>;
 type OpenTuiText = InstanceType<OpenTuiCore['TextRenderable']>;
 type OpenTuiKeyEvent = import('@opentui/core').KeyEvent;
-type StudyFocusWidget = 'views' | 'detectors' | 'active' | 'events' | 'legend';
+type DashboardFocusWidget =
+  | 'chart'
+  | 'views'
+  | 'detectors'
+  | 'scorecard'
+  | 'active'
+  | 'slowest'
+  | 'recent'
+  | 'events'
+  | 'legend';
 
 type OpenTuiPanel = {
   readonly box: OpenTuiBox;
@@ -50,8 +60,6 @@ const chartPanelRows = (isStudy: boolean): number =>
 
 const leftColumnRatio = (isStudy: boolean): number =>
   isStudy ? STUDY_LEFT_COLUMN_RATIO : LEFT_COLUMN_RATIO;
-
-const FRACTIONAL_BAR_SEGMENTS = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'] as const;
 
 const THEME = {
   background: '#07111f',
@@ -94,9 +102,11 @@ export class BenchOpenTuiDashboard {
   private studyViewTimingOffset = 0;
   private studyDetectorTimingOffset = 0;
   private activeStudyWorkOffset = 0;
+  private slowestFreshScansOffset = 0;
+  private recentScansOffset = 0;
   private studyEventsOffset = 0;
-  private studyLegendOffset = 0;
-  private focusedStudyWidget: StudyFocusWidget = 'views';
+  private legendOffset = 0;
+  private focusedWidget: DashboardFocusWidget = 'chart';
   private filterModalOpen = false;
   private filterCursor = 0;
   private filterOffset = 0;
@@ -253,7 +263,7 @@ export class BenchOpenTuiDashboard {
       });
       const legend = createPanel(BoxRenderable, TextRenderable, renderer, {
         id: 'legend',
-        title: 'Study legend',
+        title: isStudy ? 'Study legend' : 'Bench legend',
         accent: THEME.cyan,
         width: '32%',
         flexGrow: 1,
@@ -265,13 +275,9 @@ export class BenchOpenTuiDashboard {
         flexDirection: 'row',
       });
       tablesRow.add(leftColumn);
-      if (isStudy) {
-        rightColumn.add(recent.box);
-        rightColumn.add(legend.box);
-        tablesRow.add(rightColumn);
-      } else {
-        tablesRow.add(recent.box);
-      }
+      rightColumn.add(recent.box);
+      rightColumn.add(legend.box);
+      tablesRow.add(rightColumn);
 
       const filterModal = createPanel(BoxRenderable, TextRenderable, renderer, {
         id: 'filter-modal',
@@ -390,16 +396,16 @@ export class BenchOpenTuiDashboard {
         this.renderNow();
         return;
       }
-      if (this.dashboard.commandName === 'study' && isTabKey(key)) {
-        this.focusNextStudyWidget();
+      if (isTabKey(key)) {
+        this.focusNextWidget();
         return;
       }
-      if (this.dashboard.commandName === 'study' && isScrollDownKey(key)) {
-        this.scrollFocusedStudyWidget(1, isSingleRowScrollKey(key));
+      if (isScrollDownKey(key)) {
+        this.scrollFocusedWidget(1, isSingleRowScrollKey(key));
         return;
       }
-      if (this.dashboard.commandName === 'study' && isScrollUpKey(key)) {
-        this.scrollFocusedStudyWidget(-1, isSingleRowScrollKey(key));
+      if (isScrollUpKey(key)) {
+        this.scrollFocusedWidget(-1, isSingleRowScrollKey(key));
         return;
       }
       if ((key.name === 'c' && key.ctrl) || key.sequence === '\u0003') {
@@ -432,31 +438,34 @@ export class BenchOpenTuiDashboard {
     this.onQuit();
   }
 
-  private focusNextStudyWidget(): void {
-    const widgets = this.focusableStudyWidgets();
-    const index = widgets.indexOf(this.focusedStudyWidget);
-    this.focusedStudyWidget = widgets[(index + 1 + widgets.length) % widgets.length] ?? 'detectors';
+  private focusNextWidget(): void {
+    const widgets = this.focusableWidgets();
+    const index = widgets.indexOf(this.focusedWidget);
+    this.focusedWidget = widgets[(index + 1 + widgets.length) % widgets.length] ?? 'detectors';
     this.renderNow();
   }
 
-  private focusableStudyWidgets(): readonly StudyFocusWidget[] {
+  private focusableWidgets(): readonly DashboardFocusWidget[] {
+    if (this.dashboard.commandName !== 'study') {
+      return ['chart', 'scorecard', 'active', 'slowest', 'recent', 'legend'];
+    }
     return this.hasStudyViewTimings()
       ? ['views', 'detectors', 'active', 'events', 'legend']
       : ['detectors', 'active', 'events', 'legend'];
   }
 
   private focusedFilterTarget(): 'views' | 'detectors' {
-    return this.focusedStudyWidget === 'views' ? 'views' : 'detectors';
+    return this.focusedWidget === 'views' ? 'views' : 'detectors';
   }
 
   private hasStudyViewTimings(): boolean {
     return this.dashboard.studyTimings.size > 0;
   }
 
-  private scrollFocusedStudyWidget(delta: number, singleRow: boolean): void {
+  private scrollFocusedWidget(delta: number, singleRow: boolean): void {
     const step = singleRow ? 1 : this.studyPageScrollSize();
     const scrollDelta = delta * step;
-    switch (this.focusedStudyWidget) {
+    switch (this.focusedWidget) {
       case 'views':
         this.studyViewTimingOffset = clampOffset(
           this.studyViewTimingOffset + scrollDelta,
@@ -475,6 +484,18 @@ export class BenchOpenTuiDashboard {
           this.dashboard.activeScans.size,
         );
         break;
+      case 'slowest':
+        this.slowestFreshScansOffset = clampOffset(
+          this.slowestFreshScansOffset + scrollDelta,
+          this.dashboard.slowestFreshScans.length,
+        );
+        break;
+      case 'recent':
+        this.recentScansOffset = clampOffset(
+          this.recentScansOffset + scrollDelta,
+          this.dashboard.recentScans.length,
+        );
+        break;
       case 'events':
         this.studyEventsOffset = clampOffset(
           this.studyEventsOffset + scrollDelta,
@@ -482,10 +503,10 @@ export class BenchOpenTuiDashboard {
         );
         break;
       case 'legend':
-        this.studyLegendOffset = clampOffset(
-          this.studyLegendOffset + scrollDelta,
-          studyLegendLineCount(),
-        );
+        this.legendOffset = clampOffset(this.legendOffset + scrollDelta, legendLineCount());
+        break;
+      case 'chart':
+      case 'scorecard':
         break;
     }
     this.renderNow();
@@ -608,16 +629,21 @@ export class BenchOpenTuiDashboard {
   }
 
   private updateStudyFocusBorders(panels: NonNullable<BenchOpenTuiDashboard['panels']>): void {
-    if (this.dashboard.commandName !== 'study') return;
-    panels.chart.box.borderColor = this.focusedStudyWidget === 'views' ? THEME.white : THEME.cyan;
+    panels.chart.box.borderColor =
+      this.focusedWidget === 'views' || this.focusedWidget === 'chart' ? THEME.white : THEME.cyan;
     if (panels.detectorChart) {
       panels.detectorChart.box.borderColor =
-        this.focusedStudyWidget === 'detectors' ? THEME.white : THEME.purple;
+        this.focusedWidget === 'detectors' ? THEME.white : THEME.purple;
     }
-    panels.active.box.borderColor = this.focusedStudyWidget === 'active' ? THEME.white : THEME.blue;
+    panels.scorecard.box.borderColor =
+      this.focusedWidget === 'scorecard' ? THEME.white : THEME.green;
+    panels.active.box.borderColor = this.focusedWidget === 'active' ? THEME.white : THEME.blue;
+    panels.slowest.box.borderColor = this.focusedWidget === 'slowest' ? THEME.white : THEME.amber;
     panels.recent.box.borderColor =
-      this.focusedStudyWidget === 'events' ? THEME.white : THEME.purple;
-    panels.legend.box.borderColor = this.focusedStudyWidget === 'legend' ? THEME.white : THEME.cyan;
+      this.focusedWidget === 'events' || this.focusedWidget === 'recent'
+        ? THEME.white
+        : THEME.purple;
+    panels.legend.box.borderColor = this.focusedWidget === 'legend' ? THEME.white : THEME.cyan;
   }
 
   private render(force = false): void {
@@ -637,9 +663,9 @@ export class BenchOpenTuiDashboard {
     if (
       this.dashboard.commandName === 'study' &&
       !showStudyViewChart &&
-      this.focusedStudyWidget === 'views'
+      this.focusedWidget === 'views'
     ) {
-      this.focusedStudyWidget = 'detectors';
+      this.focusedWidget = 'detectors';
     }
     const studyViewChartWidth = Math.max(34, Math.floor(contentWidth * 0.42) - 4);
     const studyDetectorChartWidth = showStudyViewChart
@@ -650,12 +676,8 @@ export class BenchOpenTuiDashboard {
       Math.floor(contentWidth * leftColumnRatio(this.dashboard.commandName === 'study')) - 4,
     );
     const rightWidth = Math.max(40, contentWidth - leftWidth - 8);
-    const legendWidth =
-      this.dashboard.commandName === 'study' ? Math.max(24, Math.floor(rightWidth * 0.32) - 4) : 0;
-    const recentWidth =
-      this.dashboard.commandName === 'study'
-        ? Math.max(40, rightWidth - legendWidth - 8)
-        : rightWidth;
+    const legendWidth = Math.max(24, Math.floor(rightWidth * 0.32) - 4);
+    const recentWidth = Math.max(40, rightWidth - legendWidth - 8);
     const fallbackTableRows = Math.max(
       4,
       Math.floor((height - TABLE_LAYOUT_RESERVED_ROWS) / 2) + TABLE_ROW_FILL_SLACK,
@@ -684,7 +706,7 @@ export class BenchOpenTuiDashboard {
                 width: studyViewChartWidth,
                 maxRows: chartBodyRows,
                 offset: this.studyViewTimingOffset,
-                focused: this.focusedStudyWidget === 'views',
+                focused: this.focusedWidget === 'views',
                 filters: this.studyFilters.views,
                 metric: this.studyTimingMetric,
               })
@@ -701,7 +723,7 @@ export class BenchOpenTuiDashboard {
           width: studyDetectorChartWidth,
           maxRows: chartBodyRows,
           offset: this.studyDetectorTimingOffset,
-          focused: this.focusedStudyWidget === 'detectors',
+          focused: this.focusedWidget === 'detectors',
           filters: this.studyFilters.detectors,
           metric: this.studyTimingMetric,
         }),
@@ -757,7 +779,7 @@ export class BenchOpenTuiDashboard {
             renderSlowestFreshScans(this.dashboard, {
               width: leftWidth,
               maxRows: tableRows,
-              offset: 0,
+              offset: this.slowestFreshScansOffset,
             }),
             tableRows,
           );
@@ -768,27 +790,27 @@ export class BenchOpenTuiDashboard {
             maxRows: recentRows,
             offset: this.studyEventsOffset,
           })
-        : renderRecentScans(this.dashboard, { width: recentWidth, maxRows: recentRows }),
+        : renderRecentScans(this.dashboard, {
+            width: recentWidth,
+            maxRows: recentRows,
+            offset: this.recentScansOffset,
+          }),
       recentRows,
     );
-    panels.legend.box.visible = this.dashboard.commandName === 'study';
+    panels.legend.box.visible = true;
     panels.legend.body.content = panelBody(
-      this.dashboard.commandName === 'study'
-        ? renderStudyLegend({
-            width: legendWidth,
-            maxRows: recentRows,
-            offset: this.studyLegendOffset,
-          })
-        : [],
+      renderLegend(this.dashboard.commandName === 'study', {
+        width: legendWidth,
+        maxRows: recentRows,
+        offset: this.legendOffset,
+      }),
       recentRows,
     );
     const footerStatus =
       this.dashboard.commandName === 'study'
         ? renderStudyFooterStatus(this.dashboard)
         : renderRunFooter(this.dashboard);
-    const focusHint = this.hasStudyViewTimings()
-      ? ` | tab=focus ${this.focusedStudyWidget}`
-      : ' | focus detectors';
+    const focusHint = ` | tab=focus ${this.focusedWidget}`;
     panels.footer.content = `${footerStatus} | q=quit | p=${this.renderPaused ? 'resume' : 'freeze for copy'}${this.dashboard.commandName === 'study' ? `${focusHint} | metric=${this.studyTimingMetric} | f=filters | ↑/↓=page | opt+↑/↓ or j/k=line` : ''}`;
     this.renderer?.requestRender();
   }
@@ -1237,6 +1259,28 @@ const formatStudyTiming = (
 ): string =>
   `${metric}=${formatCompactDuration(valueMs)} p=${outputCount} jobs=${count} c=${cachedCount}`;
 
+const benchLegendLines = (): readonly string[] => [
+  'bench legend',
+  'keys',
+  'q = graceful quit',
+  '^C once = graceful quit',
+  '^C twice = force exit 130',
+  'p = freeze/resume copy',
+  'tab = focus widget',
+  '↑/↓ = page scroll',
+  'j/k = line scroll',
+  '',
+  'outcomes',
+  'P = QR pass',
+  'F = QR fail',
+  'N = NEG pass',
+  'X = NEG false positive',
+  '',
+  'timings',
+  'blank = no/empty track',
+  'c = cache-only bucket',
+];
+
 const studyLegendLines = (): readonly string[] => [
   'study legend',
   'ids',
@@ -1261,14 +1305,18 @@ const studyLegendLines = (): readonly string[] => [
   'p=outputs jobs=rows c=cached',
 ];
 
-const studyLegendLineCount = (): number => Math.max(0, studyLegendLines().length - 1);
+const legendLineCount = (): number =>
+  Math.max(0, Math.max(benchLegendLines().length, studyLegendLines().length) - 1);
 
-const renderStudyLegend = (options: {
-  readonly width: number;
-  readonly maxRows: number;
-  readonly offset: number;
-}): readonly string[] => {
-  const [title = 'study legend', ...rows] = studyLegendLines();
+const renderLegend = (
+  isStudy: boolean,
+  options: {
+    readonly width: number;
+    readonly maxRows: number;
+    readonly offset: number;
+  },
+): readonly string[] => {
+  const [title = 'legend', ...rows] = isStudy ? studyLegendLines() : benchLegendLines();
   return [
     title,
     ...rows
@@ -1360,9 +1408,6 @@ const cacheTotals = (dashboard: BenchDashboardModel) => {
   return { hits, misses, writes };
 };
 
-const truncateLine = (value: string, width: number): string =>
-  value.length > width ? value.slice(0, Math.max(0, width - 1)) : value;
-
 const headerText = (dashboard: BenchDashboardModel, width: number): string => {
   const completed =
     dashboard.commandName === 'study' ? dashboard.studyCompletedUnits : dashboard.completedJobs;
@@ -1378,30 +1423,6 @@ const headerText = (dashboard: BenchDashboardModel, width: number): string => {
 
 const studyJobProgress = (dashboard: BenchDashboardModel): string =>
   `${dashboard.studyCompletedUnits}/${dashboard.studyTotalUnits || '-'}`;
-
-const fractionalBar = (
-  ratio: number,
-  width: number,
-  options: { readonly minVisible?: boolean } = {},
-): string => {
-  const normalizedWidth = Math.max(0, Math.floor(width));
-  if (normalizedWidth === 0) return '';
-  const normalizedRatio = clamp01(Number.isFinite(ratio) ? ratio : 0);
-  const totalEighths = Math.min(
-    normalizedWidth * 8,
-    Math.max(
-      options.minVisible && normalizedRatio > 0 ? 1 : 0,
-      Math.round(normalizedRatio * normalizedWidth * 8),
-    ),
-  );
-  const fullCells = Math.floor(totalEighths / 8);
-  const partialEighths = totalEighths % 8;
-  const partial = partialEighths === 0 ? '' : (FRACTIONAL_BAR_SEGMENTS[partialEighths - 1] ?? '');
-  const filledWidth = fullCells + (partial ? 1 : 0);
-  return `${'█'.repeat(fullCells)}${partial}${' '.repeat(Math.max(0, normalizedWidth - filledWidth))}`;
-};
-
-const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
 const stageBadge = (stage: BenchDashboardModel['stage']): string => {
   if (stage === 'done') return 'DONE';
