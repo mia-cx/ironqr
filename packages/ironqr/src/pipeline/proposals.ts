@@ -236,6 +236,13 @@ export type ProposalAssemblyVariant =
   | 'distance-matrix-streaming'
   | 'no-allocation-score';
 
+export type ProposalGeometryVariant =
+  | 'baseline'
+  | 'aspect-penalty'
+  | 'aspect-reject-conservative'
+  | 'scale-consistency-penalty'
+  | 'aspect-scale-penalty';
+
 /**
  * Per-view proposal-generation options.
  */
@@ -246,6 +253,8 @@ export interface ProposalViewGenerationOptions {
   readonly detectorPolicy?: FinderEvidenceDetectionPolicy;
   /** Proposal assembly variant for performance studies. Defaults to the canonical production variant. */
   readonly assemblyVariant?: ProposalAssemblyVariant;
+  /** Finder-triple geometry scoring/filtering variant for proposal-quality studies. */
+  readonly geometryVariant?: ProposalGeometryVariant;
   /** Optional trace sink. */
   readonly traceSink?: TraceSink;
 }
@@ -305,6 +314,7 @@ export const generateProposalBatchForView = (
     maxPerView,
     options.detectorPolicy,
     options.assemblyVariant,
+    options.geometryVariant,
   );
   emitProposalViewGenerated(batch.summary, options.traceSink);
   for (const proposal of batch.proposals) {
@@ -428,6 +438,7 @@ const generateProposalsForView = (
   maxPerView: number,
   detectorPolicy?: FinderEvidenceDetectionPolicy,
   assemblyVariant: ProposalAssemblyVariant = DEFAULT_PROPOSAL_ASSEMBLY_VARIANT,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): ProposalViewBatch => {
   const startedAt = nowMs();
 
@@ -439,7 +450,12 @@ const generateProposalsForView = (
   const triples =
     detection.evidence.length < 3
       ? []
-      : assembleFinderTriples(detection.evidence, MAX_TRIPLE_COMBINATIONS, assemblyVariant);
+      : assembleFinderTriples(
+          detection.evidence,
+          MAX_TRIPLE_COMBINATIONS,
+          assemblyVariant,
+          geometryVariant,
+        );
   const tripleAssemblyDurationMs = nowMs() - tripleAssemblyStartedAt;
 
   const proposalConstructionStartedAt = nowMs();
@@ -554,9 +570,15 @@ export const detectFinderEvidenceWithSummary = (
 const assembleFinderTriples = (
   evidence: readonly FinderEvidence[],
   maxTriples: number,
-  variant: ProposalAssemblyVariant = 'sort-all',
+  variant: ProposalAssemblyVariant = DEFAULT_PROPOSAL_ASSEMBLY_VARIANT,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): readonly FinderTripleCandidate[] => {
-  return buildFinderTriples(evidenceForAssemblyVariant(evidence, variant), maxTriples, variant);
+  return buildFinderTriples(
+    evidenceForAssemblyVariant(evidence, variant),
+    maxTriples,
+    variant,
+    geometryVariant,
+  );
 };
 
 const evidenceForAssemblyVariant = (
@@ -763,37 +785,41 @@ const buildFinderTriples = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
   variant: ProposalAssemblyVariant = DEFAULT_PROPOSAL_ASSEMBLY_VARIANT,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): readonly FinderTripleCandidate[] => {
   if (variant === 'streaming-topk') {
-    return buildFinderTriplesStreamingTopK(evidence, maxCombinations);
+    return buildFinderTriplesStreamingTopK(evidence, maxCombinations, geometryVariant);
   }
   if (variant === 'fixed-array-topk') {
-    return buildFinderTriplesFixedArrayTopK(evidence, maxCombinations);
+    return buildFinderTriplesFixedArrayTopK(evidence, maxCombinations, geometryVariant);
   }
   if (variant === 'min-heap-topk') {
-    return buildFinderTriplesMinHeapTopK(evidence, maxCombinations);
+    return buildFinderTriplesMinHeapTopK(evidence, maxCombinations, geometryVariant);
   }
   if (variant === 'distance-matrix-sort-all') {
-    return buildFinderTriplesBySorting(evidence, maxCombinations, true);
+    return buildFinderTriplesBySorting(evidence, maxCombinations, geometryVariant, true);
   }
   if (variant === 'distance-matrix-streaming') {
-    return buildFinderTriplesStreamingTopK(evidence, maxCombinations, true);
+    return buildFinderTriplesStreamingTopK(evidence, maxCombinations, geometryVariant, true);
   }
   if (variant === 'no-allocation-score') {
-    return buildFinderTriplesBySorting(evidence, maxCombinations, false, true);
+    return buildFinderTriplesBySorting(evidence, maxCombinations, geometryVariant, false, true);
   }
-  return buildFinderTriplesBySorting(evidence, maxCombinations);
+  return buildFinderTriplesBySorting(evidence, maxCombinations, geometryVariant);
 };
 
 const buildFinderTriplesBySorting = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
   useDistanceMatrix = false,
   useNoAllocationScore = false,
 ): readonly FinderTripleCandidate[] => {
   const scored: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, { useDistanceMatrix, useNoAllocationScore }, (candidate) =>
-    scored.push(candidate),
+  forEachScoredTriple(
+    evidence,
+    { geometryVariant, useDistanceMatrix, useNoAllocationScore },
+    (candidate) => scored.push(candidate),
   );
   return scored.sort(compareTripleCandidates).slice(0, maxCombinations);
 };
@@ -801,10 +827,11 @@ const buildFinderTriplesBySorting = (
 const buildFinderTriplesStreamingTopK = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
   useDistanceMatrix = false,
 ): readonly FinderTripleCandidate[] => {
   const top: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, { useDistanceMatrix }, (candidate) =>
+  forEachScoredTriple(evidence, { geometryVariant, useDistanceMatrix }, (candidate) =>
     insertTopTripleCandidate(top, candidate, maxCombinations),
   );
   return top;
@@ -813,10 +840,11 @@ const buildFinderTriplesStreamingTopK = (
 const buildFinderTriplesFixedArrayTopK = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): readonly FinderTripleCandidate[] => {
   const top = new Array<FinderTripleCandidate | undefined>(maxCombinations);
   let topLength = 0;
-  forEachScoredTriple(evidence, {}, (candidate) => {
+  forEachScoredTriple(evidence, { geometryVariant }, (candidate) => {
     if (topLength === 0) {
       top[0] = candidate;
       topLength = 1;
@@ -840,9 +868,10 @@ const buildFinderTriplesFixedArrayTopK = (
 const buildFinderTriplesMinHeapTopK = (
   evidence: readonly FinderEvidence[],
   maxCombinations: number,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): readonly FinderTripleCandidate[] => {
   const heap: FinderTripleCandidate[] = [];
-  forEachScoredTriple(evidence, {}, (candidate) => {
+  forEachScoredTriple(evidence, { geometryVariant }, (candidate) => {
     if (heap.length < maxCombinations) {
       heapPushWorstFirst(heap, candidate);
       return;
@@ -858,6 +887,7 @@ const buildFinderTriplesMinHeapTopK = (
 const forEachScoredTriple = (
   evidence: readonly FinderEvidence[],
   options: {
+    readonly geometryVariant?: ProposalGeometryVariant;
     readonly useDistanceMatrix?: boolean;
     readonly useNoAllocationScore?: boolean;
   },
@@ -895,10 +925,12 @@ const scoreTripleForVariant = (
   k: number,
   distances: Float64Array | null,
   options: {
+    readonly geometryVariant?: ProposalGeometryVariant;
     readonly useDistanceMatrix?: boolean;
     readonly useNoAllocationScore?: boolean;
   },
 ): number | null => {
+  const geometryVariant = options.geometryVariant ?? 'baseline';
   if (distances) {
     const count = distanceMatrixRowCount(distances);
     return scoreTripleGeometryFromLengths(
@@ -908,12 +940,13 @@ const scoreTripleForVariant = (
       distances[distanceMatrixIndex(i, j, count)]!,
       distances[distanceMatrixIndex(i, k, count)]!,
       distances[distanceMatrixIndex(j, k, count)]!,
+      geometryVariant,
     );
   }
   if (options.useNoAllocationScore) {
-    return scoreTripleGeometryNoAllocation(a, b, c);
+    return scoreTripleGeometryNoAllocation(a, b, c, geometryVariant);
   }
-  return scoreTripleGeometry(a, b, c);
+  return scoreTripleGeometry(a, b, c, geometryVariant);
 };
 
 const insertTopTripleCandidate = (
@@ -1004,21 +1037,39 @@ const scoreTripleGeometry = (
   a: FinderEvidence,
   b: FinderEvidence,
   c: FinderEvidence,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): number | null => {
   const lengths = [
     { left: a, right: b, length: distance(a, b), opposite: c },
     { left: a, right: c, length: distance(a, c), opposite: b },
     { left: b, right: c, length: distance(b, c), opposite: a },
   ].sort((left, right) => right.length - left.length);
-  return scoreTripleGeometryFromSides(a, b, c, lengths[0]!, lengths[1]!, lengths[2]!);
+  return scoreTripleGeometryFromSides(
+    a,
+    b,
+    c,
+    lengths[0]!,
+    lengths[1]!,
+    lengths[2]!,
+    geometryVariant,
+  );
 };
 
 const scoreTripleGeometryNoAllocation = (
   a: FinderEvidence,
   b: FinderEvidence,
   c: FinderEvidence,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): number | null =>
-  scoreTripleGeometryFromLengths(a, b, c, distance(a, b), distance(a, c), distance(b, c));
+  scoreTripleGeometryFromLengths(
+    a,
+    b,
+    c,
+    distance(a, b),
+    distance(a, c),
+    distance(b, c),
+    geometryVariant,
+  );
 
 const scoreTripleGeometryFromLengths = (
   a: FinderEvidence,
@@ -1027,23 +1078,24 @@ const scoreTripleGeometryFromLengths = (
   ab: number,
   ac: number,
   bc: number,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): number | null => {
   const abSide = { left: a, right: b, length: ab, opposite: c } satisfies TripleSide;
   const acSide = { left: a, right: c, length: ac, opposite: b } satisfies TripleSide;
   const bcSide = { left: b, right: c, length: bc, opposite: a } satisfies TripleSide;
   if (ab >= ac && ab >= bc) {
     return ac >= bc
-      ? scoreTripleGeometryFromSides(a, b, c, abSide, acSide, bcSide)
-      : scoreTripleGeometryFromSides(a, b, c, abSide, bcSide, acSide);
+      ? scoreTripleGeometryFromSides(a, b, c, abSide, acSide, bcSide, geometryVariant)
+      : scoreTripleGeometryFromSides(a, b, c, abSide, bcSide, acSide, geometryVariant);
   }
   if (ac >= bc) {
     return ab >= bc
-      ? scoreTripleGeometryFromSides(a, b, c, acSide, abSide, bcSide)
-      : scoreTripleGeometryFromSides(a, b, c, acSide, bcSide, abSide);
+      ? scoreTripleGeometryFromSides(a, b, c, acSide, abSide, bcSide, geometryVariant)
+      : scoreTripleGeometryFromSides(a, b, c, acSide, bcSide, abSide, geometryVariant);
   }
   return ab >= ac
-    ? scoreTripleGeometryFromSides(a, b, c, bcSide, abSide, acSide)
-    : scoreTripleGeometryFromSides(a, b, c, bcSide, acSide, abSide);
+    ? scoreTripleGeometryFromSides(a, b, c, bcSide, abSide, acSide, geometryVariant)
+    : scoreTripleGeometryFromSides(a, b, c, bcSide, acSide, abSide, geometryVariant);
 };
 
 const scoreTripleGeometryFromSides = (
@@ -1053,6 +1105,7 @@ const scoreTripleGeometryFromSides = (
   hyp: TripleSide,
   leg1: TripleSide,
   leg2: TripleSide,
+  geometryVariant: ProposalGeometryVariant = 'baseline',
 ): number | null => {
   const topLeft = hyp.opposite;
   const armA = leg1.left === topLeft || leg1.right === topLeft ? leg1 : leg2;
@@ -1070,7 +1123,70 @@ const scoreTripleGeometryFromSides = (
   const version = Math.max(1, Math.min(40, Math.round((averageLeg / averageModule - 10) / 4)));
   const expectedLeg = averageModule * (version * 4 + 10);
   const versionPlausibility = 1 - Math.abs(averageLeg - expectedLeg) / Math.max(1, expectedLeg);
-  return asymmetry + pythagorean + versionPlausibility + (2 - sizeRatio);
+  const viabilityAdjustment = geometryViabilityAdjustment(topLeft, armA, armB, geometryVariant);
+  if (viabilityAdjustment === null) return null;
+  return asymmetry + pythagorean + versionPlausibility + (2 - sizeRatio) + viabilityAdjustment;
+};
+
+const geometryViabilityAdjustment = (
+  topLeft: FinderEvidence,
+  armA: TripleSide,
+  armB: TripleSide,
+  variant: ProposalGeometryVariant,
+): number | null => {
+  if (variant === 'baseline') return 0;
+  const armAEnd = oppositeSideEndpoint(armA, topLeft);
+  const armBEnd = oppositeSideEndpoint(armB, topLeft);
+  const aspectPenalty =
+    aspectCompatibilityPenalty(topLeft, armAEnd) + aspectCompatibilityPenalty(topLeft, armBEnd);
+  const scalePenalty =
+    scaleConsistencyPenalty(topLeft, armAEnd) + scaleConsistencyPenalty(topLeft, armBEnd);
+  if (variant === 'aspect-reject-conservative') {
+    return isExtremeAspectContradiction(topLeft, armAEnd) ||
+      isExtremeAspectContradiction(topLeft, armBEnd)
+      ? null
+      : 0;
+  }
+  if (variant === 'aspect-penalty') return -aspectPenalty;
+  if (variant === 'scale-consistency-penalty') return -scalePenalty;
+  return -(aspectPenalty + scalePenalty);
+};
+
+const oppositeSideEndpoint = (side: TripleSide, endpoint: FinderEvidence): FinderEvidence =>
+  side.left === endpoint ? side.right : side.left;
+
+const finderLogAspect = (finder: FinderEvidence): number =>
+  Math.log(Math.max(1e-6, finder.hModuleSize) / Math.max(1e-6, finder.vModuleSize));
+
+const aspectCompatibilityPenalty = (left: FinderEvidence, right: FinderEvidence): number => {
+  const leftAspect = finderLogAspect(left);
+  const rightAspect = finderLogAspect(right);
+  if (leftAspect * rightAspect >= 0) return Math.min(0.4, Math.abs(leftAspect - rightAspect) * 0.1);
+  const contradiction = Math.min(Math.abs(leftAspect), Math.abs(rightAspect));
+  return contradiction < 0.18 ? 0 : Math.min(1.2, Math.abs(leftAspect - rightAspect) * 0.5);
+};
+
+const isExtremeAspectContradiction = (left: FinderEvidence, right: FinderEvidence): boolean => {
+  const leftAspect = finderLogAspect(left);
+  const rightAspect = finderLogAspect(right);
+  return (
+    leftAspect * rightAspect < 0 &&
+    Math.min(Math.abs(leftAspect), Math.abs(rightAspect)) > 0.35 &&
+    Math.abs(leftAspect - rightAspect) > 0.9
+  );
+};
+
+const scaleConsistencyPenalty = (left: FinderEvidence, right: FinderEvidence): number => {
+  const modulePenalty = Math.abs(
+    Math.log(Math.max(1e-6, left.moduleSize) / Math.max(1e-6, right.moduleSize)),
+  );
+  const horizontalPenalty = Math.abs(
+    Math.log(Math.max(1e-6, left.hModuleSize) / Math.max(1e-6, right.hModuleSize)),
+  );
+  const verticalPenalty = Math.abs(
+    Math.log(Math.max(1e-6, left.vModuleSize) / Math.max(1e-6, right.vModuleSize)),
+  );
+  return Math.min(1.2, (modulePenalty + horizontalPenalty + verticalPenalty) / 6);
 };
 
 export const detectRowScanFinders = (

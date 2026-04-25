@@ -30,6 +30,7 @@ import {
 } from './image-processing.js';
 import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
+import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
 import { createStudyPluginRegistry } from './registry.js';
 import type {
   StudyCacheHandle,
@@ -95,6 +96,7 @@ export const createDefaultStudyRegistry = () =>
     { plugin: thresholdStatsCacheStudyPlugin },
     { plugin: proposalDetectorPolicyStudyPlugin },
     { plugin: proposalGenerationVariantsStudyPlugin },
+    { plugin: proposalGeometryViabilityStudyPlugin },
     { plugin: viewProposalsStudyPlugin },
     { plugin: viewOrderStudyPlugin },
   ]);
