@@ -13,6 +13,7 @@ const MAX_FINDER_EVIDENCE_TOTAL = 12;
 const DEFAULT_MAX_PROPOSALS_PER_VIEW = 12;
 const MAX_TRIPLE_COMBINATIONS = 120;
 const DEFAULT_PROPOSAL_ASSEMBLY_VARIANT: ProposalAssemblyVariant = 'no-allocation-score';
+const DEFAULT_PROPOSAL_RANKING_VARIANT: ProposalRankingVariant = 'timing-heavy';
 const FINDER_RATIO_TOLERANCE = 0.9;
 const QUIET_ZONE_DISTANCE_MODULES = 5.25;
 
@@ -635,7 +636,7 @@ const proposalsFromFinderTriples = (
 const scoreProposal = (
   binaryView: BinaryView,
   proposal: ScanProposal,
-  rankingVariant: ProposalRankingVariant = 'baseline',
+  rankingVariant: ProposalRankingVariant = DEFAULT_PROPOSAL_RANKING_VARIANT,
 ): RankedProposalCandidate => {
   const detectorScore = computeDetectorScore(proposal);
   const initialGeometryCandidates = createGeometryCandidates(proposal);

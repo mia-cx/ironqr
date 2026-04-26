@@ -133,11 +133,11 @@ Regression check: the easy `coronatest` asset that hard timing-corridor rejectio
 
 ## Conclusion / evidence-backed decision
 
-`timing-heavy` is the lead proposal-prioritization candidate. It satisfies the decision rule: no lost positives, no false-positive increase, +2 positive decoded assets, fewer processed representatives, fewer decode attempts, and lower scan time under unbounded decode.
+Canonize `timing-heavy` as the default proposal-ranking policy. It satisfies the decision rule on the full unbounded corpus run: no lost positives, no false-positive increase, +2 positive decoded assets, fewer processed representatives, fewer decode attempts, and lower scan time.
 
 Do not promote `quiet-timing-heavy` or `decode-signal-heavy`: both preserve recall and gain the same two positives, but they increase decode attempts and scan duration materially.
 
-Next step: run a bounded production-budget confirmation for `baseline` vs `timing-heavy`:
+Known limitation: this decision comes from the unbounded confirmation run. If production later reintroduces a decode-attempt budget, rerun a bounded confirmation:
 
 ```bash
 bun run bench study proposal-ranking-decode-confirmation \
@@ -145,5 +145,3 @@ bun run bench study proposal-ranking-decode-confirmation \
   --max-decode-attempts 200 \
   --refresh-cache
 ```
-
-If the bounded run also has no lost positives, no false-positive increase, and equal or better decoded positives, `timing-heavy` is a strong canonization candidate.
