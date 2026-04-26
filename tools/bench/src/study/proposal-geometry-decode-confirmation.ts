@@ -25,7 +25,7 @@ interface Config extends Record<string, unknown> {
   readonly variants: readonly ProposalGeometryVariant[];
   readonly maxProposals: number;
   readonly maxClusterRepresentatives: number;
-  readonly maxDecodeAttempts: number;
+  readonly maxDecodeAttempts?: number;
   readonly maxViews: number;
 }
 
@@ -125,7 +125,9 @@ const parseConfig = ({
       1,
       'max-cluster-representatives',
     ),
-    maxDecodeAttempts: numericFlag(flags['max-decode-attempts'], 200, 'max-decode-attempts'),
+    ...(flags['max-decode-attempts'] === undefined
+      ? {}
+      : { maxDecodeAttempts: numericFlag(flags['max-decode-attempts'], 1, 'max-decode-attempts') }),
     maxViews: numericFlag(flags['max-views'], listDefaultBinaryViewIds().length, 'max-views'),
   };
 };
@@ -155,7 +157,7 @@ export const proposalGeometryDecodeConfirmationStudyPlugin: StudyPlugin<
     {
       name: 'max-decode-attempts',
       type: 'number',
-      description: 'Maximum decode attempts per scan.',
+      description: 'Optional maximum decode attempts per scan. Defaults to unbounded.',
     },
     { name: 'max-views', type: 'number', description: 'Maximum binary views per asset.' },
   ],
@@ -202,7 +204,9 @@ const runVariant = async (
     allowMultiple: false,
     maxProposals: config.maxProposals,
     maxClusterRepresentatives: config.maxClusterRepresentatives,
-    maxDecodeAttempts: config.maxDecodeAttempts,
+    ...(config.maxDecodeAttempts === undefined
+      ? {}
+      : { maxDecodeAttempts: config.maxDecodeAttempts }),
     maxClusterStructuralFailures: 10_000,
     continueAfterDecode: false,
     proposalViewIds: listDefaultBinaryViewIds().slice(0, config.maxViews),

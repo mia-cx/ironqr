@@ -31,7 +31,7 @@ Defaults:
 detectorPolicy=no-flood
 maxProposals=24
 maxClusterRepresentatives=1
-maxDecodeAttempts=200
+maxDecodeAttempts=unbounded by default
 maxViews=54
 allowMultiple=false
 continueAfterDecode=false
@@ -79,6 +79,8 @@ assets=203 positives=60 negatives=143
 maxProposals=24 maxClusterRepresentatives=1 maxDecodeAttempts=200 maxViews=54
 cache hits=0 misses=406 writes=203
 ```
+
+This historical run used the old bounded default. Current study defaults remove `maxDecodeAttempts`; pass `--max-decode-attempts N` only for explicitly bounded debugging.
 
 | Variant | Positive decoded assets | False-positive assets | Proposals | Clusters | Processed reps | Decode attempts | Scan ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
