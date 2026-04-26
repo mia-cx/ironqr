@@ -246,6 +246,12 @@ export type ProposalGeometryVariant =
   | 'timing-corridor-reject-conservative'
   | 'aspect-timing-penalty';
 
+export type ProposalRankingVariant =
+  | 'baseline'
+  | 'timing-heavy'
+  | 'quiet-timing-heavy'
+  | 'decode-signal-heavy';
+
 /**
  * Per-view proposal-generation options.
  */
@@ -258,6 +264,8 @@ export interface ProposalViewGenerationOptions {
   readonly assemblyVariant?: ProposalAssemblyVariant;
   /** Finder-triple geometry scoring/filtering variant for proposal-quality studies. */
   readonly geometryVariant?: ProposalGeometryVariant;
+  /** Global proposal ranking formula variant for decode-prioritization studies. */
+  readonly rankingVariant?: ProposalRankingVariant;
   /** Optional trace sink. */
   readonly traceSink?: TraceSink;
 }
@@ -358,7 +366,13 @@ export const rankProposalCandidates = (
 ): readonly RankedProposalCandidate[] => {
   const ranked = dedupeRankedProposalCandidates(
     proposals
-      .map((proposal) => scoreProposal(viewBank.getBinaryView(proposal.binaryViewId), proposal))
+      .map((proposal) =>
+        scoreProposal(
+          viewBank.getBinaryView(proposal.binaryViewId),
+          proposal,
+          options.rankingVariant,
+        ),
+      )
       .sort((left, right) => right.proposal.proposalScore - left.proposal.proposalScore),
   ).map((candidate, index) => {
     options.traceSink?.emit({
@@ -618,7 +632,11 @@ const proposalsFromFinderTriples = (
   return proposals;
 };
 
-const scoreProposal = (binaryView: BinaryView, proposal: ScanProposal): RankedProposalCandidate => {
+const scoreProposal = (
+  binaryView: BinaryView,
+  proposal: ScanProposal,
+  rankingVariant: ProposalRankingVariant = 'baseline',
+): RankedProposalCandidate => {
   const detectorScore = computeDetectorScore(proposal);
   const initialGeometryCandidates = createGeometryCandidates(proposal);
   const initialGeometry = initialGeometryCandidates[0] ?? null;
@@ -627,8 +645,14 @@ const scoreProposal = (binaryView: BinaryView, proposal: ScanProposal): RankedPr
   const timingScore = computeTimingScore(binaryView, initialGeometry);
   const alignmentScore = computeAlignmentScore(binaryView, initialGeometry);
   const penalties = computePenalties(binaryView, initialGeometry);
-  const total =
-    detectorScore + geometryScore + quietZoneScore + timingScore + alignmentScore - penalties;
+  const total = computeProposalRankingScore(rankingVariant, {
+    detectorScore,
+    geometryScore,
+    quietZoneScore,
+    timingScore,
+    alignmentScore,
+    penalties,
+  });
   const scoreBreakdown = {
     detectorScore,
     geometryScore,
@@ -656,6 +680,40 @@ const scoreProposal = (binaryView: BinaryView, proposal: ScanProposal): RankedPr
     proposal: scoredProposal,
     initialGeometryCandidates,
   } satisfies RankedProposalCandidate;
+};
+
+const computeProposalRankingScore = (
+  variant: ProposalRankingVariant,
+  scores: Omit<ProposalScoreBreakdown, 'total'>,
+): number => {
+  const { detectorScore, geometryScore, quietZoneScore, timingScore, alignmentScore, penalties } =
+    scores;
+  if (variant === 'timing-heavy') {
+    return (
+      detectorScore + geometryScore + quietZoneScore + timingScore * 3 + alignmentScore - penalties
+    );
+  }
+  if (variant === 'quiet-timing-heavy') {
+    return (
+      detectorScore +
+      geometryScore +
+      quietZoneScore * 2 +
+      timingScore * 3 +
+      alignmentScore * 1.5 -
+      penalties
+    );
+  }
+  if (variant === 'decode-signal-heavy') {
+    return (
+      detectorScore * 0.5 +
+      geometryScore +
+      quietZoneScore * 2 +
+      timingScore * 4 +
+      alignmentScore * 2 -
+      penalties * 1.5
+    );
+  }
+  return detectorScore + geometryScore + quietZoneScore + timingScore + alignmentScore - penalties;
 };
 
 const computeDetectorScore = (proposal: ScanProposal): number => {

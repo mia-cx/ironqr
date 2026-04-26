@@ -20,6 +20,7 @@ import {
   generateProposalBatchForView,
   type ProposalGenerationSummary,
   type ProposalGeometryVariant,
+  type ProposalRankingVariant,
   type ProposalScoreBreakdown,
   type ProposalViewBatch,
   type RankedProposalCandidate,
@@ -53,6 +54,8 @@ export interface ScanRuntimeOptions extends ScanOptions {
   readonly proposalDetectorPolicy?: FinderEvidenceDetectionPolicy;
   /** Optional finder-triple geometry scoring/filtering variant for proposal/decode studies. */
   readonly proposalGeometryVariant?: ProposalGeometryVariant;
+  /** Optional global proposal ranking variant for decode-prioritization studies. */
+  readonly proposalRankingVariant?: ProposalRankingVariant;
   /** Optional low-overhead timing span sink for performance harnesses. */
   readonly metricsSink?: ScanMetricsSink;
   /** Maximum proposal representatives to try inside one cluster. */
@@ -456,6 +459,7 @@ const scanFrameExecutionOnce = (
       traceSink,
       options.metricsSink,
       options.maxClusterRepresentatives,
+      options.proposalRankingVariant,
     );
     let stopScanning = false;
     let earlyFrontierPasses = 0;
@@ -497,6 +501,8 @@ const scanFrameExecutionOnce = (
         maxProposals,
         traceSink,
         options.metricsSink,
+        options.maxClusterRepresentatives,
+        options.proposalRankingVariant,
       );
       rankingMs += latestSnapshot.rankingMs;
       clusteringMs += latestSnapshot.clusteringMs;
@@ -529,6 +535,8 @@ const scanFrameExecutionOnce = (
         maxProposals,
         traceSink,
         options.metricsSink,
+        options.maxClusterRepresentatives,
+        options.proposalRankingVariant,
       );
       rankingMs += latestSnapshot.rankingMs;
       clusteringMs += latestSnapshot.clusteringMs;
@@ -659,13 +667,13 @@ const buildFrontierSnapshot = (
   traceSink?: TraceSink,
   metricsSink?: ScanMetricsSink,
   maxClusterRepresentatives?: number,
+  rankingVariant?: ProposalRankingVariant,
 ): FrontierSnapshot => {
   const rankingStartedAt = nowMs();
-  const rankedProposalCandidates = rankProposalCandidates(
-    viewBank,
-    generatedProposals,
-    traceSink === undefined ? {} : { traceSink },
-  );
+  const rankedProposalCandidates = rankProposalCandidates(viewBank, generatedProposals, {
+    ...(traceSink === undefined ? {} : { traceSink }),
+    ...(rankingVariant === undefined ? {} : { rankingVariant }),
+  });
   const rankingMs = nowMs() - rankingStartedAt;
   recordTimingSpan(metricsSink, 'ranking', rankingStartedAt, {
     proposalCount: generatedProposals.length,

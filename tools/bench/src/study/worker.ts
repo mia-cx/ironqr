@@ -14,6 +14,7 @@ import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
 import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
 import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
+import { proposalRankingDecodeConfirmationStudyPlugin } from './proposal-ranking-decode-confirmation.js';
 import type { StudyCacheHandle } from './types.js';
 import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
 
@@ -30,6 +31,7 @@ const plugins = new Map(
     proposalGenerationVariantsStudyPlugin,
     proposalGeometryViabilityStudyPlugin,
     proposalGeometryDecodeConfirmationStudyPlugin,
+    proposalRankingDecodeConfirmationStudyPlugin,
   ].map((plugin) => [plugin.id, plugin] as const),
 );
 

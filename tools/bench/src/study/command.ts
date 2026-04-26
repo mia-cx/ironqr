@@ -32,6 +32,7 @@ import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
 import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
 import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
+import { proposalRankingDecodeConfirmationStudyPlugin } from './proposal-ranking-decode-confirmation.js';
 import { createStudyPluginRegistry } from './registry.js';
 import type {
   StudyCacheHandle,
@@ -99,6 +100,7 @@ export const createDefaultStudyRegistry = () =>
     { plugin: proposalGenerationVariantsStudyPlugin },
     { plugin: proposalGeometryViabilityStudyPlugin },
     { plugin: proposalGeometryDecodeConfirmationStudyPlugin },
+    { plugin: proposalRankingDecodeConfirmationStudyPlugin },
     { plugin: viewProposalsStudyPlugin },
     { plugin: viewOrderStudyPlugin },
   ]);
