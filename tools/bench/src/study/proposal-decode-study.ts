@@ -105,6 +105,8 @@ export interface ProposalDecodeStudyDefinition<Variant extends string> {
   readonly version: string;
   readonly variants: readonly Variant[];
   readonly controlVariant: Variant;
+  readonly variantFlagName?: string;
+  readonly variantFlagLabel?: string;
   readonly unknownVariantLabel: string;
   readonly recommendation: readonly string[];
   readonly runtimeOptions: (variant: Variant) => Partial<ScanRuntimeOptions>;
@@ -117,6 +119,8 @@ export const makeProposalDecodeStudyPlugin = <Variant extends string>({
   version,
   variants: defaultVariants,
   controlVariant,
+  variantFlagName = 'variants',
+  variantFlagLabel = 'variants',
   unknownVariantLabel,
   recommendation,
   runtimeOptions,
@@ -132,9 +136,9 @@ export const makeProposalDecodeStudyPlugin = <Variant extends string>({
   flags: [
     { name: 'max-assets', type: 'number', description: 'Limit approved corpus assets.' },
     {
-      name: 'variants',
+      name: variantFlagName,
       type: 'string',
-      description: `Comma-separated variants. Defaults to ${defaultVariants.join(',')}.`,
+      description: `Comma-separated ${variantFlagLabel}. Defaults to ${defaultVariants.join(',')}.`,
     },
     { name: 'max-proposals', type: 'number', description: 'Maximum proposals per view.' },
     {
@@ -150,7 +154,14 @@ export const makeProposalDecodeStudyPlugin = <Variant extends string>({
     { name: 'max-views', type: 'number', description: 'Maximum binary views per asset.' },
   ],
   parseConfig: ({ flags }) =>
-    parseProposalDecodeConfig(flags, defaultVariants, controlVariant, unknownVariantLabel, id),
+    parseProposalDecodeConfig(
+      flags,
+      defaultVariants,
+      controlVariant,
+      variantFlagName,
+      unknownVariantLabel,
+      id,
+    ),
   cacheKey: (config) =>
     JSON.stringify({ config, engine: describeAccuracyEngine(getAccuracyEngineById('ironqr')) }),
   estimateUnits: (config, assets) =>
@@ -190,10 +201,12 @@ const parseProposalDecodeConfig = <Variant extends string>(
   flags: Readonly<Record<string, string | number | boolean>>,
   defaultVariants: readonly Variant[],
   controlVariant: Variant,
+  variantFlagName: string,
   unknownVariantLabel: string,
   studyId: string,
 ): ProposalDecodeConfig<Variant> => {
-  const variantFlag = typeof flags.variants === 'string' ? flags.variants.trim() : '';
+  const configuredVariants = flags[variantFlagName];
+  const variantFlag = typeof configuredVariants === 'string' ? configuredVariants.trim() : '';
   const variants =
     variantFlag.length === 0
       ? defaultVariants
