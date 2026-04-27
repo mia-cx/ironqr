@@ -190,9 +190,45 @@ decode attempts and/or scan time improve materially
 - Implement `--no-decode` first; decode mode can be optional or follow-up.
 - Reuse existing proposal-generation and clustering plumbing.
 - Prefer carrying computed grid hypotheses forward as reusable proposal metadata instead of recomputing during decode.
+- Use the layered scanner artifact cache where possible:
+  - L1 normalized frame
+  - L2 scalar views
+  - L3 binary views
+  - L4 finder evidence
+  - L5 proposal batches
+  - L6 ranked frontier
+  - L7 cluster frontier
+  - L8 decode outcome when decode confirmation is enabled
+- Cache artifacts should be separate per-layer/per-asset files, not monolithic JSON blobs.
+- Cache invalidation is versioned per layer with numeric `version` fields. Bump the layer version when changing code that affects that layer's artifact semantics.
+- `--refresh-cache` bypasses artifact reads and writes fresh artifacts; `--no-cache` disables artifact reads and writes.
 - Emit per-view/per-variant timing rows for realism scoring.
 - Keep cache keys separate for `--no-decode` and decode modes.
 - Do not mutate production defaults from this study.
+
+## Post-study cache restructuring
+
+After the first `--no-decode` run is analyzed, revisit the cache boundaries before canonizing any realism signal. The likely outcome is that finder-grid realism becomes a reusable pipeline seam between ranked proposals and cluster/decode work.
+
+Evaluate whether to keep realism artifacts as a separate layer or merge them into an adjacent layer:
+
+```text
+L6 ranked frontier
+L6.5 / L7 grid-realism hypotheses
+L7 / L8 cluster frontier
+L8 / L9 decode outcome
+```
+
+Keep grid realism separate if multiple studies reuse the same ranked proposals with different realism formulas, if realism scoring is expensive enough to cache independently, or if realism variants are still changing. Merge it into the ranked frontier if one canonical realism score becomes part of proposal ranking and downstream always needs realism-enriched proposals. Merge it into cluster frontier if realism mostly affects representative selection.
+
+The post-study restructuring must answer:
+
+```text
+Which stage owns grid-realism hypotheses?
+Are realism scores proposal-level, representative-level, or decode-rescue-level?
+Can decode consume cached geometry hypotheses directly?
+Do cache keys need a new geometry-hypothesis version?
+```
 
 ## Results
 
