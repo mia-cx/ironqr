@@ -1,0 +1,203 @@
+# Finder Grid Realism Study
+
+## Problem / question
+
+Hard timing-corridor rejection failed because it sampled a crude finder-center corridor instead of asking whether a finder triple can support a realistic QR grid. This study asks whether projective/trigonometric finder-grid realism signals can rank or filter unrealistic finder triples before decode, and whether those signals can be measured cheaply without running the decode cascade.
+
+## Hypothesis / thesis
+
+A plausible QR finder triple should support a coherent QR-grid hypothesis: the observed finder centers, finder module sizes, local finder aspect/skew, inferred version, projected bounds, quiet zone, and grid-relative timing row/column should agree under a projective transform or a clearly explainable warp residual. The null hypothesis is that these signals do not separate realistic from unrealistic triples without losing positive proposal coverage.
+
+## Designed experiment / study
+
+Run a proposal/frontier-only signal study by default:
+
+```bash
+bun run bench study finder-grid-realism --no-decode --refresh-cache
+```
+
+The `--no-decode` mode is the fast path. It should stop after proposal generation, ranking, clustering, representative selection, and grid-realism scoring. It must not run the decode cascade.
+
+Optional decode-confirmation mode:
+
+```bash
+bun run bench study finder-grid-realism --refresh-cache
+```
+
+Decode mode should be used only after `--no-decode` identifies a promising signal/ranking/filter candidate.
+
+Defaults:
+
+```text
+detectorPolicy=no-flood
+rankingVariant=timing-heavy
+clusterRepresentativeVariant=proposal-score
+proposalViewIds=listDefaultBinaryViewIds()
+maxProposals=24
+maxClusterRepresentatives=1
+maxViews=54
+noDecode=true when --no-decode is passed
+```
+
+## Signal variants
+
+| Variant | Purpose |
+| --- | --- |
+| `baseline` | Existing proposal/ranking behavior with no added grid-realism signal. |
+| `projective-realism-score` | Score whether the three finders support a plausible projective QR grid. |
+| `module-consistency-score` | Score observed finder module sizes/aspects against local scale predicted by the inferred grid. |
+| `grid-bounds-score` | Score convexity, image bounds, area, version, and sane module pitch. |
+| `grid-timing-score` | Sample timing row y=6 and timing col x=6 through inferred grid coordinates. |
+| `combined-grid-realism-score` | Composite score used for ranking/representative ordering only. |
+| `combined-grid-realism-reject-very-conservative` | Optional later candidate; hard rejects only when multiple independent realism checks fail. Not enabled by default. |
+
+## Fast `--no-decode` report metrics
+
+| Metric | Unit | Decision use |
+| --- | --- | --- |
+| Positive assets with proposals | assets | Proposal coverage guard. |
+| Negative assets with proposals | assets | Proposal flood / false-frontier behavior. |
+| Proposal count | proposals | Frontier size. |
+| Cluster count | clusters | Cluster frontier size. |
+| Representative count | representatives | Decode-frontier proxy. |
+| Lost positive proposal assets | asset ids | Hard safety guard for proposal-only mode. |
+| Gained/lost proposal signatures | count / asset ids | Exact effect of ranking/filtering. |
+| Projective realism score distribution | score | Whether signal separates plausible triples. |
+| Module consistency score distribution | score | Perspective/local-scale coherence. |
+| Grid timing score distribution | score | Semantic timing evidence without decode. |
+| Combined score distribution by label | score | Positive/negative separation. |
+| Per-signal runtime | ms | Whether signal is cheap enough before decode. |
+
+## Optional decode-confirmation metrics
+
+Only for candidates that pass `--no-decode`:
+
+| Metric | Unit | Decision use |
+| --- | --- | --- |
+| Positive decoded assets | assets | Primary recall guard. |
+| False-positive assets | assets | Safety guard. |
+| Decode attempts | count | Work reduction. |
+| Scan/decode/module-sampling timing | ms | Cost attribution. |
+| Lost/gained decoded positives | asset ids | Explain outcome changes. |
+
+## Signal definitions
+
+### Projective realism
+
+For each oriented finder triple hypothesis, infer canonical QR finder-center coordinates:
+
+```text
+TL center = (3.5, 3.5)
+TR center = (size - 3.5, 3.5)
+BL center = (3.5, size - 3.5)
+```
+
+Estimate version/grid size from finder spacing and module size. Build a projective or affine+perspective grid hypothesis. Score:
+
+```text
+convexity
+non-crossing edges
+reasonable projected area
+reasonable module pitch
+bottom-right prediction sanity
+image bounds tolerance
+version agreement between arms
+```
+
+Do not reject merely because the observed finder centers are not a right triangle; perspective can make them non-right-angled in image space.
+
+### Module-size realism
+
+Compare observed finder module sizes to the local scale predicted by the inferred grid:
+
+```text
+observed moduleSize vs predicted local module scale
+observed hModuleSize/vModuleSize vs projected local basis lengths
+scale gradient consistency across TL/TR/BL
+version estimates from horizontal and vertical arms
+```
+
+The question is whether an unwarp can sensibly explain the finder distortions, not whether all module sizes are equal.
+
+### Grid timing score
+
+Use grid coordinates, not finder-center corridor offsets:
+
+```text
+row 6: sample (x, 6) for x = 8..size-9
+col 6: sample (6, y) for y = 8..size-9
+```
+
+Score alternating timing modules with tolerance:
+
+```text
+phase-insensitive dark/light match
+small local offset jitter
+best of nearby submodule positions
+fail-open when geometry confidence is low
+```
+
+### Warp residual classification
+
+Record whether residuals look:
+
+```text
+planar-like
+horizontal-cylinder-like
+vertical-cylinder-like
+radial-like
+local-mesh-like
+ambiguous
+```
+
+This is classification evidence only. It should feed later warp-rescue issues, not hard rejection in this slice.
+
+## Decision rule
+
+For `--no-decode`, a candidate signal/ranking/filter can advance to decode confirmation only if:
+
+```text
+lost positive proposal assets = []
+positive proposal coverage delta >= 0
+negative proposal/frontier behavior does not regress materially
+representative or cluster frontier improves materially, OR signal clearly separates positives from noisy negatives
+signal runtime is small relative to proposal generation
+```
+
+Hard rejection is allowed to advance only if it is very conservative:
+
+```text
+multiple independent realism checks fail
+coronatest remains covered by proposals
+lost positive proposal assets = []
+```
+
+For decode confirmation, promote only if:
+
+```text
+lost decoded positives = []
+false-positive delta <= 0
+positive decoded delta >= 0
+decode attempts and/or scan time improve materially
+```
+
+## Required regression fixture
+
+`asset-0944aec7c73146f9` (`coronatest`) must remain covered in `--no-decode` mode and decoded in decode-confirmation mode. It is an easy, front-facing QR that exposed the previous hard timing-corridor rejection bug.
+
+## Implementation notes
+
+- Implement `--no-decode` first; decode mode can be optional or follow-up.
+- Reuse existing proposal-generation and clustering plumbing.
+- Prefer carrying computed grid hypotheses forward as reusable proposal metadata instead of recomputing during decode.
+- Emit per-view/per-variant timing rows for realism scoring.
+- Keep cache keys separate for `--no-decode` and decode modes.
+- Do not mutate production defaults from this study.
+
+## Results
+
+Pending.
+
+## Conclusion / evidence-backed decision
+
+Pending generated study evidence.
