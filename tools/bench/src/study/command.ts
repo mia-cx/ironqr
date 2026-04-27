@@ -281,22 +281,15 @@ const buildProcessedStudyReport = (report: StudyReport): Record<string, unknown>
 const buildStudyHeadline = (
   studyId: string,
   summary: Record<string, unknown>,
-  detectorBreakdown: Record<string, number>,
+  _detectorBreakdown: Record<string, number>,
 ): string => {
   if (studyId !== 'binary-prefilter-signals')
     return 'See variants, recommendations, and summary fields.';
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
   const detectorMs = numberField(totals, 'detectorMs');
-  const floodMs = detectorBreakdown.floodMs ?? 0;
   const floodControlMs = numberField(totals, 'floodControlMs');
-  if (floodControlMs > 0) {
-    return `Detector=${formatMs(detectorMs)}; scanline-squared flood=${formatMs(floodControlMs)}; active candidates disabled by default.`;
-  }
   const matcherMs = numberField(totals, 'matcherControlMs');
-  const legacyMs = numberField(totals, 'matcherLegacyControlMs');
-  const legacyEqual = Boolean(totals.matcherLegacyControlOutputsEqual);
-  const mismatchCount = numberField(totals, 'matcherLegacyControlMismatchCount');
-  return `Detector=${formatMs(detectorMs)}; flood=${formatMs(floodMs)}; run-map matcher=${formatMs(matcherMs)}; legacy matcher=${formatMs(legacyMs)}; legacyEqual=${legacyEqual}; mismatchedViews=${mismatchCount}.`;
+  return `Detector=${formatMs(detectorMs)}; scanline-squared flood=${formatMs(floodControlMs)}; run-map matcher=${formatMs(matcherMs)}; active candidates disabled by default.`;
 };
 
 const buildDetectorBreakdown = (summary: Record<string, unknown>): Record<string, number> => {
@@ -322,19 +315,7 @@ const buildMatcherVariantMatrix = (
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
   if (numberField(totals, 'matcherControlMs') === 0) return null;
   return {
-    controlComparison: {
-      runMapMs: numberField(totals, 'matcherControlMs'),
-      legacyMs: numberField(totals, 'matcherLegacyControlMs'),
-      legacyVsRunMapOutputsEqual: Boolean(totals.matcherLegacyControlOutputsEqual),
-      legacyVsRunMapMismatchCount: numberField(totals, 'matcherLegacyControlMismatchCount'),
-      runMapSavedMs: roundReportNumber(
-        numberField(totals, 'matcherLegacyControlMs') - numberField(totals, 'matcherControlMs'),
-      ),
-      runMapImprovementPct: percentReportNumber(
-        numberField(totals, 'matcherLegacyControlMs') - numberField(totals, 'matcherControlMs'),
-        numberField(totals, 'matcherLegacyControlMs'),
-      ),
-    },
+    control: { runMapMs: numberField(totals, 'matcherControlMs') },
     variants: detectorCandidates(summary).filter(
       (candidate) => candidate.area === 'matcher' || candidate.area === 'flood+matcher',
     ),
@@ -350,7 +331,7 @@ const buildFloodVariantMatrix = (
   const controlMs = numberField(totals, 'floodControlMs');
   if (controlMs === 0) return null;
   return {
-    control: { denseStatsMs: controlMs },
+    control: { scanlineSquaredMs: controlMs },
     variants: detectorCandidates(summary).filter(
       (candidate) => candidate.area === 'flood' || candidate.area === 'flood+matcher',
     ),
@@ -373,75 +354,30 @@ const buildExploredAvenues = (
 ): readonly Record<string, unknown>[] => {
   if (studyId !== 'binary-prefilter-signals') return [];
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
-  const denseStatsMs =
-    numberField(totals, 'floodControlMs') || numberField(totals, 'floodInlineStatsMs');
-  const avenues: Record<string, unknown>[] = [
+  return [
     {
       id: 'run-map-matcher',
       area: 'matcher',
       status: 'canonized-control',
-      finding:
-        'Run-map cross-check matcher preserved legacy matcher finder evidence across the full corpus and is now canonical.',
-    },
-    {
-      id: 'inline-component-stats-flood',
-      area: 'flood',
-      status: 'retired-reference',
-      finding:
-        'Combined connected-component labeling and stats collection into one pass, but a targeted gray:h:i legacy check showed dense-stats preserved the extra legacy finders that inline omitted.',
+      finding: 'Run-map cross-check matcher is the canonical matcher timing row.',
+      candidateMs: numberField(totals, 'matcherControlMs'),
     },
     {
       id: 'scanline-squared',
       area: 'flood',
       status: 'canonized-control',
       finding:
-        'Scanline component labeling with squared-distance geometry replaced dense-stats and is the only default flood timing row.',
-      candidateMs: denseStatsMs,
+        'Scanline component labeling with squared-distance geometry is the canonical flood timing row.',
+      candidateMs: numberField(totals, 'floodControlMs'),
     },
     {
-      id: 'spatial-bin',
-      area: 'flood',
-      status: 'disabled-reference',
-      finding:
-        'Historical spatial-index candidate retained in cache; superseded by lighter dense-index permutations for the current phase.',
-    },
-    {
-      id: 'run-length-ccl',
-      area: 'flood',
-      status: 'disabled-reference',
-      finding:
-        'Historical run-length CCL candidate retained in cache; superseded by scanline labeling permutations for the current phase.',
-    },
-    {
-      id: 'run-pattern',
-      area: 'matcher',
-      status: 'disabled-candidate',
-      finding:
-        'Enumerate matcher centers from 1:1:3:1:1 run patterns, then verify with run-map cross-checks instead of sampling arbitrary grid centers; retained for later measurement.',
-    },
-    {
-      id: 'axis-intersect',
-      area: 'matcher',
-      status: 'disabled-candidate',
-      finding:
-        'Intersect plausible horizontal and vertical run-pattern centers to reduce matcher probes without the retired hard center-signal gate; retained for later measurement.',
-    },
-    {
-      id: 'coarse-grid-fallback-matcher',
-      area: 'matcher',
-      status: 'binned',
-      finding:
-        'Priority-first coarse probing with control fallback preserved safety but made several views average above 400ms; fallback cost overwhelms any easy-view benefit.',
-    },
-    {
-      id: 'shared-runs',
+      id: 'retired-detector-candidates',
       area: 'flood+matcher',
-      status: 'disabled-candidate',
+      status: 'documented-only',
       finding:
-        'Use run-length artifacts for both flood connected-components and matcher center enumeration so one threshold-plane pass can feed multiple detectors; retained for later measurement.',
+        'Historical controls and binned candidates live in the study document, not in processed-report executable logic.',
     },
   ];
-  return avenues;
 };
 
 const buildStudyConclusions = (
@@ -476,34 +412,14 @@ const buildQuestionCoverage = (
 ): readonly Record<string, string>[] => {
   if (studyId !== 'binary-prefilter-signals') return [];
   const totals = (summary.totals ?? {}) as Record<string, unknown>;
-  const floodControlMs = numberField(totals, 'floodControlMs');
-  if (floodControlMs > 0) {
-    return [
-      {
-        question: 'What is the current detector control baseline?',
-        status: 'answered-for-current-control',
-        evidence: `scanlineSquared=${formatMs(floodControlMs)} activeCandidates=none`,
-      },
-      {
-        question: 'Do flood variants prove decode success or false positives?',
-        status: 'unanswered',
-        evidence: 'decode=false in this study run',
-      },
-    ];
-  }
   return [
     {
-      question: 'Do cheap signals identify detector hotspots?',
-      status: 'answered-for-sample',
-      evidence: `detector=${formatMs(numberField(totals, 'detectorMs'))}; runMapMatcher=${formatMs(numberField(totals, 'matcherControlMs'))}`,
+      question: 'What is the current detector control baseline?',
+      status: 'answered-for-current-control',
+      evidence: `scanlineSquared=${formatMs(numberField(totals, 'floodControlMs'))}; runMapMatcher=${formatMs(numberField(totals, 'matcherControlMs'))}; activeCandidates=none`,
     },
     {
-      question: 'Did run-map cross-check promotion preserve matcher finder evidence?',
-      status: 'answered-for-candidates',
-      evidence: `legacyEqual=${String(totals.matcherLegacyControlOutputsEqual)} legacyMismatchViews=${String(totals.matcherLegacyControlMismatchCount)}`,
-    },
-    {
-      question: 'Do signals predict decode success or false positives?',
+      question: 'Do detector timings prove decode success or false positives?',
       status: 'unanswered',
       evidence: 'decode=false in this study run',
     },
@@ -517,11 +433,6 @@ const numberField = (value: Record<string, unknown>, key: string): number => {
   const field = value[key];
   return typeof field === 'number' && Number.isFinite(field) ? field : 0;
 };
-
-const roundReportNumber = (value: number): number => Math.round(value * 100) / 100;
-
-const percentReportNumber = (part: number, whole: number): number =>
-  whole === 0 ? 0 : roundReportNumber((part / whole) * 100);
 
 const formatMs = (value: number): string => `${value.toFixed(2)}ms`;
 
