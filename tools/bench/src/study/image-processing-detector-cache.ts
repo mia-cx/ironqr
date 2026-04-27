@@ -1,5 +1,9 @@
 import type { BinaryViewId } from '../../../../packages/ironqr/src/pipeline/views.js';
 
+interface DetectorCachePurger {
+  readonly purge: (predicate: (cacheKey: string) => boolean) => Promise<number>;
+}
+
 export const detectorVariantCacheKey = (variantId: string, viewId: BinaryViewId): string =>
   JSON.stringify({
     kind: 'detector-pattern',
@@ -62,6 +66,44 @@ export const detectorTimingId = (
 ): string => {
   const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
   return `${shortVariantId(variant)}:${shortDetectorFamily(detector)}:${shortBinaryViewPart(scalar)}:${shortBinaryViewPart(threshold)}:${shortBinaryViewPart(polarity)}`;
+};
+
+export const purgeRedundantDetectorCacheRows = async (
+  cache: DetectorCachePurger,
+  retainedVariantIds: readonly string[],
+  log: (message: string) => void,
+): Promise<void> => {
+  const startedAt = performance.now();
+  const purged = await cache.purge((cacheKey) =>
+    shouldPurgeDetectorCacheKey(cacheKey, retainedVariantIds),
+  );
+  const elapsed = round(performance.now() - startedAt);
+  log(
+    purged > 0
+      ? `detector cache purge complete: removed ${purged} binned pattern rows in ${elapsed}ms`
+      : `detector cache purge complete: no binned pattern rows found in ${elapsed}ms`,
+  );
+};
+
+const shouldPurgeDetectorCacheKey = (
+  cacheKey: string,
+  retainedVariantIds: readonly string[],
+): boolean => {
+  const activeVariantIds = retainedVariantIds.flatMap((variantId) => [
+    variantId,
+    ...(LEGACY_VARIANT_IDS[variantId] ?? []),
+  ]);
+  const activePatternPrefixes = new Set(
+    activeVariantIds.flatMap((variantId) => [
+      detectorPatternPrefix(variantId),
+      legacyDetectorPatternPrefix(variantId),
+      `${legacyShortVariantId(variantId)}:${detectorAreaId(variantId)}:`,
+    ]),
+  );
+  const parsed = parseDetectorCacheKey(cacheKey);
+  if (!parsed) return false;
+  if (parsed.kind === 'detector-variant') return !activeVariantIds.includes(parsed.variantId);
+  return ![...activePatternPrefixes].some((prefix) => parsed.patternId.startsWith(prefix));
 };
 
 export const parseDetectorCacheKey = (
@@ -205,6 +247,8 @@ const FLOOD_DETECTOR_IDS = new Set([
   'run-length-connected-components',
   'legacy-two-pass-flood',
 ]);
+
+const round = (value: number): number => Math.round(value * 100) / 100;
 
 const DETECTOR_FAMILY_ALIASES: Record<string, string> = {
   flood: 'f',

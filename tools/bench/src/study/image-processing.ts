@@ -28,13 +28,9 @@ import { describeAccuracyEngine, getAccuracyEngineById } from '../core/engines.j
 import { normalizeDecodedText } from '../shared/text.js';
 import {
   detectorAreaId,
-  detectorPatternPrefix,
   detectorVariantCacheKey,
   detectorVariantCacheKeys,
-  LEGACY_VARIANT_IDS,
-  legacyDetectorPatternPrefix,
-  legacyShortVariantId,
-  parseDetectorCacheKey,
+  purgeRedundantDetectorCacheRows,
   shortBinaryViewPart,
   shortDetectorFamily,
   shortVariantId,
@@ -207,7 +203,7 @@ function makeImageProcessingStudyPlugin(input: {
       if (!redundantDetectorCachePurged) {
         redundantDetectorCachePurged = true;
         log('detector cache purge starting: scanning binned pattern rows');
-        await purgeRedundantDetectorCacheRows(cache, log);
+        await purgeRedundantDetectorCacheRows(cache, retainedDetectorPatternIds(), log);
       }
       return readCachedDetectorAssetResult(asset, config, cache, log, {
         replayPartialRows: true,
@@ -220,7 +216,7 @@ function makeImageProcessingStudyPlugin(input: {
         if (!redundantDetectorCachePurged) {
           redundantDetectorCachePurged = true;
           log('detector cache purge starting: scanning binned pattern rows');
-          await purgeRedundantDetectorCacheRows(cache, log);
+          await purgeRedundantDetectorCacheRows(cache, retainedDetectorPatternIds(), log);
         }
         const cached = await readCachedDetectorAssetResult(asset, config, cache, log, {
           replayPartialRows: false,
@@ -800,37 +796,6 @@ const replayCachedDetectorRows = async (
     }
   }
   return replayed;
-};
-
-const purgeRedundantDetectorCacheRows = async (
-  cache: Pick<StudyCacheHandle, 'purge'>,
-  log: (message: string) => void,
-): Promise<void> => {
-  const activeIds = new Set(retainedDetectorPatternIds());
-  const activeVariantIds = [...activeIds].flatMap((variantId) => [
-    variantId,
-    ...(LEGACY_VARIANT_IDS[variantId] ?? []),
-  ]);
-  const activePatternPrefixes = new Set(
-    activeVariantIds.flatMap((variantId) => [
-      detectorPatternPrefix(variantId),
-      legacyDetectorPatternPrefix(variantId),
-      `${legacyShortVariantId(variantId)}:${detectorAreaId(variantId)}:`,
-    ]),
-  );
-  const startedAt = performance.now();
-  const purged = await cache.purge((cacheKey) => {
-    const parsed = parseDetectorCacheKey(cacheKey);
-    if (!parsed) return false;
-    if (parsed.kind === 'detector-variant') return !activeVariantIds.includes(parsed.variantId);
-    return ![...activePatternPrefixes].some((prefix) => parsed.patternId.startsWith(prefix));
-  });
-  const elapsed = round(performance.now() - startedAt);
-  log(
-    purged > 0
-      ? `detector cache purge complete: removed ${purged} binned pattern rows in ${elapsed}ms`
-      : `detector cache purge complete: no binned pattern rows found in ${elapsed}ms`,
-  );
 };
 
 const readVariantMeasurement = async (
