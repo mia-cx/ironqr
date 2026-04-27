@@ -232,8 +232,75 @@ Do cache keys need a new geometry-hypothesis version?
 
 ## Results
 
-Pending.
+Full `--no-decode` run generated on 2026-04-27 from commit `6a62de6184cea80f1457d1dde0336d51a4351574`:
+
+```text
+tools/bench/reports/full/study/study-finder-grid-realism.json
+tools/bench/reports/study/study-finder-grid-realism.summary.json
+```
+
+Run configuration:
+
+```text
+assets: 203 total, 60 positive, 143 negative
+variants: baseline, projective-realism-score, module-consistency-score, grid-bounds-score, grid-timing-score, combined-grid-realism-score
+noDecode: true
+maxViews: 54
+maxProposals: 24
+maxProposalsPerView: 12
+maxClusterRepresentatives: 1
+```
+
+Coverage and frontier size:
+
+| Variant | Positive covered | Negative with proposals | Proposals | Clusters | Representatives | Lost positives |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `baseline` | 60 / 60 | 143 / 143 | 89,618 | 4,830 | 4,830 | none |
+| `projective-realism-score` | 60 / 60 | 143 / 143 | 89,618 | 4,830 | 4,830 | none |
+| `module-consistency-score` | 60 / 60 | 143 / 143 | 89,618 | 4,830 | 4,830 | none |
+| `grid-bounds-score` | 60 / 60 | 143 / 143 | 89,618 | 4,830 | 4,830 | none |
+| `grid-timing-score` | 60 / 60 | 143 / 143 | 89,618 | 4,830 | 4,830 | none |
+| `combined-grid-realism-score` | 60 / 60 | 143 / 143 | 89,618 | 4,830 | 4,830 | none |
+
+Score separation by representative:
+
+| Variant | Positive avg | Positive p50 / p95 | Negative avg | Negative p50 / p95 | Interpretation |
+| --- | ---: | --- | ---: | --- | --- |
+| `projective-realism-score` | 0.81 | 0.83 / 0.83 | 0.81 | 0.83 / 0.83 | No useful separation. |
+| `module-consistency-score` | 0.69 | 0.67 / 0.89 | 0.62 | 0.62 / 0.83 | Best separation in this run, but weak. |
+| `grid-bounds-score` | 0.93 | 0.99 / 1.00 | 0.94 | 0.97 / 1.00 | No useful separation; many false frontiers are in-bounds. |
+| `grid-timing-score` | 0.60 | 0.58 / 0.80 | 0.57 | 0.56 / 0.70 | Slight separation; current phase-insensitive sampler is too weak alone. |
+| `combined-grid-realism-score` | 0.74 | 0.73 / 0.83 | 0.72 | 0.72 / 0.79 | Weak composite separation. |
+
+Approximate all-representative AUC computed from the report rows:
+
+| Variant | AUC |
+| --- | ---: |
+| `projective-realism-score` | 0.512 |
+| `module-consistency-score` | 0.635 |
+| `grid-bounds-score` | 0.504 |
+| `grid-timing-score` | 0.545 |
+| `combined-grid-realism-score` | 0.606 |
+
+`asset-0944aec7c73146f9` / `coronatest` remained covered by all default variants in `--no-decode` mode.
+
+Timing of scoring itself was small relative to proposal generation, but the report's artifact-cache layer accounting showed all zero hits/misses/writes for this worker-backed full run despite `--refresh-cache`. Treat artifact-cache accounting in this report as a reporting bug or aggregation gap, not evidence that no artifacts were touched.
 
 ## Conclusion / evidence-backed decision
 
-Pending generated study evidence.
+The run answers the proposal-coverage guard: the default scoring-only variants did not lose any positive proposal assets, and `coronatest` remained covered. It does **not** justify hard rejection or canonization.
+
+Evidence-backed decisions:
+
+- Do not promote `projective-realism-score` or `grid-bounds-score` as standalone ranking signals; their positive/negative score distributions are effectively indistinguishable.
+- Keep `module-consistency-score` as the most promising component signal, but only as ranking evidence. Its separation is real but modest (`avg +0.07`, AUC ≈ 0.635), so it needs decode-confirmation and likely a better frontier-delta metric before canonization.
+- Keep `grid-timing-score` as a research direction, but improve the sampler before relying on it. The current phase-insensitive row/column 6 score has weak separation (`avg +0.03`, AUC ≈ 0.545).
+- Do not run or promote hard `combined-grid-realism-reject-very-conservative` yet. The scoring components are not strong enough to set safe thresholds from this run.
+- Next implementation should evaluate ranking/frontier impact, not just raw score distributions: reorder representatives by `module-consistency-score`, `grid-timing-score`, and a revised combined score, then compare lost positives, decode attempts, processed representatives, and frontier changes with L8 decode confirmation.
+
+Partially answered:
+
+- Whether cheap realism signals can be computed before decode: yes.
+- Whether first-pass scores separate positives from negatives strongly enough: no; only module consistency is moderately promising.
+- Whether hard filtering is safe: unanswered, and current evidence argues against trying it yet.
+- Whether cache layer summaries are reliable under worker full runs: no; the report exposed an accounting gap.
