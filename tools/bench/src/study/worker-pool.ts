@@ -105,6 +105,14 @@ export const createStudyWorkerPool = (
         options.log(message.message);
         return;
       }
+      if (message.type === 'cache-write') {
+        void options.cache.write(
+          { ...message.asset, loadImage: async () => Promise.reject(new Error('not available')) },
+          message.cacheKey,
+          message.result,
+        );
+        return;
+      }
       slot.current = null;
       if (message.type === 'error') {
         current.reject(

@@ -38,6 +38,13 @@ export type StudyWorkerResponse =
       readonly message: string;
     }
   | {
+      readonly type: 'cache-write';
+      readonly jobId: string;
+      readonly asset: StudyWorkerAsset;
+      readonly cacheKey: string;
+      readonly result: unknown;
+    }
+  | {
       readonly type: 'result';
       readonly jobId: string;
       readonly result: unknown;

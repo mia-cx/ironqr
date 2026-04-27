@@ -4,7 +4,12 @@ import { defaultStudyWorkerPlugins } from './default-plugins.js';
 import { warmImageProcessingStudyWorker } from './image-processing.js';
 import { openScannerArtifactCache } from './scanner-artifact-cache.js';
 import type { StudyCacheHandle } from './types.js';
-import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
+import type {
+  StudyCacheWrite,
+  StudyWorkerAsset,
+  StudyWorkerRequest,
+  StudyWorkerResponse,
+} from './worker-types.js';
 
 const plugins = new Map(defaultStudyWorkerPlugins.map((plugin) => [plugin.id, plugin] as const));
 
@@ -48,7 +53,9 @@ const run = async (request: StudyWorkerRequest): Promise<void> => {
       ...request.asset,
       loadImage: () => readBenchImage(request.asset.imagePath),
     };
-    const cache = workerCache(baseCache, request.asset.id, cacheWrites);
+    const cache = workerCache(baseCache, request.asset, cacheWrites, (write) =>
+      post({ type: 'cache-write', jobId: request.jobId, ...write }),
+    );
     const previousSemaphore = Reflect.get(globalThis, '__BENCH_STUDY_FLOOD_SEMAPHORE__');
     const previousFloodLimit = Reflect.get(globalThis, '__BENCH_STUDY_FLOOD_CONCURRENCY_LIMIT__');
     if (request.floodSemaphore) {
@@ -103,8 +110,13 @@ const restoreGlobal = (key: string, value: unknown): void => {
 
 const workerCache = (
   baseCache: StudyCacheHandle<unknown>,
-  assetId: string,
+  asset: StudyWorkerAsset,
   cacheWrites: StudyCacheWrite[],
+  postWrite: (write: {
+    readonly asset: StudyWorkerAsset;
+    readonly cacheKey: string;
+    readonly result: unknown;
+  }) => void,
 ): StudyCacheHandle<unknown> => {
   const overlay = new Map<string, unknown>();
   return {
@@ -118,7 +130,8 @@ const workerCache = (
     },
     async write(_asset, cacheKey, result) {
       overlay.set(cacheKey, result);
-      cacheWrites.push({ assetId, cacheKey, result });
+      cacheWrites.push({ assetId: asset.id, cacheKey, result });
+      postWrite({ asset, cacheKey, result });
     },
     async remove(_asset, cacheKey) {
       const deleted = overlay.delete(cacheKey);

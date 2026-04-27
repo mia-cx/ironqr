@@ -272,7 +272,7 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
   ],
   parseConfig,
   estimateUnits: (config, assets) => assets.length * config.variants.length,
-  runAsset: async ({ asset, config, artifactCache, log }) => {
+  runAsset: async ({ asset, config, cache, artifactCache, log }) => {
     const options = artifactOptions(config);
     const artifacts = await getOrComputeClusterFrontierArtifacts(asset, artifactCache, options);
     const viewBank = createViewBank(artifacts.image);
@@ -295,6 +295,19 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
     const baselineSignatures = baseRepresentatives.map(proposalSignature);
     const variants: VariantAssetResult[] = [];
     for (const variantId of config.variants) {
+      const variantCacheKey = gridRealismVariantCacheKey(config, variantId);
+      const cachedVariant = await cache.read(asset, variantCacheKey);
+      if (isVariantAssetResult(cachedVariant)) {
+        variants.push(cachedVariant);
+        logStudyTiming(
+          log,
+          `${variantId}:grid-realism`,
+          cachedVariant.signalMs,
+          cachedVariant.representativeCount,
+          true,
+        );
+        continue;
+      }
       const startedAt = performance.now();
       const ordered = orderRepresentatives(scoredRepresentatives, variantId);
       const scores = ordered.map((row) => policyScore(row, variantId));
@@ -314,7 +327,7 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
           });
       const signalMs = round(performance.now() - startedAt);
       logStudyTiming(log, `${variantId}:grid-realism`, signalMs, ordered.length);
-      variants.push({
+      const result = {
         variantId,
         proposalCount: artifacts.batches.reduce((sum, batch) => sum + batch.proposals.length, 0),
         clusterCount: artifacts.clusters.length,
@@ -328,7 +341,9 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
         firstChangedRank: firstChangedRank(baselineSignatures, signatures),
         signalMs,
         ...(decode === undefined ? {} : { decode }),
-      });
+      } satisfies VariantAssetResult;
+      await cache.write(asset, variantCacheKey, result);
+      variants.push(result);
     }
     log(
       `${asset.id}: grid-realism reps=${baseRepresentatives.length} decode=${sumBy(variants, (variant) => variant.decode?.attemptCount ?? 0)}`,
@@ -458,6 +473,28 @@ interface ScoredRepresentative {
   readonly baselineRank: number;
   readonly gridRealism: ReturnType<typeof scoreProposalGridRealism>;
 }
+
+const gridRealismVariantCacheKey = (config: Config, variantId: GridRealismVariant): string =>
+  JSON.stringify({
+    study: 'finder-grid-realism',
+    stage: 'variant-result',
+    variantId,
+    noDecode: config.noDecode,
+    maxViews: config.maxViews,
+    maxProposals: config.maxProposals,
+    maxProposalsPerView: config.maxProposalsPerView,
+    maxClusterRepresentatives: config.maxClusterRepresentatives,
+    maxDecodeAttempts: config.maxDecodeAttempts ?? null,
+    stageVersions: config.stageVersions,
+  });
+
+const isVariantAssetResult = (value: unknown): value is VariantAssetResult =>
+  value !== null &&
+  typeof value === 'object' &&
+  typeof (value as { variantId?: unknown }).variantId === 'string' &&
+  typeof (value as { representativeCount?: unknown }).representativeCount === 'number' &&
+  Array.isArray((value as { proposalSignatures?: unknown }).proposalSignatures) &&
+  Array.isArray((value as { scores?: unknown }).scores);
 
 const decodeOrderedRepresentatives = async (input: {
   readonly rows: readonly ScoredRepresentative[];
@@ -897,12 +934,14 @@ const logStudyTiming = (
   label: string,
   durationMs: number,
   samples: number,
+  cached = false,
 ): void => {
   log(
     `${STUDY_TIMING_PREFIX}${JSON.stringify({
       id: label,
       durationMs,
       outputCount: samples,
+      cached,
     })}`,
   );
 };
