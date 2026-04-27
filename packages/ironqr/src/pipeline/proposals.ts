@@ -257,6 +257,15 @@ export type ProposalRankingVariant =
 /**
  * Per-view proposal-generation options.
  */
+export interface ProposalBatchFromEvidenceOptions {
+  /** Maximum proposals retained for this binary view. */
+  readonly maxProposalsPerView?: number;
+  /** Proposal assembly variant for performance studies. Defaults to the canonical production variant. */
+  readonly assemblyVariant?: ProposalAssemblyVariant;
+  /** Finder-triple geometry scoring/filtering variant for proposal-quality studies. */
+  readonly geometryVariant?: ProposalGeometryVariant;
+}
+
 export interface ProposalViewGenerationOptions {
   /** Maximum proposals retained for this binary view. */
   readonly maxProposalsPerView?: number;
@@ -460,11 +469,45 @@ const generateProposalsForView = (
   geometryVariant: ProposalGeometryVariant = 'baseline',
 ): ProposalViewBatch => {
   const startedAt = nowMs();
-
   const detectorStartedAt = nowMs();
   const detection = detectFinderEvidenceWithSummary(binaryView, detectorPolicy);
   const detectorDurationMs = nowMs() - detectorStartedAt;
+  return buildProposalBatchFromDetection(binaryView, detection, startedAt, detectorDurationMs, {
+    maxProposalsPerView: maxPerView,
+    assemblyVariant,
+    geometryVariant,
+  });
+};
 
+export const generateProposalBatchFromFinderEvidence = (
+  binaryView: BinaryView,
+  detection: FinderEvidenceDetection,
+  options: ProposalBatchFromEvidenceOptions = {},
+): ProposalViewBatch =>
+  buildProposalBatchFromDetection(
+    binaryView,
+    detection,
+    nowMs(),
+    finderEvidenceDurationMs(detection.summary),
+    options,
+  );
+
+const finderEvidenceDurationMs = (summary: FinderEvidenceSummary): number =>
+  summary.rowScanDurationMs +
+  summary.floodDurationMs +
+  summary.matcherDurationMs +
+  summary.dedupeDurationMs;
+
+const buildProposalBatchFromDetection = (
+  binaryView: BinaryView,
+  detection: FinderEvidenceDetection,
+  startedAt: number,
+  detectorDurationMs: number,
+  options: ProposalBatchFromEvidenceOptions,
+): ProposalViewBatch => {
+  const maxPerView = options.maxProposalsPerView ?? DEFAULT_MAX_PROPOSALS_PER_VIEW;
+  const assemblyVariant = options.assemblyVariant ?? DEFAULT_PROPOSAL_ASSEMBLY_VARIANT;
+  const geometryVariant = options.geometryVariant ?? 'baseline';
   const tripleAssemblyStartedAt = nowMs();
   const triples =
     detection.evidence.length < 3
