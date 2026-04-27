@@ -19,22 +19,7 @@ import {
 import { mapConcurrentPartial } from '../core/runner.js';
 import { createBenchProgressReporter } from '../ui/progress.js';
 import { openStudyCache } from './cache.js';
-import {
-  binaryBitHotPathStudyPlugin,
-  binaryPrefilterSignalsStudyPlugin,
-  finderRunMapStudyPlugin,
-  moduleSamplingHotPathStudyPlugin,
-  scalarMaterializationFusionStudyPlugin,
-  sharedBinaryDetectorArtifactsStudyPlugin,
-  thresholdStatsCacheStudyPlugin,
-} from './image-processing.js';
-import { proposalClusterRepresentativePrioritizationStudyPlugin } from './proposal-cluster-representative-prioritization.js';
-import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
-import { proposalDetectorPolicyDecodeConfirmationStudyPlugin } from './proposal-detector-policy-decode-confirmation.js';
-import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
-import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
-import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
-import { proposalRankingDecodeConfirmationStudyPlugin } from './proposal-ranking-decode-confirmation.js';
+import { defaultStudyPlugins } from './default-plugins.js';
 import { createStudyPluginRegistry } from './registry.js';
 import { openScannerArtifactCache } from './scanner-artifact-cache.js';
 import type {
@@ -43,7 +28,6 @@ import type {
   StudyPluginContext,
   StudyPluginResult,
 } from './types.js';
-import { viewOrderStudyPlugin, viewProposalsStudyPlugin } from './view-order.js';
 import { applyStudyCacheWrites, createStudyWorkerPool } from './worker-pool.js';
 
 const REPORTS_DIRECTORY = path.join('tools', 'bench', 'reports');
@@ -92,24 +76,7 @@ export interface StudyBenchmarkResult {
 }
 
 export const createDefaultStudyRegistry = () =>
-  createStudyPluginRegistry([
-    { plugin: binaryBitHotPathStudyPlugin },
-    { plugin: binaryPrefilterSignalsStudyPlugin },
-    { plugin: finderRunMapStudyPlugin },
-    { plugin: moduleSamplingHotPathStudyPlugin },
-    { plugin: scalarMaterializationFusionStudyPlugin },
-    { plugin: sharedBinaryDetectorArtifactsStudyPlugin },
-    { plugin: thresholdStatsCacheStudyPlugin },
-    { plugin: proposalClusterRepresentativePrioritizationStudyPlugin },
-    { plugin: proposalDetectorPolicyStudyPlugin },
-    { plugin: proposalDetectorPolicyDecodeConfirmationStudyPlugin },
-    { plugin: proposalGenerationVariantsStudyPlugin },
-    { plugin: proposalGeometryViabilityStudyPlugin },
-    { plugin: proposalGeometryDecodeConfirmationStudyPlugin },
-    { plugin: proposalRankingDecodeConfirmationStudyPlugin },
-    { plugin: viewProposalsStudyPlugin },
-    { plugin: viewOrderStudyPlugin },
-  ]);
+  createStudyPluginRegistry(defaultStudyPlugins.map((plugin) => ({ plugin })));
 
 export const getDefaultStudyReportPath = (repoRoot: string, studyId: string): string =>
   path.join(repoRoot, STUDY_REPORTS_DIRECTORY, `study-${studyId}.json`);

@@ -1,44 +1,12 @@
 import { readBenchImage } from '../shared/image.js';
 import { openStudyCache } from './cache.js';
-import {
-  binaryBitHotPathStudyPlugin,
-  binaryPrefilterSignalsStudyPlugin,
-  finderRunMapStudyPlugin,
-  moduleSamplingHotPathStudyPlugin,
-  scalarMaterializationFusionStudyPlugin,
-  sharedBinaryDetectorArtifactsStudyPlugin,
-  thresholdStatsCacheStudyPlugin,
-  warmImageProcessingStudyWorker,
-} from './image-processing.js';
-import { proposalClusterRepresentativePrioritizationStudyPlugin } from './proposal-cluster-representative-prioritization.js';
-import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
-import { proposalDetectorPolicyDecodeConfirmationStudyPlugin } from './proposal-detector-policy-decode-confirmation.js';
-import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
-import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
-import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
-import { proposalRankingDecodeConfirmationStudyPlugin } from './proposal-ranking-decode-confirmation.js';
+import { defaultStudyWorkerPlugins } from './default-plugins.js';
+import { warmImageProcessingStudyWorker } from './image-processing.js';
 import { openScannerArtifactCache } from './scanner-artifact-cache.js';
 import type { StudyCacheHandle } from './types.js';
 import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
 
-const plugins = new Map(
-  [
-    binaryBitHotPathStudyPlugin,
-    binaryPrefilterSignalsStudyPlugin,
-    finderRunMapStudyPlugin,
-    moduleSamplingHotPathStudyPlugin,
-    scalarMaterializationFusionStudyPlugin,
-    sharedBinaryDetectorArtifactsStudyPlugin,
-    thresholdStatsCacheStudyPlugin,
-    proposalClusterRepresentativePrioritizationStudyPlugin,
-    proposalDetectorPolicyStudyPlugin,
-    proposalDetectorPolicyDecodeConfirmationStudyPlugin,
-    proposalGenerationVariantsStudyPlugin,
-    proposalGeometryViabilityStudyPlugin,
-    proposalGeometryDecodeConfirmationStudyPlugin,
-    proposalRankingDecodeConfirmationStudyPlugin,
-  ].map((plugin) => [plugin.id, plugin] as const),
-);
+const plugins = new Map(defaultStudyWorkerPlugins.map((plugin) => [plugin.id, plugin] as const));
 
 self.onmessage = (event: MessageEvent<StudyWorkerRequest>): void => {
   void run(event.data);
