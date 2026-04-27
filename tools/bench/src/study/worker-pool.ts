@@ -8,6 +8,7 @@ interface StudyWorkerJob {
   readonly config: Record<string, unknown>;
   readonly asset: BenchCorpusAsset;
   readonly cacheFile: string;
+  readonly artifactCacheDirectory: string;
   readonly cacheEnabled: boolean;
   readonly refreshCache: boolean;
 }
@@ -157,6 +158,7 @@ export const createStudyWorkerPool = (
               expectedTexts: job.asset.expectedTexts,
             },
             cacheFile: job.cacheFile,
+            artifactCacheDirectory: job.artifactCacheDirectory,
             cacheEnabled: job.cacheEnabled,
             refreshCache: job.refreshCache,
             floodSemaphore,

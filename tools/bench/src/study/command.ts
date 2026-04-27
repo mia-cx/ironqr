@@ -36,6 +36,7 @@ import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geomet
 import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
 import { proposalRankingDecodeConfirmationStudyPlugin } from './proposal-ranking-decode-confirmation.js';
 import { createStudyPluginRegistry } from './registry.js';
+import { openScannerArtifactCache } from './scanner-artifact-cache.js';
 import type {
   StudyCacheHandle,
   StudyPlugin,
@@ -50,6 +51,7 @@ const FULL_REPORTS_DIRECTORY = path.join(REPORTS_DIRECTORY, 'full');
 const STUDY_REPORTS_DIRECTORY = path.join(FULL_REPORTS_DIRECTORY, 'study');
 const PROCESSED_STUDY_REPORTS_DIRECTORY = path.join(REPORTS_DIRECTORY, 'study');
 const STUDY_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'studies');
+const SCANNER_ARTIFACT_CACHE_DIRECTORY = path.join('tools', 'bench', '.cache', 'scanner-artifacts');
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 
 type StudyReport = BenchReportEnvelope<'study-report', Record<string, unknown>, StudyReportDetails>;
@@ -185,6 +187,11 @@ export const runStudyBenchmark = async (
     refresh: options.refreshCache ?? false,
     file: cacheFile,
   });
+  const artifactCache = openScannerArtifactCache({
+    enabled: options.cacheEnabled ?? true,
+    refresh: options.refreshCache ?? false,
+    directory: path.join(repoRoot, SCANNER_ARTIFACT_CACHE_DIRECTORY),
+  });
 
   try {
     const { result, config, engines, observability, interrupted } = await runPlugin({
@@ -197,6 +204,7 @@ export const runStudyBenchmark = async (
       ...(options.studyFlags === undefined ? {} : { studyFlags: options.studyFlags }),
       reports,
       cache,
+      artifactCache,
       refreshCache: options.refreshCache ?? false,
       workerCount,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -574,6 +582,7 @@ const runPlugin = async (input: {
   readonly studyFlags?: Readonly<Record<string, string | number | boolean>>;
   readonly reports: ReturnType<typeof createStudyReportReaders>;
   readonly cache: StudyCacheHandle<unknown>;
+  readonly artifactCache: ReturnType<typeof openScannerArtifactCache>;
   readonly refreshCache: boolean;
   readonly workerCount: number;
   readonly signal?: AbortSignal;
@@ -620,6 +629,7 @@ const runPlugin = async (input: {
               config,
               reports: input.reports,
               cache: input.cache,
+              artifactCache: input.artifactCache,
               ...(input.signal === undefined ? {} : { signal: input.signal }),
               log: input.log,
             })
@@ -637,6 +647,7 @@ const runPlugin = async (input: {
           config,
           reports: input.reports,
           cache: input.cache,
+          artifactCache: input.artifactCache,
           result: cached,
           ...(input.signal === undefined ? {} : { signal: input.signal }),
           log: input.log,
@@ -746,6 +757,10 @@ const runPlugin = async (input: {
                   config,
                   asset,
                   cacheFile: input.cacheFile,
+                  artifactCacheDirectory: path.join(
+                    input.repoRoot,
+                    SCANNER_ARTIFACT_CACHE_DIRECTORY,
+                  ),
                   cacheEnabled: input.cache.summary().enabled,
                   refreshCache: input.refreshCache,
                 });
@@ -758,6 +773,7 @@ const runPlugin = async (input: {
                 config,
                 reports: input.reports,
                 cache: input.cache,
+                artifactCache: input.artifactCache,
                 ...(input.signal === undefined ? {} : { signal: input.signal }),
                 log: input.log,
               });
@@ -788,6 +804,7 @@ const runPlugin = async (input: {
         assets: input.assets,
         results: assetResults,
         cache: input.cache.summary(),
+        artifactCache: input.artifactCache.summary(),
       };
       const summary = summarize(summaryInput);
       const report = renderReport({ ...summaryInput, summary });

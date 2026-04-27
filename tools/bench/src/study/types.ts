@@ -1,4 +1,5 @@
 import type { AccuracyEngineDescriptor, CorpusBenchAsset } from '../accuracy/types.js';
+import type { ScannerArtifactCacheHandle } from './scanner-artifact-cache.js';
 
 /** Stable identifier used in CLI args, report names, and cache keys. */
 export type StudyPluginId = string;
@@ -62,6 +63,7 @@ export interface StudyAssetInput<Config extends object> {
   readonly config: Config;
   readonly reports: StudyReportReaders;
   readonly cache: StudyCacheHandle<unknown>;
+  readonly artifactCache: ScannerArtifactCacheHandle;
   readonly signal?: AbortSignal;
   readonly log: (message: string) => void;
 }
@@ -71,6 +73,7 @@ export interface StudySummaryInput<Config extends object, AssetResult> {
   readonly assets: readonly CorpusBenchAsset[];
   readonly results: readonly AssetResult[];
   readonly cache: ReturnType<StudyCacheHandle<AssetResult>['summary']>;
+  readonly artifactCache: ReturnType<ScannerArtifactCacheHandle['summary']>;
 }
 
 export interface StudyPluginResult<Summary extends object = Record<string, unknown>> {

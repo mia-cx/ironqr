@@ -20,6 +20,7 @@ export interface StudyWorkerRequest {
   readonly config: Record<string, unknown>;
   readonly asset: StudyWorkerAsset;
   readonly cacheFile: string;
+  readonly artifactCacheDirectory: string;
   readonly cacheEnabled: boolean;
   readonly refreshCache: boolean;
   readonly floodSemaphore?: SharedArrayBuffer;

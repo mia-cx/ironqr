@@ -17,6 +17,7 @@ import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-var
 import { proposalGeometryDecodeConfirmationStudyPlugin } from './proposal-geometry-decode-confirmation.js';
 import { proposalGeometryViabilityStudyPlugin } from './proposal-geometry-viability.js';
 import { proposalRankingDecodeConfirmationStudyPlugin } from './proposal-ranking-decode-confirmation.js';
+import { openScannerArtifactCache } from './scanner-artifact-cache.js';
 import type { StudyCacheHandle } from './types.js';
 import type { StudyCacheWrite, StudyWorkerRequest, StudyWorkerResponse } from './worker-types.js';
 
@@ -69,6 +70,11 @@ const run = async (request: StudyWorkerRequest): Promise<void> => {
       refresh: request.refreshCache,
       file: request.cacheFile,
     });
+    const artifactCache = openScannerArtifactCache({
+      enabled: request.cacheEnabled,
+      refresh: request.refreshCache,
+      directory: request.artifactCacheDirectory,
+    });
     const cacheWrites: StudyCacheWrite[] = [];
     const asset = {
       ...request.asset,
@@ -94,6 +100,7 @@ const run = async (request: StudyWorkerRequest): Promise<void> => {
         config: request.config as never,
         reports: { accuracy: async () => null, performance: async () => null },
         cache,
+        artifactCache,
         log: (message) => post({ type: 'log', jobId: request.jobId, message }),
       });
       post({ type: 'result', jobId: request.jobId, result, cacheWrites });
