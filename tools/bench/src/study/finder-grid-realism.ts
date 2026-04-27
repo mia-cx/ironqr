@@ -13,9 +13,25 @@ import { getOrComputeClusterFrontierArtifacts } from './scanner-artifacts.js';
 import { parseVariantList, positiveIntegerFlag, round, sumBy } from './summary-helpers.js';
 import type { StudyPlugin, StudySummaryInput } from './types.js';
 
-const STUDY_VERSION = 'study-v2';
+const STUDY_VERSION = 'study-v1';
 const STUDY_TIMING_PREFIX = '__bench_study_timing__';
 const CORONATEST_ASSET_ID = 'asset-0944aec7c73146f9';
+
+/**
+ * Finder-grid-realism derived-stage cache/semantic versions.
+ *
+ * These are separate from scanner artifact L1-L8 versions because this study
+ * consumes cached scanner frontiers and then derives policy-specific ordering,
+ * diagnostics, and optional decode comparisons. Bump only the affected stage:
+ * - `rankingPolicy`: grid-realism component formulas, weights, tie-breaks, or ordering semantics.
+ * - `decodeComparison`: per-variant decode traversal, budgets, match/false-positive accounting.
+ * - `visualization`: chart rows, units, or rendered bar semantics.
+ */
+const FINDER_GRID_REALISM_STAGE_VERSIONS = {
+  rankingPolicy: 2,
+  decodeComparison: 2,
+  visualization: 1,
+} as const;
 
 type GridRealismVariant =
   | 'baseline'
@@ -42,6 +58,7 @@ interface Config extends Record<string, unknown> {
   readonly maxProposalsPerView: number;
   readonly maxClusterRepresentatives: number;
   readonly maxDecodeAttempts?: number;
+  readonly stageVersions: typeof FINDER_GRID_REALISM_STAGE_VERSIONS;
 }
 
 interface AssetResult {
@@ -209,6 +226,7 @@ const parseConfig = ({
             'finder-grid-realism',
           ),
         }),
+    stageVersions: FINDER_GRID_REALISM_STAGE_VERSIONS,
   };
 };
 
