@@ -1,4 +1,6 @@
 import type { BinaryViewId } from '../../../../packages/ironqr/src/pipeline/views.js';
+import type { VariantCacheMeasurement } from './image-processing-types.js';
+import type { StudyCacheHandle } from './types.js';
 
 interface DetectorCachePurger {
   readonly purge: (predicate: (cacheKey: string) => boolean) => Promise<number>;
@@ -66,6 +68,35 @@ export const detectorTimingId = (
 ): string => {
   const [scalar = '', threshold = '', polarity = ''] = viewId.split(':');
   return `${shortVariantId(variant)}:${shortDetectorFamily(detector)}:${shortBinaryViewPart(scalar)}:${shortBinaryViewPart(threshold)}:${shortBinaryViewPart(polarity)}`;
+};
+
+export const readDetectorVariantMeasurement = async (
+  asset: Parameters<StudyCacheHandle['read']>[0],
+  cache: Pick<StudyCacheHandle, 'has' | 'read'>,
+  variantId: string,
+  viewId: BinaryViewId,
+): Promise<VariantCacheMeasurement | null> => {
+  for (const cacheKey of detectorVariantCacheKeys(variantId, viewId)) {
+    if (!cache.has(asset, cacheKey)) continue;
+    const value = await cache.read(asset, cacheKey);
+    if (isVariantCacheMeasurement(value)) return value;
+  }
+  return null;
+};
+
+export const isVariantCacheMeasurement = (value: unknown): value is VariantCacheMeasurement => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { durationMs?: unknown }).durationMs !== 'number' ||
+    typeof (value as { outputCount?: unknown }).outputCount !== 'number' ||
+    !Array.isArray((value as { signature?: unknown }).signature)
+  ) {
+    return false;
+  }
+
+  const measurement = value as VariantCacheMeasurement;
+  return measurement.outputCount === 0 || measurement.signature.length > 0;
 };
 
 export const purgeRedundantDetectorCacheRows = async (

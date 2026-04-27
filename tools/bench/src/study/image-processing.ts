@@ -31,6 +31,7 @@ import {
   detectorVariantCacheKey,
   detectorVariantCacheKeys,
   purgeRedundantDetectorCacheRows,
+  readDetectorVariantMeasurement,
   shortBinaryViewPart,
   shortDetectorFamily,
   shortVariantId,
@@ -798,19 +799,7 @@ const replayCachedDetectorRows = async (
   return replayed;
 };
 
-const readVariantMeasurement = async (
-  asset: Parameters<StudyCacheHandle['read']>[0],
-  cache: Pick<StudyCacheHandle, 'has' | 'read'>,
-  variantId: string,
-  viewId: BinaryViewId,
-): Promise<VariantCacheMeasurement | null> => {
-  for (const cacheKey of detectorVariantCacheKeys(variantId, viewId)) {
-    if (!cache.has(asset, cacheKey)) continue;
-    const value = await cache.read(asset, cacheKey);
-    if (isVariantCacheMeasurement(value)) return value;
-  }
-  return null;
-};
+const readVariantMeasurement = readDetectorVariantMeasurement;
 
 const cachedMatcherMeasurement = (
   controlMatcherMs: number,
@@ -1086,21 +1075,6 @@ const finderSignature = (evidence: readonly FinderEvidence[]): readonly string[]
 
 const signaturesEqual = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((entry, index) => entry === right[index]);
-
-const isVariantCacheMeasurement = (value: unknown): value is VariantCacheMeasurement => {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    typeof (value as { durationMs?: unknown }).durationMs !== 'number' ||
-    typeof (value as { outputCount?: unknown }).outputCount !== 'number' ||
-    !Array.isArray((value as { signature?: unknown }).signature)
-  ) {
-    return false;
-  }
-
-  const measurement = value as VariantCacheMeasurement;
-  return measurement.outputCount === 0 || measurement.signature.length > 0;
-};
 
 const floodCandidateOutput = async (
   variantId: string,
