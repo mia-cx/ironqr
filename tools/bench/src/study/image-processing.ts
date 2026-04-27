@@ -1316,84 +1316,10 @@ const ACTIVE_FLOOD_FAMILY = true;
 const ACTIVE_MATCHER_FAMILY = true;
 const ACTIVE_DEDUPE_FAMILY = true;
 
-const FLOOD_CANDIDATES = [
-  {
-    id: 'legacy-flood',
-    note: 'Historical two-pass connected-component flood detector retained as a control row.',
-  },
-  {
-    id: 'dense-index',
-    note: 'Dense stats plus min-x indexed containment lookup.',
-  },
-  {
-    id: 'dense-squared',
-    note: 'Dense stats plus squared-distance geometry tests.',
-  },
-  {
-    id: 'dense-index-squared',
-    note: 'Dense stats plus indexed containment and squared-distance tests.',
-  },
-  {
-    id: 'scanline-stats',
-    note: 'Scanline component labeling with dense stats and linear containment lookup.',
-  },
-  {
-    id: 'scanline-index',
-    note: 'Scanline component labeling plus min-x indexed containment lookup.',
-  },
-  {
-    id: 'scanline-squared',
-    note: 'Scanline component labeling plus squared-distance geometry tests.',
-  },
-  {
-    id: 'scanline-index-squared',
-    note: 'Scanline component labeling plus indexed containment and squared-distance tests.',
-  },
-  {
-    id: 'spatial-bin',
-    note: 'Historical typed-array stats plus spatially indexed contained-component lookup.',
-  },
-  { id: 'run-length-ccl', note: 'Historical run-length connected components prototype.' },
-] as const;
+type DetectorCandidate<Id extends string> = { readonly id: Id; readonly note: string };
 
-const ACTIVE_FLOOD_CANDIDATES: readonly (typeof FLOOD_CANDIDATES)[number][] = [];
-
-const MATCHER_CANDIDATES = [
-  {
-    id: 'legacy-matcher',
-    note: 'Historical pixel-walk cross-check matcher retained as a control row.',
-  },
-  {
-    id: 'run-map-u16',
-    note: 'Run-map matcher with 16-bit axis maps when image dimensions fit.',
-  },
-  {
-    id: 'run-map-u16-fill-horizontal',
-    note: 'Run-map matcher with compact axis maps and typed-array fill for horizontal runs.',
-  },
-  {
-    id: 'run-map-scalar-score',
-    note: 'Run-map matcher with scalar ratio-score arithmetic instead of tuple reduction.',
-  },
-  {
-    id: 'run-map-u16-scalar-score',
-    note: 'Run-map matcher combining compact axis maps with scalar ratio-score arithmetic.',
-  },
-  {
-    id: 'run-map-packed-u16',
-    note: 'Run-map matcher with start/end packed into one 32-bit word per axis.',
-  },
-  {
-    id: 'run-map-packed-u16-fill-horizontal',
-    note: 'Packed run-map matcher plus typed-array fill for horizontal runs.',
-  },
-  {
-    id: 'run-map-packed-u16-scalar-score',
-    note: 'Packed run-map matcher plus scalar ratio-score arithmetic.',
-  },
-] as const satisfies readonly { id: MatcherRunMapVariant; note: string }[];
-
-const ACTIVE_MATCHER_CANDIDATES: readonly (typeof MATCHER_CANDIDATES)[number][] = [];
+const ACTIVE_FLOOD_CANDIDATES: readonly DetectorCandidate<string>[] = [];
+const ACTIVE_MATCHER_CANDIDATES: readonly DetectorCandidate<MatcherRunMapVariant>[] = [];
 
 const throwIfStudyAborted = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) throw signal.reason ?? new Error('Study interrupted.');
