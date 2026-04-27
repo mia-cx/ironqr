@@ -57,13 +57,14 @@ The study compares full replacement ranking objectives with and without that coh
 | Variant | Purpose |
 | --- | --- |
 | `baseline` | Existing proposal/ranking/cluster representative order with no added grid-realism ordering. |
-| `grid-realism-ranking` | Original composite objective: projective/module/bounds/timing weighted together, with proposal score only as tie-breaker. |
-| `realism-module-heavy` | Full replacement objective that emphasizes module/local-scale consistency, the strongest component in earlier diagnostics. |
-| `realism-timing-heavy` | Optional full replacement objective that emphasizes grid-relative timing. Not enabled by default. |
-| `realism-decode-likelihood` | Full replacement objective that rewards module/timing while using projective/bounds as shared plausibility support. |
-| `realism-low-risk` | Full replacement objective that uses projective/bounds mostly as severe-penalty gates, then ranks by module/timing. |
-| `realism-geomean` | Full replacement multiplicative objective requiring multiple components to be decent. |
-| `realism-lexicographic` | Full replacement objective that prioritizes severe sanity pass, then module, timing, and combined score. |
+| `grid-realism-ranking` | Phase-locked semantic composite objective: finder template, timing corridor, module consistency, quiet zone, and projective/bounds sanity, with proposal score only as tie-breaker. |
+| `realism-phase-locked` | Alias/candidate for the same phase-locked semantic composite, kept explicit for report readability. |
+| `realism-module-heavy` | Full replacement objective that emphasizes module/local-scale consistency after finder/timing semantic support. |
+| `realism-timing-heavy` | Optional full replacement objective that emphasizes phase-locked grid-relative timing. Not enabled by default. |
+| `realism-decode-likelihood` | Full replacement objective that rewards finder template, timing corridor, module consistency, and quiet zone support. |
+| `realism-low-risk` | Full replacement objective that uses finder/timing/quiet-zone failures as severe penalties, then ranks by semantic support. |
+| `realism-geomean` | Full replacement multiplicative objective requiring multiple semantic components to be decent. |
+| `realism-lexicographic` | Full replacement objective that prioritizes finder/timing sanity pass, then finder, module, and timing scores. |
 | `realism-penalty-only` | Optional full replacement badness objective. Not enabled by default. |
 | `grid-realism-ranking-no-timing` | Optional ablation to quantify timing's contribution to the original composite. Not enabled by default. |
 | `grid-realism-ranking-no-module` | Optional ablation to quantify module-consistency's contribution to the original composite. Not enabled by default. |
@@ -82,7 +83,9 @@ The study compares full replacement ranking objectives with and without that coh
 | First changed representative rank | rank | Whether realism actually changes decode-frontier order. |
 | Projective realism diagnostic distribution | score | Whether the shared geometry hypothesis is plausible. |
 | Module consistency diagnostic distribution | score | Perspective/local-scale coherence inside the full policy. |
-| Grid timing diagnostic distribution | score | Semantic timing evidence inside the full policy. |
+| Finder-pattern diagnostic distribution | score | 7x7 finder template plus separator support after grid unwarp. |
+| Phase-locked grid timing diagnostic distribution | score | Row 6 / col 6 timing evidence with QR phase, axis agreement, run quality, and jitter penalty. |
+| Quiet-zone grid diagnostic distribution | score | Quiet-zone support sampled in grid coordinates. |
 | Combined ranking score distribution by label | score | Positive/negative separation of the full policy. |
 | Per-policy runtime | ms | Whether the full policy is cheap enough before decode. |
 

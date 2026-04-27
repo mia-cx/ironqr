@@ -28,7 +28,7 @@ const CORONATEST_ASSET_ID = 'asset-0944aec7c73146f9';
  * - `visualization`: chart rows, units, or rendered bar semantics.
  */
 const FINDER_GRID_REALISM_STAGE_VERSIONS = {
-  rankingPolicy: 3,
+  rankingPolicy: 4,
   decodeComparison: 2,
   visualization: 1,
 } as const;
@@ -36,6 +36,7 @@ const FINDER_GRID_REALISM_STAGE_VERSIONS = {
 type GridRealismVariant =
   | 'baseline'
   | 'grid-realism-ranking'
+  | 'realism-phase-locked'
   | 'realism-module-heavy'
   | 'realism-timing-heavy'
   | 'realism-decode-likelihood'
@@ -49,6 +50,7 @@ type GridRealismVariant =
 const DEFAULT_VARIANTS = [
   'baseline',
   'grid-realism-ranking',
+  'realism-phase-locked',
   'realism-module-heavy',
   'realism-decode-likelihood',
   'realism-low-risk',
@@ -105,6 +107,8 @@ interface ComponentScores {
   readonly projective: readonly number[];
   readonly module: readonly number[];
   readonly bounds: readonly number[];
+  readonly finder: readonly number[];
+  readonly quiet: readonly number[];
   readonly timing: readonly number[];
   readonly combined: readonly number[];
 }
@@ -113,6 +117,8 @@ interface ComponentDistributions {
   readonly projective: ScoreDistribution;
   readonly module: ScoreDistribution;
   readonly bounds: ScoreDistribution;
+  readonly finder: ScoreDistribution;
+  readonly quiet: ScoreDistribution;
   readonly timing: ScoreDistribution;
   readonly combined: ScoreDistribution;
 }
@@ -390,14 +396,26 @@ const scoreProposalGridRealism = (
   proposal: ScanProposal,
   geometryCandidates: readonly GeometryCandidate[],
   binaryView: BinaryView,
-): { projective: number; module: number; bounds: number; timing: number; combined: number } => {
+): {
+  projective: number;
+  module: number;
+  bounds: number;
+  finder: number;
+  quiet: number;
+  timing: number;
+  combined: number;
+} => {
   const geometry = geometryCandidates[0] ?? null;
   const projective = scoreProjective(geometry, binaryView);
   const module = scoreModuleConsistency(proposal, geometry);
   const bounds = scoreBounds(geometry, binaryView);
+  const finder = scoreFinderPatterns(geometry, binaryView);
+  const quiet = scoreGridQuietZone(geometry, binaryView);
   const timing = scoreGridTiming(geometry, binaryView);
-  const combined = round(projective * 0.25 + module * 0.25 + bounds * 0.2 + timing * 0.3);
-  return { projective, module, bounds, timing, combined };
+  const combined = round(
+    finder * 0.35 + timing * 0.3 + module * 0.15 + quiet * 0.1 + Math.min(projective, bounds) * 0.1,
+  );
+  return { projective, module, bounds, finder, quiet, timing, combined };
 };
 
 const scoreProjective = (geometry: GeometryCandidate | null, view: BinaryView): number => {
@@ -454,32 +472,164 @@ const scoreModuleConsistency = (
   return round(clamp01(average(ratios) * 0.7 + average(axisRatios) * 0.3));
 };
 
-const scoreGridTiming = (geometry: GeometryCandidate | null, view: BinaryView): number => {
-  if (geometry === null || geometry.size < 21) return 0;
-  const values: number[] = [];
-  for (let col = 8; col <= geometry.size - 9; col += 1)
-    values.push(sampleTiming(geometry, view, 6, col, col));
-  for (let row = 8; row <= geometry.size - 9; row += 1)
-    values.push(sampleTiming(geometry, view, row, 6, row));
-  if (values.length === 0) return 0.5;
-  const direct = average(values);
-  return round(Math.max(direct, 1 - direct));
+const scoreFinderPatterns = (geometry: GeometryCandidate | null, view: BinaryView): number => {
+  if (geometry === null) return 0;
+  const starts = [
+    [0, 0],
+    [0, geometry.size - 7],
+    [geometry.size - 7, 0],
+  ] as const;
+  const scores = starts.map(([rowStart, colStart]) =>
+    scoreFinderTemplate(geometry, view, rowStart, colStart),
+  );
+  return round(average(scores));
 };
 
-const sampleTiming = (
+const scoreFinderTemplate = (
+  geometry: GeometryCandidate,
+  view: BinaryView,
+  rowStart: number,
+  colStart: number,
+): number => {
+  const templateScores: number[] = [];
+  for (let row = 0; row < 7; row += 1) {
+    for (let col = 0; col < 7; col += 1) {
+      templateScores.push(
+        bestModuleMatch(
+          geometry,
+          view,
+          rowStart + row,
+          colStart + col,
+          expectedFinderDark(row, col),
+        ).match,
+      );
+    }
+  }
+  templateScores.push(...separatorScores(geometry, view, rowStart, colStart));
+  return round(average(templateScores));
+};
+
+const expectedFinderDark = (row: number, col: number): boolean => {
+  if (row === 0 || row === 6 || col === 0 || col === 6) return true;
+  if (row >= 2 && row <= 4 && col >= 2 && col <= 4) return true;
+  return false;
+};
+
+const separatorScores = (
+  geometry: GeometryCandidate,
+  view: BinaryView,
+  rowStart: number,
+  colStart: number,
+): readonly number[] => {
+  const scores: number[] = [];
+  for (let offset = -1; offset <= 7; offset += 1) {
+    scores.push(bestModuleMatch(geometry, view, rowStart - 1, colStart + offset, false).match);
+    scores.push(bestModuleMatch(geometry, view, rowStart + 7, colStart + offset, false).match);
+    scores.push(bestModuleMatch(geometry, view, rowStart + offset, colStart - 1, false).match);
+    scores.push(bestModuleMatch(geometry, view, rowStart + offset, colStart + 7, false).match);
+  }
+  return scores;
+};
+
+const scoreGridQuietZone = (geometry: GeometryCandidate | null, view: BinaryView): number => {
+  if (geometry === null) return 0;
+  const scores: number[] = [];
+  for (let index = 0; index < geometry.size; index += 2) {
+    for (const distance of [1, 2, 3, 4]) {
+      scores.push(bestModuleMatch(geometry, view, -distance, index, false).match);
+      scores.push(
+        bestModuleMatch(geometry, view, geometry.size - 1 + distance, index, false).match,
+      );
+      scores.push(bestModuleMatch(geometry, view, index, -distance, false).match);
+      scores.push(
+        bestModuleMatch(geometry, view, index, geometry.size - 1 + distance, false).match,
+      );
+    }
+  }
+  return round(average(scores));
+};
+
+const scoreGridTiming = (geometry: GeometryCandidate | null, view: BinaryView): number => {
+  if (geometry === null || geometry.size < 21) return 0;
+  const row = timingAxisScore(geometry, view, 'row');
+  const col = timingAxisScore(geometry, view, 'col');
+  const phaseScore = average([row.match, col.match]);
+  const runScore = average([row.run, col.run]);
+  const axisAgreement = 1 - Math.abs(row.match - col.match);
+  const jitterScore = 1 - average([row.jitter, col.jitter]);
+  return round(phaseScore * 0.45 + runScore * 0.3 + axisAgreement * 0.15 + jitterScore * 0.1);
+};
+
+const timingAxisScore = (
+  geometry: GeometryCandidate,
+  view: BinaryView,
+  axis: 'row' | 'col',
+): { readonly match: number; readonly run: number; readonly jitter: number } => {
+  const matches: number[] = [];
+  const jitters: number[] = [];
+  for (let index = 8; index <= geometry.size - 9; index += 1) {
+    const expectedDark = index % 2 === 0;
+    const sample =
+      axis === 'row'
+        ? bestModuleMatch(geometry, view, 6, index, expectedDark)
+        : bestModuleMatch(geometry, view, index, 6, expectedDark);
+    matches.push(sample.match);
+    jitters.push(sample.offset);
+  }
+  return {
+    match: round(average(matches)),
+    run: round(longestRun(matches) / Math.max(1, matches.length)),
+    jitter: round(average(jitters)),
+  };
+};
+
+const bestModuleMatch = (
   geometry: GeometryCandidate,
   view: BinaryView,
   row: number,
   col: number,
-  phaseIndex: number,
-): number => {
+  expectedDark: boolean,
+): { readonly match: number; readonly offset: number } => {
+  const offsets = [
+    [0, 0],
+    [-0.18, 0],
+    [0.18, 0],
+    [0, -0.18],
+    [0, 0.18],
+  ] as const;
+  for (const [rowOffset, colOffset] of offsets) {
+    const dark = sampleGridDark(geometry, view, row + rowOffset, col + colOffset);
+    if (dark === null) continue;
+    if (dark === expectedDark) return { match: 1, offset: Math.hypot(rowOffset, colOffset) / 0.18 };
+  }
+  return { match: 0, offset: 1 };
+};
+
+const sampleGridDark = (
+  geometry: GeometryCandidate,
+  view: BinaryView,
+  row: number,
+  col: number,
+): boolean | null => {
   const point = geometry.samplePoint(row, col);
   const x = Math.round(point.x);
   const y = Math.round(point.y);
-  if (x < 0 || y < 0 || x >= view.width || y >= view.height) return 0;
-  const dark = readBinaryPixel(view, y * view.width + x) === 0;
-  const expectedDark = phaseIndex % 2 === 0;
-  return dark === expectedDark ? 1 : 0;
+  if (x < 0 || y < 0 || x >= view.width || y >= view.height) return null;
+  return readBinaryPixel(view, y * view.width + x) === 0;
+};
+
+const longestRun = (values: readonly number[]): number => {
+  let longest = 0;
+  let current = 0;
+  for (const value of values) {
+    if (value >= 1) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
 };
 
 interface ScoredRepresentative {
@@ -576,56 +726,77 @@ const orderRepresentatives = (
 const policyScore = (row: ScoredRepresentative, variant: GridRealismVariant): number => {
   const score = row.gridRealism;
   if (variant === 'baseline') return row.proposal.proposalScore;
-  if (variant === 'grid-realism-ranking') return score.combined;
+  if (variant === 'grid-realism-ranking' || variant === 'realism-phase-locked')
+    return score.combined;
   if (variant === 'realism-module-heavy')
     return round(
-      score.module * 0.55 + score.timing * 0.25 + score.projective * 0.1 + score.bounds * 0.1,
+      score.module * 0.45 + score.finder * 0.25 + score.timing * 0.2 + score.quiet * 0.1,
     );
   if (variant === 'realism-timing-heavy')
     return round(
-      score.timing * 0.5 + score.module * 0.3 + score.projective * 0.1 + score.bounds * 0.1,
+      score.timing * 0.45 + score.finder * 0.3 + score.module * 0.15 + score.quiet * 0.1,
     );
   if (variant === 'realism-decode-likelihood')
     return round(
-      score.module * 0.45 + score.timing * 0.35 + Math.min(score.projective, score.bounds) * 0.2,
+      score.finder * 0.35 + score.timing * 0.3 + score.module * 0.25 + score.quiet * 0.1,
     );
   if (variant === 'realism-low-risk') return lowRiskScore(score);
   if (variant === 'realism-geomean') return geomeanScore(score);
   if (variant === 'realism-lexicographic') return lexicographicScore(score);
   if (variant === 'realism-penalty-only') return penaltyOnlyScore(score);
   if (variant === 'grid-realism-ranking-no-timing')
-    return round(score.projective * 0.35 + score.module * 0.4 + score.bounds * 0.25);
+    return round(
+      score.finder * 0.45 +
+        score.module * 0.3 +
+        score.quiet * 0.15 +
+        Math.min(score.projective, score.bounds) * 0.1,
+    );
   if (variant === 'grid-realism-ranking-no-module')
-    return round(score.projective * 0.35 + score.bounds * 0.25 + score.timing * 0.4);
+    return round(
+      score.finder * 0.4 +
+        score.timing * 0.35 +
+        score.quiet * 0.15 +
+        Math.min(score.projective, score.bounds) * 0.1,
+    );
   return score.combined;
 };
 
 const lowRiskScore = (score: ReturnType<typeof scoreProposalGridRealism>): number => {
-  const severePenalty = (score.projective < 0.55 ? 0.25 : 0) + (score.bounds < 0.55 ? 0.25 : 0);
-  return round(score.module * 0.6 + score.timing * 0.4 - severePenalty);
+  const severePenalty =
+    (score.finder < 0.72 ? 0.3 : 0) +
+    (score.timing < 0.58 ? 0.2 : 0) +
+    (score.quiet < 0.55 ? 0.15 : 0);
+  return round(
+    score.finder * 0.35 +
+      score.module * 0.3 +
+      score.timing * 0.25 +
+      score.quiet * 0.1 -
+      severePenalty,
+  );
 };
 
 const geomeanScore = (score: ReturnType<typeof scoreProposalGridRealism>): number =>
   round(
-    score.module ** 0.45 *
-      Math.max(0.01, score.timing) ** 0.35 *
-      Math.max(0.01, score.projective) ** 0.1 *
-      Math.max(0.01, score.bounds) ** 0.1,
+    Math.max(0.01, score.finder) ** 0.35 *
+      Math.max(0.01, score.timing) ** 0.3 *
+      Math.max(0.01, score.module) ** 0.2 *
+      Math.max(0.01, score.quiet) ** 0.1 *
+      Math.max(0.01, Math.min(score.projective, score.bounds)) ** 0.05,
   );
 
 const lexicographicScore = (score: ReturnType<typeof scoreProposalGridRealism>): number => {
-  const sanityBucket = score.projective < 0.55 || score.bounds < 0.55 ? 0 : 1;
+  const semanticBucket = score.finder >= 0.72 && score.timing >= 0.58 ? 1 : 0;
   return round(
-    sanityBucket * 0.5 + score.module * 0.3 + score.timing * 0.15 + score.combined * 0.05,
+    semanticBucket * 0.45 + score.finder * 0.25 + score.module * 0.2 + score.timing * 0.1,
   );
 };
 
 const penaltyOnlyScore = (score: ReturnType<typeof scoreProposalGridRealism>): number => {
   const badness =
-    Math.max(0, 0.65 - score.module) * 0.45 +
-    Math.max(0, 0.6 - score.timing) * 0.35 +
-    Math.max(0, 0.55 - score.projective) * 0.1 +
-    Math.max(0, 0.55 - score.bounds) * 0.1;
+    Math.max(0, 0.75 - score.finder) * 0.35 +
+    Math.max(0, 0.65 - score.timing) * 0.3 +
+    Math.max(0, 0.65 - score.module) * 0.2 +
+    Math.max(0, 0.6 - score.quiet) * 0.15;
   return round(1 - badness);
 };
 
@@ -648,6 +819,8 @@ const componentScoreRows = (
   projective: scores.map((score) => score.projective),
   module: scores.map((score) => score.module),
   bounds: scores.map((score) => score.bounds),
+  finder: scores.map((score) => score.finder),
+  quiet: scores.map((score) => score.quiet),
   timing: scores.map((score) => score.timing),
   combined: scores.map((score) => score.combined),
 });
@@ -656,6 +829,8 @@ const componentDistributions = (scores: ComponentScores): ComponentDistributions
   projective: distribution(scores.projective),
   module: distribution(scores.module),
   bounds: distribution(scores.bounds),
+  finder: distribution(scores.finder),
+  quiet: distribution(scores.quiet),
   timing: distribution(scores.timing),
   combined: distribution(scores.combined),
 });
@@ -834,6 +1009,8 @@ const summarizeComponents = (rows: readonly VariantAssetResult[]): ComponentDist
     projective: rows.flatMap((row) => row.componentScores.projective),
     module: rows.flatMap((row) => row.componentScores.module),
     bounds: rows.flatMap((row) => row.componentScores.bounds),
+    finder: rows.flatMap((row) => row.componentScores.finder),
+    quiet: rows.flatMap((row) => row.componentScores.quiet),
     timing: rows.flatMap((row) => row.componentScores.timing),
     combined: rows.flatMap((row) => row.componentScores.combined),
   });
@@ -916,7 +1093,9 @@ const componentBarRows = (variant: VariantSummary | undefined): readonly StudyBa
     barRow('projective', variant.components.projective.avg, 1),
     barRow('module', variant.components.module.avg, 1),
     barRow('bounds', variant.components.bounds.avg, 1),
-    barRow('timing', variant.components.timing.avg, 1),
+    barRow('finder', variant.components.finder.avg, 1),
+    barRow('quiet', variant.components.quiet.avg, 1),
+    barRow('timing-phase-locked', variant.components.timing.avg, 1),
     barRow('combined', variant.components.combined.avg, 1),
   ];
 };
