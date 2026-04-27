@@ -1,3 +1,4 @@
+import { finderGridRealismStudyPlugin } from './finder-grid-realism.js';
 import {
   binaryBitHotPathStudyPlugin,
   binaryPrefilterSignalsStudyPlugin,
@@ -32,6 +33,7 @@ export const defaultStudyPlugins: readonly StudyPlugin[] = [
   proposalGeometryViabilityStudyPlugin,
   proposalGeometryDecodeConfirmationStudyPlugin,
   proposalRankingDecodeConfirmationStudyPlugin,
+  finderGridRealismStudyPlugin,
   viewProposalsStudyPlugin,
   viewOrderStudyPlugin,
 ];
