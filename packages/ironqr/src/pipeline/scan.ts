@@ -7,7 +7,7 @@ import type {
   ScanTimingSpanName,
 } from '../contracts/scan.js';
 import { ScannerError } from '../qr/errors.js';
-import { clusterRankedProposals } from './clusters.js';
+import { type ClusterRepresentativeVariant, clusterRankedProposals } from './clusters.js';
 import {
   type DecodeAttempt,
   type DecodeAttemptOutcome,
@@ -56,6 +56,8 @@ export interface ScanRuntimeOptions extends ScanOptions {
   readonly proposalGeometryVariant?: ProposalGeometryVariant;
   /** Optional global proposal ranking variant for decode-prioritization studies. */
   readonly proposalRankingVariant?: ProposalRankingVariant;
+  /** Optional representative ordering policy within each proposal cluster. */
+  readonly proposalClusterRepresentativeVariant?: ClusterRepresentativeVariant;
   /** Optional low-overhead timing span sink for performance harnesses. */
   readonly metricsSink?: ScanMetricsSink;
   /** Maximum proposal representatives to try inside one cluster. */
@@ -460,6 +462,7 @@ const scanFrameExecutionOnce = (
       options.metricsSink,
       options.maxClusterRepresentatives,
       options.proposalRankingVariant,
+      options.proposalClusterRepresentativeVariant,
     );
     let stopScanning = false;
     let earlyFrontierPasses = 0;
@@ -503,6 +506,7 @@ const scanFrameExecutionOnce = (
         options.metricsSink,
         options.maxClusterRepresentatives,
         options.proposalRankingVariant,
+        options.proposalClusterRepresentativeVariant,
       );
       rankingMs += latestSnapshot.rankingMs;
       clusteringMs += latestSnapshot.clusteringMs;
@@ -537,6 +541,7 @@ const scanFrameExecutionOnce = (
         options.metricsSink,
         options.maxClusterRepresentatives,
         options.proposalRankingVariant,
+        options.proposalClusterRepresentativeVariant,
       );
       rankingMs += latestSnapshot.rankingMs;
       clusteringMs += latestSnapshot.clusteringMs;
@@ -668,6 +673,7 @@ const buildFrontierSnapshot = (
   metricsSink?: ScanMetricsSink,
   maxClusterRepresentatives?: number,
   rankingVariant?: ProposalRankingVariant,
+  clusterRepresentativeVariant?: ClusterRepresentativeVariant,
 ): FrontierSnapshot => {
   const rankingStartedAt = nowMs();
   const rankedProposalCandidates = rankProposalCandidates(viewBank, generatedProposals, {
@@ -688,6 +694,9 @@ const buildFrontierSnapshot = (
   const clusteringStartedAt = nowMs();
   const allClusters = clusterRankedProposals(viableProposals, {
     maxRepresentatives: maxClusterRepresentatives ?? MAX_CLUSTER_REPRESENTATIVES,
+    ...(clusterRepresentativeVariant === undefined
+      ? {}
+      : { representativeVariant: clusterRepresentativeVariant }),
   });
   const clusters = allClusters.slice(0, maxProposals);
   const clusteringMs = nowMs() - clusteringStartedAt;

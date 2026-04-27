@@ -28,6 +28,7 @@ import {
   sharedBinaryDetectorArtifactsStudyPlugin,
   thresholdStatsCacheStudyPlugin,
 } from './image-processing.js';
+import { proposalClusterRepresentativePrioritizationStudyPlugin } from './proposal-cluster-representative-prioritization.js';
 import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
 import { proposalDetectorPolicyDecodeConfirmationStudyPlugin } from './proposal-detector-policy-decode-confirmation.js';
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
@@ -97,6 +98,7 @@ export const createDefaultStudyRegistry = () =>
     { plugin: scalarMaterializationFusionStudyPlugin },
     { plugin: sharedBinaryDetectorArtifactsStudyPlugin },
     { plugin: thresholdStatsCacheStudyPlugin },
+    { plugin: proposalClusterRepresentativePrioritizationStudyPlugin },
     { plugin: proposalDetectorPolicyStudyPlugin },
     { plugin: proposalDetectorPolicyDecodeConfirmationStudyPlugin },
     { plugin: proposalGenerationVariantsStudyPlugin },

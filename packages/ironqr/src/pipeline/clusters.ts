@@ -5,6 +5,13 @@ import type { BinaryViewId } from './views.js';
 const DEFAULT_MAX_CLUSTER_REPRESENTATIVES = 3;
 const PROPOSAL_CLUSTER_QUANTIZATION = 24;
 
+export type ClusterRepresentativeVariant =
+  | 'proposal-score'
+  | 'timing-score'
+  | 'quiet-timing-score'
+  | 'decode-signal-score'
+  | 'view-diverse-score';
+
 /**
  * One grouped QR candidate spanning multiple near-duplicate proposals.
  */
@@ -31,6 +38,8 @@ export interface ProposalCluster {
 export interface ProposalClusterOptions {
   /** Maximum representative proposals retained per cluster. */
   readonly maxRepresentatives?: number;
+  /** Representative ordering policy within one near-duplicate cluster. */
+  readonly representativeVariant?: ClusterRepresentativeVariant;
 }
 
 /**
@@ -46,6 +55,7 @@ export const clusterRankedProposals = (
   options: ProposalClusterOptions = {},
 ): readonly ProposalCluster[] => {
   const representativeBudget = normalizeRepresentativeBudget(options.maxRepresentatives);
+  const representativeVariant = options.representativeVariant ?? 'proposal-score';
   const grouped = new Map<string, ScanProposal[]>();
 
   for (const proposal of proposals) {
@@ -64,7 +74,11 @@ export const clusterRankedProposals = (
         (left, right) => right.proposalScore - left.proposalScore,
       );
       const clusterScore = scoreCluster(orderedProposals);
-      const representatives = orderedProposals.slice(0, representativeBudget);
+      const representatives = selectClusterRepresentatives(
+        orderedProposals,
+        representativeBudget,
+        representativeVariant,
+      );
       return {
         id,
         proposals: orderedProposals,
@@ -76,6 +90,59 @@ export const clusterRankedProposals = (
       };
     })
     .sort((left, right) => right.clusterScore - left.clusterScore);
+};
+
+const selectClusterRepresentatives = (
+  proposals: readonly ScanProposal[],
+  budget: number,
+  variant: ClusterRepresentativeVariant,
+): readonly ScanProposal[] => {
+  if (variant === 'view-diverse-score') return selectViewDiverseRepresentatives(proposals, budget);
+  return [...proposals]
+    .sort((left, right) => representativeScore(right, variant) - representativeScore(left, variant))
+    .slice(0, budget);
+};
+
+const selectViewDiverseRepresentatives = (
+  proposals: readonly ScanProposal[],
+  budget: number,
+): readonly ScanProposal[] => {
+  const selected: ScanProposal[] = [];
+  const seenFamilies = new Set<string>();
+  const remaining = [...proposals];
+  while (selected.length < budget && remaining.length > 0) {
+    remaining.sort((left, right) => {
+      const leftNewFamily = seenFamilies.has(viewFamilyKey(left.binaryViewId)) ? 0 : 1;
+      const rightNewFamily = seenFamilies.has(viewFamilyKey(right.binaryViewId)) ? 0 : 1;
+      return rightNewFamily - leftNewFamily || right.proposalScore - left.proposalScore;
+    });
+    const next = remaining.shift();
+    if (next === undefined) break;
+    selected.push(next);
+    seenFamilies.add(viewFamilyKey(next.binaryViewId));
+  }
+  return selected;
+};
+
+const representativeScore = (
+  proposal: ScanProposal,
+  variant: Exclude<ClusterRepresentativeVariant, 'view-diverse-score'>,
+): number => {
+  const breakdown = proposal.scoreBreakdown;
+  if (variant === 'timing-score') return breakdown.timingScore;
+  if (variant === 'quiet-timing-score') {
+    return breakdown.quietZoneScore * 2 + breakdown.timingScore * 3 + breakdown.alignmentScore;
+  }
+  if (variant === 'decode-signal-score') {
+    return (
+      breakdown.geometryScore +
+      breakdown.quietZoneScore * 2 +
+      breakdown.timingScore * 4 +
+      breakdown.alignmentScore * 2 -
+      breakdown.penalties * 1.5
+    );
+  }
+  return proposal.proposalScore;
 };
 
 const scoreCluster = (proposals: readonly ScanProposal[]): number => {

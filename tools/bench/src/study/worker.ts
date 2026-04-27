@@ -10,6 +10,7 @@ import {
   thresholdStatsCacheStudyPlugin,
   warmImageProcessingStudyWorker,
 } from './image-processing.js';
+import { proposalClusterRepresentativePrioritizationStudyPlugin } from './proposal-cluster-representative-prioritization.js';
 import { proposalDetectorPolicyStudyPlugin } from './proposal-detector-policy.js';
 import { proposalDetectorPolicyDecodeConfirmationStudyPlugin } from './proposal-detector-policy-decode-confirmation.js';
 import { proposalGenerationVariantsStudyPlugin } from './proposal-generation-variants.js';
@@ -28,6 +29,7 @@ const plugins = new Map(
     scalarMaterializationFusionStudyPlugin,
     sharedBinaryDetectorArtifactsStudyPlugin,
     thresholdStatsCacheStudyPlugin,
+    proposalClusterRepresentativePrioritizationStudyPlugin,
     proposalDetectorPolicyStudyPlugin,
     proposalDetectorPolicyDecodeConfirmationStudyPlugin,
     proposalGenerationVariantsStudyPlugin,
