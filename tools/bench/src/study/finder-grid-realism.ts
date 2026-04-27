@@ -1,4 +1,6 @@
+import { Effect } from 'effect';
 import { listDefaultBinaryViewIds } from '../../../../packages/ironqr/src/index.js';
+import { runDecodeCascade } from '../../../../packages/ironqr/src/pipeline/decode-cascade.js';
 import type { GeometryCandidate } from '../../../../packages/ironqr/src/pipeline/geometry.js';
 import type { ScanProposal } from '../../../../packages/ironqr/src/pipeline/proposals.js';
 import {
@@ -7,11 +9,7 @@ import {
   readBinaryPixel,
 } from '../../../../packages/ironqr/src/pipeline/views.js';
 import { fractionalBar } from '../accuracy/dashboard/components.js';
-import {
-  type DecodeOutcomeArtifacts,
-  getOrComputeClusterFrontierArtifacts,
-  getOrComputeDecodeOutcomeArtifacts,
-} from './scanner-artifacts.js';
+import { getOrComputeClusterFrontierArtifacts } from './scanner-artifacts.js';
 import { parseVariantList, positiveIntegerFlag, round, sumBy } from './summary-helpers.js';
 import type { StudyPlugin, StudySummaryInput } from './types.js';
 
@@ -69,6 +67,7 @@ interface VariantAssetResult {
   readonly components: ComponentDistributions;
   readonly firstChangedRank: number | null;
   readonly signalMs: number;
+  readonly decode?: VariantDecodeResult;
 }
 
 interface ComponentScores {
@@ -93,6 +92,12 @@ interface DecodeAssetResult {
   readonly successCount: number;
 }
 
+interface VariantDecodeResult extends DecodeAssetResult {
+  readonly matchedExpectedTexts: readonly string[];
+  readonly successRank: number | null;
+  readonly falsePositive: boolean;
+}
+
 interface ScoreDistribution {
   readonly count: number;
   readonly min: number;
@@ -112,7 +117,7 @@ interface Summary extends Record<string, unknown> {
   readonly variants: readonly VariantSummary[];
   readonly coronatest: {
     readonly coveredByVariant: Record<string, boolean>;
-    readonly decoded?: boolean;
+    readonly decodedByVariant?: Record<string, boolean>;
   };
   readonly visualizations: readonly StudyBarChart[];
   readonly recommendations: readonly string[];
@@ -145,6 +150,13 @@ interface VariantSummary extends ScoreDistribution {
   readonly positiveScores: ScoreDistribution;
   readonly negativeScores: ScoreDistribution;
   readonly components: ComponentDistributions;
+  readonly positiveDecodedAssetCount?: number;
+  readonly falsePositiveAssetCount?: number;
+  readonly decodeAttemptCount?: number;
+  readonly decodeSuccessCount?: number;
+  readonly lostDecodedPositiveAssetIds?: readonly string[];
+  readonly gainedDecodedPositiveAssetIds?: readonly string[];
+  readonly successRank?: ScoreDistribution;
 }
 
 const parseConfig = ({
@@ -244,9 +256,7 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
   estimateUnits: (config, assets) => assets.length * config.variants.length,
   runAsset: async ({ asset, config, artifactCache, log }) => {
     const options = artifactOptions(config);
-    const artifacts = config.noDecode
-      ? await getOrComputeClusterFrontierArtifacts(asset, artifactCache, options)
-      : await getOrComputeDecodeOutcomeArtifacts(asset, artifactCache, options);
+    const artifacts = await getOrComputeClusterFrontierArtifacts(asset, artifactCache, options);
     const viewBank = createViewBank(artifacts.image);
     const geometryByProposalId = new Map(
       artifacts.rankedCandidates.map((candidate) => [
@@ -265,15 +275,28 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
       ),
     }));
     const baselineSignatures = baseRepresentatives.map(proposalSignature);
-    const variants = config.variants.map((variantId) => {
+    const variants: VariantAssetResult[] = [];
+    for (const variantId of config.variants) {
       const startedAt = performance.now();
       const ordered = orderRepresentatives(scoredRepresentatives, variantId);
       const scores = ordered.map((row) => policyScore(row, variantId));
       const componentScores = componentScoreRows(ordered.map((row) => row.gridRealism));
       const signatures = ordered.map((row) => proposalSignature(row.proposal));
+      const decode = config.noDecode
+        ? undefined
+        : await decodeOrderedRepresentatives({
+            rows: ordered,
+            geometryByProposalId,
+            viewBank,
+            expectedTexts: asset.expectedTexts,
+            label: asset.label,
+            ...(config.maxDecodeAttempts === undefined
+              ? {}
+              : { maxDecodeAttempts: config.maxDecodeAttempts }),
+          });
       const signalMs = round(performance.now() - startedAt);
       logStudyTiming(log, `${variantId}:grid-realism`, signalMs, ordered.length);
-      return {
+      variants.push({
         variantId,
         proposalCount: artifacts.batches.reduce((sum, batch) => sum + batch.proposals.length, 0),
         clusterCount: artifacts.clusters.length,
@@ -286,18 +309,17 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
         components: componentDistributions(componentScores),
         firstChangedRank: firstChangedRank(baselineSignatures, signatures),
         signalMs,
-      } satisfies VariantAssetResult;
-    });
-    const decode = config.noDecode ? undefined : decodeResult(artifacts as DecodeOutcomeArtifacts);
+        ...(decode === undefined ? {} : { decode }),
+      });
+    }
     log(
-      `${asset.id}: grid-realism reps=${baseRepresentatives.length} decode=${decode?.attemptCount ?? 0}`,
+      `${asset.id}: grid-realism reps=${baseRepresentatives.length} decode=${sumBy(variants, (variant) => variant.decode?.attemptCount ?? 0)}`,
     );
     return {
       assetId: asset.id,
       label: asset.label,
       expectedTexts: asset.expectedTexts,
       variants,
-      ...(decode === undefined ? {} : { decode }),
     };
   },
   summarize: (input) => summarize(input),
@@ -419,6 +441,56 @@ interface ScoredRepresentative {
   readonly gridRealism: ReturnType<typeof scoreProposalGridRealism>;
 }
 
+const decodeOrderedRepresentatives = async (input: {
+  readonly rows: readonly ScoredRepresentative[];
+  readonly geometryByProposalId: ReadonlyMap<string, readonly GeometryCandidate[]>;
+  readonly viewBank: ReturnType<typeof createViewBank>;
+  readonly expectedTexts: readonly string[];
+  readonly label: 'qr-pos' | 'qr-neg';
+  readonly maxDecodeAttempts?: number;
+}): Promise<VariantDecodeResult> => {
+  const decodedTexts = new Set<string>();
+  const matchedExpectedTexts = new Set<string>();
+  let attemptCount = 0;
+  let successCount = 0;
+  let successRank: number | null = null;
+  const shouldAttemptDecode = (): boolean => {
+    if (input.maxDecodeAttempts === undefined) return true;
+    if (attemptCount >= input.maxDecodeAttempts) return false;
+    return true;
+  };
+  for (let index = 0; index < input.rows.length; index += 1) {
+    const row = input.rows[index];
+    if (row === undefined) continue;
+    const success = await Effect.runPromise(
+      runDecodeCascade(row.proposal, input.viewBank, {
+        proposalRank: index + 1,
+        topProposalScore: input.rows[0]?.proposal.proposalScore ?? 0,
+        initialGeometryCandidates: input.geometryByProposalId.get(row.proposal.id) ?? [],
+        shouldAttemptDecode,
+        onAttemptMeasured: (attempt) => {
+          attemptCount += 1;
+          if (attempt.outcome === 'success') successCount += 1;
+        },
+      }),
+    );
+    if (success === null) continue;
+    successRank = index + 1;
+    const text = success.result.payload.text;
+    decodedTexts.add(text);
+    if (input.expectedTexts.includes(text)) matchedExpectedTexts.add(text);
+    break;
+  }
+  return {
+    decodedTexts: [...decodedTexts],
+    matchedExpectedTexts: [...matchedExpectedTexts],
+    attemptCount,
+    successCount,
+    successRank,
+    falsePositive: input.label === 'qr-neg' && decodedTexts.size > 0,
+  };
+};
+
 const orderRepresentatives = (
   rows: readonly ScoredRepresentative[],
   variant: GridRealismVariant,
@@ -495,8 +567,18 @@ const summarize = ({
       )
       .map((result) => result.assetId),
   );
+  const baselineDecoded = new Set(
+    results
+      .filter(
+        (result) =>
+          result.label === 'qr-pos' &&
+          (result.variants.find((variant) => variant.variantId === 'baseline')?.decode
+            ?.matchedExpectedTexts.length ?? 0) > 0,
+      )
+      .map((result) => result.assetId),
+  );
   const variants = config.variants.map((variantId) =>
-    summarizeVariant(variantId, results, baselineCovered),
+    summarizeVariant(variantId, results, baselineCovered, baselineDecoded),
   );
   return {
     assetCount: results.length,
@@ -518,9 +600,15 @@ const summarize = ({
       ...(config.noDecode
         ? {}
         : {
-            decoded:
-              (results.find((result) => result.assetId === CORONATEST_ASSET_ID)?.decode
-                ?.decodedTexts.length ?? 0) > 0,
+            decodedByVariant: Object.fromEntries(
+              config.variants.map((variant) => [
+                variant,
+                (results
+                  .find((result) => result.assetId === CORONATEST_ASSET_ID)
+                  ?.variants.find((row) => row.variantId === variant)?.decode?.decodedTexts
+                  .length ?? 0) > 0,
+              ]),
+            ),
           }),
     },
     visualizations: buildVisualizations(variants),
@@ -537,6 +625,7 @@ const summarizeVariant = (
   variantId: GridRealismVariant,
   results: readonly AssetResult[],
   baselineCovered: ReadonlySet<string>,
+  baselineDecoded: ReadonlySet<string>,
 ): VariantSummary => {
   const rows = results
     .map((result) => result.variants.find((variant) => variant.variantId === variantId))
@@ -557,6 +646,17 @@ const summarizeVariant = (
     .filter((assetId) => !baselineCovered.has(assetId))
     .sort();
   const score = distribution(rows.flatMap((row) => row.scores));
+  const decodedPositiveIds = new Set(
+    results
+      .filter(
+        (result) =>
+          result.label === 'qr-pos' &&
+          (result.variants.find((variant) => variant.variantId === variantId)?.decode
+            ?.matchedExpectedTexts.length ?? 0) > 0,
+      )
+      .map((result) => result.assetId),
+  );
+  const decodedRows = rows.map((row) => row.decode).filter(isDefined);
   const changedAssetCount = rows.filter((row) => row.firstChangedRank !== null).length;
   const changedRanks = rows.flatMap((row) =>
     row.firstChangedRank === null ? [] : [row.firstChangedRank],
@@ -596,6 +696,27 @@ const summarizeVariant = (
     positiveScores,
     negativeScores,
     components: summarizeComponents(rows),
+    ...(decodedRows.length === 0
+      ? {}
+      : {
+          positiveDecodedAssetCount: decodedPositiveIds.size,
+          falsePositiveAssetCount: results.filter(
+            (result) =>
+              result.label === 'qr-neg' &&
+              (result.variants.find((variant) => variant.variantId === variantId)?.decode
+                ?.falsePositive ??
+                false),
+          ).length,
+          decodeAttemptCount: sumBy(decodedRows, (row) => row.attemptCount),
+          decodeSuccessCount: sumBy(decodedRows, (row) => row.successCount),
+          lostDecodedPositiveAssetIds: [...baselineDecoded]
+            .filter((assetId) => !decodedPositiveIds.has(assetId))
+            .sort(),
+          gainedDecodedPositiveAssetIds: [...decodedPositiveIds]
+            .filter((assetId) => !baselineDecoded.has(assetId))
+            .sort(),
+          successRank: distribution(decodedRows.flatMap((row) => row.successRank ?? [])),
+        }),
     ...score,
   };
 };
@@ -617,7 +738,7 @@ const buildVisualizations = (variants: readonly VariantSummary[]): readonly Stud
   ]);
   const scoreMax = Math.max(1, ...scoreValues);
   const changedMax = Math.max(1, ...variants.map((row) => row.changedAssetCount));
-  return [
+  const charts: StudyBarChart[] = [
     {
       title: 'Grid-realism ranking score average by label',
       unit: 'score',
@@ -641,6 +762,44 @@ const buildVisualizations = (variants: readonly VariantSummary[]): readonly Stud
       ),
     },
   ];
+  const decodeVariants = variants.filter((variant) => variant.decodeAttemptCount !== undefined);
+  if (decodeVariants.length === 0) return charts;
+  charts.push(
+    {
+      title: 'Decode-confirmation positives',
+      unit: 'assets',
+      rows: decodeVariants.map((variant) =>
+        barRow(
+          variant.variantId,
+          variant.positiveDecodedAssetCount ?? 0,
+          Math.max(1, ...decodeVariants.map((row) => row.positiveDecodedAssetCount ?? 0)),
+        ),
+      ),
+    },
+    {
+      title: 'Decode-confirmation false positives',
+      unit: 'assets',
+      rows: decodeVariants.map((variant) =>
+        barRow(
+          variant.variantId,
+          variant.falsePositiveAssetCount ?? 0,
+          Math.max(1, ...decodeVariants.map((row) => row.falsePositiveAssetCount ?? 0)),
+        ),
+      ),
+    },
+    {
+      title: 'Decode attempts',
+      unit: 'attempts',
+      rows: decodeVariants.map((variant) =>
+        barRow(
+          variant.variantId,
+          variant.decodeAttemptCount ?? 0,
+          Math.max(1, ...decodeVariants.map((row) => row.decodeAttemptCount ?? 0)),
+        ),
+      ),
+    },
+  );
+  return charts;
 };
 
 const componentBarRows = (variant: VariantSummary | undefined): readonly StudyBarChartRow[] => {
@@ -662,12 +821,6 @@ const barRow = (label: string, value: number, max: number): StudyBarChartRow => 
 
 const bar = (value: number, max: number): string =>
   fractionalBar(Math.max(0, value) / Math.max(1, max), 24, { minVisible: value > 0 });
-
-const decodeResult = (artifacts: DecodeOutcomeArtifacts): DecodeAssetResult => ({
-  decodedTexts: artifacts.decodedTexts,
-  attemptCount: artifacts.attemptCount,
-  successCount: artifacts.successCount,
-});
 
 const distribution = (values: readonly number[]): ScoreDistribution => {
   if (values.length === 0) return { count: 0, min: 0, avg: 0, p50: 0, p95: 0, max: 0 };
