@@ -8,6 +8,8 @@ After proposal ranking and no-flood canonization, most remaining scanner time is
 
 The highest global proposal score is not always the best representative inside a cluster. Prioritizing representatives by timing, quiet-zone, alignment, or view diversity may try a decodable representative earlier while preserving the same cluster frontier. The null hypothesis is that current proposal-score ordering is already optimal, or that alternative ordering loses positives / increases false positives.
 
+Design note: finder detection confidence and decode capability may prefer different binary views. Proposal generation should keep a finder-oriented view priority for finding evidence, but cluster representative ordering may need a separate decode-oriented view priority based on which views actually decode best after proposals are clustered. Treat this as two possible canonical priority lists, not one shared list by default.
+
 ## Designed experiment / study
 
 Run:
@@ -25,6 +27,7 @@ Default variants:
 | `quiet-timing-score` | Prefer quiet-zone + timing + alignment evidence. |
 | `decode-signal-score` | Strongest decode-likelihood representative score. |
 | `view-diverse-score` | Prefer view-family diversity before proposal score when multiple reps are allowed. |
+| `decode-view-priority` | Future candidate: prefer representatives from binary views with best empirical decode success, not finder-detection yield. |
 
 Defaults:
 
@@ -65,6 +68,8 @@ decode attempts and/or scan time improve materially
 ```
 
 If using `maxClusterRepresentatives=1`, this tests which single cluster representative should be tried. If using a higher representative budget, also inspect whether `view-diverse-score` reduces attempts by avoiding near-duplicate representatives.
+
+Before canonizing representative ordering, inspect per-view decode contribution among successful representatives. If decode-winning views differ from finder-productive views, add and run a `decode-view-priority` variant rather than reusing finder/proposal view order.
 
 ## Results
 
