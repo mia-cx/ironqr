@@ -369,8 +369,56 @@ Answered:
 - The coherent grid-realism policy preserves proposal coverage in `--no-decode` mode.
 - The coherent policy materially changes representative ordering.
 
+Decode-confirmation run with capped concrete decode attempts generated on 2026-04-27 from commit `fa07372ac6e831f089c2705fe470e452e38458ca`:
+
+```text
+tools/bench/reports/full/study/study-finder-grid-realism.json
+tools/bench/reports/study/study-finder-grid-realism.summary.json
+```
+
+Run configuration:
+
+```text
+assets: 203 total, 60 positive, 143 negative
+variants: baseline, grid-realism-ranking
+maxDecodeAttempts: 25 per asset per variant
+stageVersions: rankingPolicy=2, decodeComparison=2, visualization=1
+```
+
+Decode outcome:
+
+| Variant | Positive decoded | False-positive assets | Decode attempts | Lost decoded positives | Gained decoded positives |
+| --- | ---: | ---: | ---: | --- | --- |
+| `baseline` | 28 / 60 | 0 | 4,436 | none | none |
+| `grid-realism-ranking` | 29 / 60 | 0 | 4,424 | none | `asset-532613e8ac453b24` |
+
+All successful decodes were at representative rank 1 for both variants. `asset-0944aec7c73146f9` / `coronatest` decoded in both variants with one attempt.
+
+Cache behavior for this run:
+
+```text
+study cache: 0 hits, 406 misses, 1,015 writes
+artifact cache: L1/L2/L3/L5/L6/L7 hits; no recomputation of scanner frontier layers
+```
+
+The zero study-cache hit count is expected for the first run with `maxDecodeAttempts=25` and the current numeric stage versions. The scanner artifact cache did replay upstream pipeline layers correctly.
+
+Updated evidence-backed decisions:
+
+- Advance `grid-realism-ranking` as a promising decode-order candidate under a capped scan-level budget. It gained one decoded positive, lost none, introduced no false positives, and used slightly fewer concrete decode attempts (`-12`).
+- Do not canonize yet from a single attempt budget. Confirm at additional budgets such as 10, 50, and 100 attempts, and then decide whether the improvement is stable.
+- Keep hard rejection binned. The evidence supports ordering, not filtering.
+- For multi-QR policy, add/compare cluster-local representative budgets separately from this scan-level capped decode test.
+
+Answered:
+
+- Cheap grid-realism scoring can run before decode.
+- The coherent grid-realism policy preserves proposal coverage in `--no-decode` mode.
+- The coherent policy materially changes representative ordering.
+- Under a 25-attempt scan-level budget, grid-realism ranking improves decoded positives by one with no observed downside.
+
 Partially answered:
 
-- Whether the ranking improves real decode work: unanswered until decode confirmation.
+- Whether the ranking improves real decode work across budgets: partially; positive at 25 attempts, needs budget sweep.
 - Whether timing-grid evidence is useful: weak in the current sampler and needs improvement.
-- Whether cache layer summaries are reliable under worker full runs: no; the report exposed an accounting gap.
+- Whether cache layer summaries are reliable under worker full runs: improved after worker summary aggregation; this run showed artifact-cache hits for upstream layers.
