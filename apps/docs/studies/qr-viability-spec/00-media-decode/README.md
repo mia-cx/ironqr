@@ -110,44 +110,30 @@ image smoothing/raster details from drawImage/getImageData
 
 ## Format support policy
 
-Format support is tiered by implementation source.
-
-### Tier 1: platform decode
-
-Use the active platform decoder first:
+Format support branches by implementation source. Each branch emits browser `ImageData` or an actionable media-decode error.
 
 ```text
-browser createImageBitmap / canvas / ImageDecoder when available
-Node/native image decoder bindings when available
+source
+→ Tier 1 platform decode
+→ Tier 2 existing format library
+→ Tier 3 IronQR-owned decoder
+→ Tier 4 actionable rejection
 ```
 
-Common platform-supported formats may include:
+| Tier | Branch | Contract |
+| --- | --- | --- |
+| 1 | [Platform decode](./tier-1-platform-decode.md) | Use browser/runtime/native decode paths when available. |
+| 2 | [Existing format libraries](./tier-2-existing-format-libraries.md) | Use mature browser/WASM/Node/native bindings for widely used formats. |
+| 3 | [IronQR-owned decoder](./tier-3-ironqr-owned-decoder.md) | Add IronQR decoder code only when platform decode and existing libraries cannot satisfy a required format. |
+| 4 | [Actionable rejection](./tier-4-actionable-rejection.md) | Return a clear unsupported-format error with caller guidance. |
+
+Decoder policy:
 
 ```text
-PNG
-JPEG
-WebP
-GIF
-BMP
-AVIF
-SVG image sources where safe and explicitly allowed
-```
-
-Actual support depends on runtime.
-
-### Tier 2: existing format libraries
-
-For widely used formats with mature browser, WASM, Node, or native bindings, integrate those libraries instead of writing a new decoder.
-
-Selection criteria:
-
-```text
-maintained implementation
-browser or Node binding suitable for target runtime
-clear license
-bounded memory behavior
-ImageData output or straightforward ImageData conversion
-fixture coverage for orientation, color, alpha, and large-image behavior
+try platform decode if supported
+else detect the format and use an existing decoder binding
+else use an IronQR-owned decoder when required and no suitable implementation exists
+else reject with actionable unsupported-format error
 ```
 
 Explicit target:
@@ -156,35 +142,7 @@ Explicit target:
 HEIC / HEIF for iPhone uploads
 ```
 
-Decoder policy:
-
-```text
-try platform decode if supported
-else detect the format and use an existing decoder binding
-else use an IronQR-owned decoder only when no suitable implementation exists
-else reject with actionable unsupported-format error
-```
-
-### Tier 3: IronQR-owned decoder
-
-Add an IronQR-owned decoder for a format when platform decode and existing libraries cannot satisfy the product/runtime requirement.
-
-Potential implementations:
-
-```text
-browser WASM decoder
-Node/native decoder
-future Rust-backed decoder
-```
-
-### Tier 4: actionable rejection
-
-Unsupported formats fail with an actionable error:
-
-```text
-unsupported_image_format
-convert to PNG/JPEG/WebP or enable the required decoder package
-```
+HEIC/HEIF follows the same branch order: platform decode first, existing decoder binding second, IronQR-owned decoder only if required.
 
 ## Format detection
 
