@@ -30,7 +30,8 @@ Do not let them silently drift.
 ## Pipeline shape
 
 ```text
-01 image preprocessing
+00 media decode
+→ 01 image normalization
 → 02 scalar views
 → 03 binary views
 → 04 finder detection
@@ -152,17 +153,19 @@ If we threshold this confidence, how much work do we save and how many real deco
 
 These rules should hold unless a study disproves them:
 
-1. **L1 is decoded pixels only.** Derived views do not belong inside the normalized-image artifact.
-2. **Coordinates for geometry are continuous.** Finder/module centers and edges may be fractional image-space points.
-3. **Rounding is a sampling concern.** Do not round during geometry fitting; only sample/interpolate at image-read boundaries.
-4. **Finder evidence starts as a seed.** Center/module-size evidence is not enough for final realism decisions.
-5. **Ranking precedes filtering.** Hard rejection needs threshold sweeps proving work saved with no unacceptable decode loss.
-6. **Decode confirmation is the accuracy guard.** Realism scores are useful only if they preserve valid decoded positives and control false positives.
-7. **False-positive accounting must distinguish raw decoder success from accepted scan result.** Empty-payload decodes should stay visible as diagnostics even if rejected from public results.
+1. **Validate dimensions as early as possible and again at normalization.** Stage 00 should reject over-budget metadata dimensions when available; stage 01 must validate the actual decoded RGBA frame.
+2. **L1 is decoded pixels only.** Derived views do not belong inside the normalized-image artifact.
+3. **Coordinates for geometry are continuous.** Finder/module centers and edges may be fractional image-space points.
+4. **Rounding is a sampling concern.** Do not round during geometry fitting; only sample/interpolate at image-read boundaries.
+5. **Finder evidence starts as a seed.** Center/module-size evidence is not enough for final realism decisions.
+6. **Ranking precedes filtering.** Hard rejection needs threshold sweeps proving work saved with no unacceptable decode loss.
+7. **Decode confirmation is the accuracy guard.** Realism scores are useful only if they preserve valid decoded positives and control false positives.
+8. **False-positive accounting must distinguish raw decoder success from accepted scan result.** Empty-payload decodes should stay visible as diagnostics even if rejected from public results.
 
 ## Current stage docs
 
-- [01 Image Preprocessing](./01-image-preprocessing/README.md)
+- [00 Media Decode](./00-media-decode/README.md)
+- [01 Image Normalization](./01-image-normalization/README.md)
 - [02 Scalar Views](./02-scalar-views/README.md)
 - [03 Binary Views](./03-binary-views/README.md)
 - [04 Finder Detection](./04-finder-detection/README.md)

@@ -1,29 +1,46 @@
-# 01 — Image Preprocessing
+# 01 — Image Normalization
 
-Image preprocessing turns an input image into the scanner's canonical pixel buffer.
+Image normalization adopts a decoded RGBA frame into the scanner's canonical pixel artifact.
+
+This stage starts **after** media decode. It should not care whether the pixels came from JPEG, PNG, WebP, canvas, bitmap, video, or native/WASM decode.
 
 This stage should answer:
 
 ```text
-What exact pixels are later stages allowed to read?
+What exact decoded pixels are later stages allowed to read?
 What coordinate system do those pixels live in?
 What validation happened before expensive scanner work starts?
 ```
 
-## Current pipeline input
+## Input
 
-The public scanner accepts browser-style image sources, including already pixel-backed `ImageData`-like inputs and browser image objects that can be drawn to a canvas.
-
-Current core entry point:
+Input is a decoded image frame from stage 00:
 
 ```ts
-normalizeImageInput(input);
+interface DecodedImageFrame {
+  readonly width: number;
+  readonly height: number;
+  readonly data: Uint8ClampedArray; // row-major RGBA
+}
 ```
 
-For already decoded data, the scanner uses:
+Current code still has a combined public entry point:
 
 ```ts
-createNormalizedImage(imageData);
+normalizeImageInput(input)
+```
+
+That function performs media decode when needed and then calls normalization. In this spec, those responsibilities are split:
+
+```text
+00 media decode → decoded RGBA frame
+01 image normalization → NormalizedImage
+```
+
+For already decoded data, the current code uses:
+
+```ts
+createNormalizedImage(imageData)
 ```
 
 ## Target output artifact
@@ -40,15 +57,17 @@ interface NormalizedImage {
 
 Meaning:
 
-| Field        | Meaning                                    |
-| ------------ | ------------------------------------------ |
-| `width`      | Image width in pixels.                     |
-| `height`     | Image height in pixels.                    |
+| Field | Meaning |
+| --- | --- |
+| `width` | Image width in pixels. |
+| `height` | Image height in pixels. |
 | `rgbaPixels` | Flat RGBA pixel buffer, 4 bytes per pixel. |
 
 Current code still attaches `derivedViews` to `NormalizedImage` as runtime memoization. This spec treats that as an implementation detail to remove or move into `ViewBank` / `ScanContext`. It is not part of the L1 artifact contract.
 
-The RGBA layout is:
+## RGBA layout
+
+The RGBA layout is row-major:
 
 ```text
 pixel 0: R, G, B, A
@@ -68,9 +87,11 @@ b = rgbaPixels[base + 2]
 a = rgbaPixels[base + 3]
 ```
 
-## Shared RGBA pixel readers
+`width` is the row length. When `x` reaches `width`, the next pixel is the start of the next row.
 
-The spec should expose safe coordinate helpers for non-hot code, tests, and documentation. These helpers encode the row-major RGBA layout in one place.
+## Shared RGBA pixel reader
+
+The spec should expose a safe coordinate helper for non-hot code, tests, and documentation. This helper encodes the row-major RGBA layout in one place.
 
 ```ts
 interface RgbaPixel {
@@ -80,11 +101,7 @@ interface RgbaPixel {
   readonly a: number;
 }
 
-const isPixelInBounds = (
-  image: NormalizedImage,
-  x: number,
-  y: number,
-): boolean =>
+const isPixelInBounds = (image: NormalizedImage, x: number, y: number): boolean =>
   Number.isInteger(x) &&
   Number.isInteger(y) &&
   x >= 0 &&
@@ -92,11 +109,7 @@ const isPixelInBounds = (
   x < image.width &&
   y < image.height;
 
-const rgbaPixelOffset = (
-  image: NormalizedImage,
-  x: number,
-  y: number,
-): number => {
+const rgbaPixelOffset = (image: NormalizedImage, x: number, y: number): number => {
   if (!isPixelInBounds(image, x, y)) {
     throw new RangeError(
       `Pixel coordinate (${x}, ${y}) is outside ${image.width}x${image.height}.`,
@@ -105,11 +118,7 @@ const rgbaPixelOffset = (
   return (y * image.width + x) * 4;
 };
 
-const readRgbaPixel = (
-  image: NormalizedImage,
-  x: number,
-  y: number,
-): RgbaPixel => {
+const readRgbaPixel = (image: NormalizedImage, x: number, y: number): RgbaPixel => {
   const base = rgbaPixelOffset(image, x, y);
   return {
     r: image.rgbaPixels[base + 0] ?? 0,
@@ -118,7 +127,6 @@ const readRgbaPixel = (
     a: image.rgbaPixels[base + 3] ?? 0,
   };
 };
-
 ```
 
 Policy:
@@ -130,7 +138,7 @@ Policy:
 
 ## Coordinate convention
 
-The scanner's image-space coordinate convention should be documented as:
+The scanner's image-space coordinate convention is:
 
 ```text
 integer pixel coordinates refer to pixel centers
@@ -148,16 +156,15 @@ So these are valid continuous image-space points:
 
 This matters because later finder geometry should store subpixel module centers and module edges. Geometry fitting must not round these points. Rounding or interpolation only belongs at the image-sampling boundary.
 
-## Current validation
+## Validation
 
-Validation happens at the trust boundary.
+Validation happens at the decoded-frame trust boundary.
 
 Current limits:
 
 ```ts
 MAX_IMAGE_DIMENSION = 8192;
 MAX_IMAGE_PIXELS = 35_389_440; // 8192 × 4320
-MAX_IMAGE_SOURCE_BYTES = MAX_IMAGE_PIXELS * 4;
 ```
 
 The scanner rejects:
@@ -166,7 +173,7 @@ The scanner rejects:
 - zero or negative dimensions,
 - width/height above max side length,
 - total area above max pixel count,
-- `ImageData` buffers that are not `Uint8ClampedArray`,
+- decoded frame buffers that are not `Uint8ClampedArray`,
 - RGBA buffers with wrong length.
 
 This means downstream stages may assume:
@@ -177,23 +184,15 @@ height > 0
 rgbaPixels.length = width × height × 4
 ```
 
-## Browser decode path
-
-If the input is not already `ImageData`, the browser path is:
+`height` is kept as explicit metadata even though it is derivable from buffer length and width. The explicit invariant is:
 
 ```text
-input
-→ createImageBitmap(input) when needed
-→ draw bitmap to OffscreenCanvas
-→ getImageData(0, 0, width, height)
-→ createNormalizedImage(...)
+rgbaPixels.length === width × height × 4
 ```
-
-This makes the browser/runtime responsible for compressed image decoding, EXIF handling, color-management behavior, and pixel rasterization.
 
 ## Alpha handling
 
-The normalized image stores the RGBA pixels as provided by `ImageData`.
+The normalized image preserves the RGBA pixels as provided by stage 00.
 
 Scalar-view construction later composites RGB over white before producing grayscale/RGB/OKLab scalar values:
 
@@ -231,8 +230,8 @@ interface NormalizedFrameArtifact {
   readonly width: number;
   readonly height: number;
   readonly rgbaPixels: Uint8ClampedArray;
-  readonly coordinateConvention: "pixel-centers-at-integers";
-  readonly alphaCompositePolicy: "views-composite-on-white";
+  readonly coordinateConvention: 'pixel-centers-at-integers';
+  readonly alphaCompositePolicy: 'views-composite-on-white';
 }
 ```
 
@@ -242,11 +241,12 @@ The key addition is precise metadata about coordinate and alpha policy so downst
 
 This stage itself is not a QR signal, but it affects every later signal. Studies should track:
 
-| Question                                                          | Why                                         |
-| ----------------------------------------------------------------- | ------------------------------------------- |
-| Do transparent assets behave differently after white compositing? | QR artwork may rely on transparency.        |
-| Do very large images dominate materialization time?               | Cache and budget planning.                  |
-| Are decode/finder failures correlated with source dimensions?     | Very small modules can become unresolvable. |
+| Question | Why |
+| --- | --- |
+| Do transparent assets behave differently after white compositing? | QR artwork may rely on transparency. |
+| Do very large images dominate materialization time? | Cache and budget planning. |
+| Are decode/finder failures correlated with source dimensions? | Very small modules can become unresolvable. |
+| Is the 8192×4320 area budget safe across browser, Node, native, and WASM backends? | Product input guarantee. |
 
 ## Cache boundary
 
@@ -259,5 +259,8 @@ L1 normalized frame
 Bump the L1 cache version only when the meaning of normalized pixels changes, such as:
 
 - different alpha-composite policy,
-- different browser decode/rasterization path in benchmark tooling,
-- different dimension validation semantics that affect accepted assets.
+- different decoded-frame validation semantics,
+- different coordinate convention,
+- different RGBA layout.
+
+Media decode policy changes belong to stage 00 and should not automatically bump L1 unless the resulting normalized pixels change.
