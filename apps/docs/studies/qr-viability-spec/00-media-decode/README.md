@@ -74,21 +74,7 @@ Notes:
 
 - Classic browser `ImageData.data` is `Uint8ClampedArray`.
 - Modern HDR / wide-gamut `ImageData` may use a float16 pixel format in runtimes that expose it.
-- Stage 00 may keep decode metadata outside the `ImageData` object when needed, but the stage handoff remains `ImageData`.
 - Stage 01 converts supported pixel formats to canonical `Uint8ClampedArray` RGBA and rejects unsupported decoded pixel formats.
-
-Sidecar metadata is separate from the stage output:
-
-```ts
-interface MediaDecodeMetadata {
-  readonly sourceKind: 'image-data' | 'blob' | 'bitmap' | 'canvas' | 'video-frame' | 'native';
-  readonly mimeType?: string;
-  readonly fileExtension?: string;
-  readonly frameIndex?: number;
-  readonly timestampMs?: number;
-  readonly decoder?: string;
-}
-```
 
 Stage 01 normalizes `ImageData` into `SimpleImageData` using only the decoded frame contract, independent of whether the pixels came from JPEG, PNG, WebP, HEIC, a canvas, or a video frame.
 
