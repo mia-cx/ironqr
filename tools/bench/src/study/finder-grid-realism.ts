@@ -29,8 +29,8 @@ const CORONATEST_ASSET_ID = 'asset-0944aec7c73146f9';
  */
 const FINDER_GRID_REALISM_STAGE_VERSIONS = {
   rankingPolicy: 4,
-  decodeComparison: 2,
-  visualization: 1,
+  decodeComparison: 3,
+  visualization: 2,
 } as const;
 
 type GridRealismVariant =
@@ -95,12 +95,26 @@ interface VariantAssetResult {
   readonly proposalSignatures: readonly string[];
   /** Variant policy scores in processing order: baseline uses proposal score; realism variants use policy score. */
   readonly scores: readonly number[];
+  readonly frontier: readonly RepresentativeFrontierRow[];
   readonly score: ScoreDistribution;
   readonly componentScores: ComponentScores;
   readonly components: ComponentDistributions;
   readonly firstChangedRank: number | null;
   readonly signalMs: number;
   readonly decode?: VariantDecodeResult;
+}
+
+interface RepresentativeFrontierRow {
+  readonly signature: string;
+  readonly proposalId: string;
+  readonly binaryViewId: string;
+  readonly baselineRank: number;
+  readonly variantRank: number;
+  readonly clusterRank: number;
+  readonly representativeRank: number;
+  readonly score: number;
+  readonly proposalScore: number;
+  readonly components: ReturnType<typeof scoreProposalGridRealism>;
 }
 
 interface ComponentScores {
@@ -133,6 +147,18 @@ interface VariantDecodeResult extends DecodeAssetResult {
   readonly matchedExpectedTexts: readonly string[];
   readonly successRank: number | null;
   readonly falsePositive: boolean;
+  readonly attempts: readonly DecodeRepresentativeAttempt[];
+}
+
+interface DecodeRepresentativeAttempt {
+  readonly signature: string;
+  readonly rank: number;
+  readonly score: number;
+  readonly attemptCount: number;
+  readonly successCount: number;
+  readonly decodedText: string | null;
+  readonly matchedExpected: boolean;
+  readonly falsePositive: boolean;
 }
 
 interface ScoreDistribution {
@@ -156,8 +182,30 @@ interface Summary extends Record<string, unknown> {
     readonly coveredByVariant: Record<string, boolean>;
     readonly decodedByVariant?: Record<string, boolean>;
   };
+  readonly thresholdSweeps?: readonly VariantThresholdSweep[];
   readonly visualizations: readonly StudyBarChart[];
   readonly recommendations: readonly string[];
+}
+
+interface VariantThresholdSweep {
+  readonly variantId: GridRealismVariant;
+  readonly thresholds: readonly ThresholdSummary[];
+}
+
+interface ThresholdSummary {
+  readonly threshold: number;
+  readonly representativesKept: number;
+  readonly representativesDropped: number;
+  readonly representativeReductionPct: number;
+  readonly decodeAttemptsKept: number;
+  readonly decodeAttemptsAvoided: number;
+  readonly decodeAttemptReductionPct: number;
+  readonly positiveDecodedAssetsKept: number;
+  readonly positiveDecodedAssetsLost: number;
+  readonly falsePositiveAssetsKept: number;
+  readonly falsePositiveAssetsRemoved: number;
+  readonly decodedAssetIdsLost: readonly string[];
+  readonly falsePositiveAssetIdsRemoved: readonly string[];
 }
 
 interface StudyBarChart {
@@ -194,6 +242,30 @@ interface VariantSummary extends ScoreDistribution {
   readonly lostDecodedPositiveAssetIds?: readonly string[];
   readonly gainedDecodedPositiveAssetIds?: readonly string[];
   readonly successRank?: ScoreDistribution;
+  readonly decodedProvenance?: DecodeProvenanceSummary;
+}
+
+interface DecodeProvenanceSummary {
+  readonly matchedPositives: FrontierProvenanceSummary;
+  readonly falsePositives: FrontierProvenanceSummary;
+}
+
+interface FrontierProvenanceSummary {
+  readonly assetCount: number;
+  readonly uniqueViewCount: number;
+  readonly viewCounts: Record<string, number>;
+  readonly variantRank: ScoreDistribution;
+  readonly baselineRank: ScoreDistribution;
+  readonly clusterRank: ScoreDistribution;
+  readonly representativeRank: ScoreDistribution;
+  readonly score: ScoreDistribution;
+  readonly componentAverages: {
+    readonly finder: number;
+    readonly timing: number;
+    readonly module: number;
+    readonly quiet: number;
+    readonly combined: number;
+  };
 }
 
 const parseConfig = ({
@@ -303,6 +375,18 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
       ]),
     );
     const baseRepresentatives = artifacts.clusters.flatMap((cluster) => cluster.representatives);
+    const representativeRanks = new Map<
+      string,
+      { readonly clusterRank: number; readonly representativeRank: number }
+    >();
+    for (const [clusterIndex, cluster] of artifacts.clusters.entries()) {
+      for (const [representativeIndex, proposal] of cluster.representatives.entries()) {
+        representativeRanks.set(proposal.id, {
+          clusterRank: clusterIndex + 1,
+          representativeRank: representativeIndex + 1,
+        });
+      }
+    }
     const scoredRepresentatives = baseRepresentatives.map((proposal, index) => ({
       proposal,
       baselineRank: index,
@@ -311,6 +395,10 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
         geometryByProposalId.get(proposal.id) ?? [],
         viewBank.getBinaryView(proposal.binaryViewId),
       ),
+      ranks: representativeRanks.get(proposal.id) ?? {
+        clusterRank: index + 1,
+        representativeRank: 1,
+      },
     }));
     const baselineSignatures = baseRepresentatives.map(proposalSignature);
     const variants: VariantAssetResult[] = [];
@@ -331,12 +419,16 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
       const startedAt = performance.now();
       const ordered = orderRepresentatives(scoredRepresentatives, variantId);
       const scores = ordered.map((row) => policyScore(row, variantId));
+      const frontier = ordered.map((row, index) =>
+        representativeFrontierRow(row, variantId, index),
+      );
       const componentScores = componentScoreRows(ordered.map((row) => row.gridRealism));
       const signatures = ordered.map((row) => proposalSignature(row.proposal));
       const decode = config.noDecode
         ? undefined
         : await decodeOrderedRepresentatives({
             rows: ordered,
+            variantId,
             geometryByProposalId,
             viewBank,
             expectedTexts: asset.expectedTexts,
@@ -355,6 +447,7 @@ export const finderGridRealismStudyPlugin: StudyPlugin<Summary, Config, AssetRes
         covered: ordered.length > 0,
         proposalSignatures: signatures,
         scores,
+        frontier,
         score: distribution(scores),
         componentScores,
         components: componentDistributions(componentScores),
@@ -636,7 +729,28 @@ interface ScoredRepresentative {
   readonly proposal: ScanProposal;
   readonly baselineRank: number;
   readonly gridRealism: ReturnType<typeof scoreProposalGridRealism>;
+  readonly ranks: {
+    readonly clusterRank: number;
+    readonly representativeRank: number;
+  };
 }
+
+const representativeFrontierRow = (
+  row: ScoredRepresentative,
+  variantId: GridRealismVariant,
+  index: number,
+): RepresentativeFrontierRow => ({
+  signature: proposalSignature(row.proposal),
+  proposalId: row.proposal.id,
+  binaryViewId: row.proposal.binaryViewId,
+  baselineRank: row.baselineRank + 1,
+  variantRank: index + 1,
+  clusterRank: row.ranks.clusterRank,
+  representativeRank: row.ranks.representativeRank,
+  score: policyScore(row, variantId),
+  proposalScore: row.proposal.proposalScore,
+  components: row.gridRealism,
+});
 
 const gridRealismVariantCacheKey = (config: Config, variantId: GridRealismVariant): string =>
   JSON.stringify({
@@ -658,10 +772,12 @@ const isVariantAssetResult = (value: unknown): value is VariantAssetResult =>
   typeof (value as { variantId?: unknown }).variantId === 'string' &&
   typeof (value as { representativeCount?: unknown }).representativeCount === 'number' &&
   Array.isArray((value as { proposalSignatures?: unknown }).proposalSignatures) &&
-  Array.isArray((value as { scores?: unknown }).scores);
+  Array.isArray((value as { scores?: unknown }).scores) &&
+  Array.isArray((value as { frontier?: unknown }).frontier);
 
 const decodeOrderedRepresentatives = async (input: {
   readonly rows: readonly ScoredRepresentative[];
+  readonly variantId: GridRealismVariant;
   readonly geometryByProposalId: ReadonlyMap<string, readonly GeometryCandidate[]>;
   readonly viewBank: ReturnType<typeof createViewBank>;
   readonly expectedTexts: readonly string[];
@@ -670,6 +786,7 @@ const decodeOrderedRepresentatives = async (input: {
 }): Promise<VariantDecodeResult> => {
   const decodedTexts = new Set<string>();
   const matchedExpectedTexts = new Set<string>();
+  const attempts: DecodeRepresentativeAttempt[] = [];
   let attemptCount = 0;
   let successCount = 0;
   let successRank: number | null = null;
@@ -681,6 +798,8 @@ const decodeOrderedRepresentatives = async (input: {
   for (let index = 0; index < input.rows.length; index += 1) {
     const row = input.rows[index];
     if (row === undefined) continue;
+    let representativeAttemptCount = 0;
+    let representativeSuccessCount = 0;
     const success = await Effect.runPromise(
       runDecodeCascade(row.proposal, input.viewBank, {
         proposalRank: index + 1,
@@ -689,15 +808,31 @@ const decodeOrderedRepresentatives = async (input: {
         shouldAttemptDecode,
         onAttemptMeasured: (attempt) => {
           attemptCount += 1;
-          if (attempt.outcome === 'success') successCount += 1;
+          representativeAttemptCount += 1;
+          if (attempt.outcome === 'success') {
+            successCount += 1;
+            representativeSuccessCount += 1;
+          }
         },
       }),
     );
+    const decodedText = success?.result.payload.text ?? null;
+    const matchedExpected =
+      decodedText === null ? false : input.expectedTexts.includes(decodedText);
+    attempts.push({
+      signature: proposalSignature(row.proposal),
+      rank: index + 1,
+      score: policyScore(row, input.variantId),
+      attemptCount: representativeAttemptCount,
+      successCount: representativeSuccessCount,
+      decodedText,
+      matchedExpected,
+      falsePositive: input.label === 'qr-neg' && decodedText !== null,
+    });
     if (success === null) continue;
     successRank = index + 1;
-    const text = success.result.payload.text;
-    decodedTexts.add(text);
-    if (input.expectedTexts.includes(text)) matchedExpectedTexts.add(text);
+    decodedTexts.add(decodedText ?? '');
+    if (matchedExpected && decodedText !== null) matchedExpectedTexts.add(decodedText);
     break;
   }
   return {
@@ -707,6 +842,7 @@ const decodeOrderedRepresentatives = async (input: {
     successCount,
     successRank,
     falsePositive: input.label === 'qr-neg' && decodedTexts.size > 0,
+    attempts,
   };
 };
 
@@ -863,6 +999,9 @@ const summarize = ({
   const variants = config.variants.map((variantId) =>
     summarizeVariant(variantId, results, baselineCovered, baselineDecoded),
   );
+  const thresholdSweeps = config.noDecode
+    ? undefined
+    : buildThresholdSweeps(config.variants, results);
   return {
     assetCount: results.length,
     positiveCount: results.filter((result) => result.label === 'qr-pos').length,
@@ -894,7 +1033,8 @@ const summarize = ({
             ),
           }),
     },
-    visualizations: buildVisualizations(variants),
+    ...(thresholdSweeps === undefined ? {} : { thresholdSweeps }),
+    visualizations: buildVisualizations(variants, thresholdSweeps),
     recommendations: [
       'Treat grid-realism as one dependent hypothesis pipeline, not independent component policies.',
       'Use baseline vs grid-realism-ranking to evaluate frontier order changes before decode confirmation.',
@@ -999,10 +1139,149 @@ const summarizeVariant = (
             .filter((assetId) => !baselineDecoded.has(assetId))
             .sort(),
           successRank: distribution(decodedRows.flatMap((row) => row.successRank ?? [])),
+          decodedProvenance: summarizeDecodeProvenance(variantId, results),
         }),
     ...score,
   };
 };
+
+const summarizeDecodeProvenance = (
+  variantId: GridRealismVariant,
+  results: readonly AssetResult[],
+): DecodeProvenanceSummary => {
+  const matchedRows: RepresentativeFrontierRow[] = [];
+  const falsePositiveRows: RepresentativeFrontierRow[] = [];
+  for (const result of results) {
+    const variant = result.variants.find((row) => row.variantId === variantId);
+    if (variant?.decode === undefined) continue;
+    const matchedAttempt = variant.decode.attempts.find((attempt) => attempt.matchedExpected);
+    if (matchedAttempt !== undefined) {
+      const frontierRow = variant.frontier.find(
+        (row) => row.signature === matchedAttempt.signature,
+      );
+      if (frontierRow !== undefined) matchedRows.push(frontierRow);
+    }
+    const falsePositiveAttempt = variant.decode.attempts.find((attempt) => attempt.falsePositive);
+    if (falsePositiveAttempt !== undefined) {
+      const frontierRow = variant.frontier.find(
+        (row) => row.signature === falsePositiveAttempt.signature,
+      );
+      if (frontierRow !== undefined) falsePositiveRows.push(frontierRow);
+    }
+  }
+  return {
+    matchedPositives: summarizeFrontierProvenance(matchedRows),
+    falsePositives: summarizeFrontierProvenance(falsePositiveRows),
+  };
+};
+
+const summarizeFrontierProvenance = (
+  rows: readonly RepresentativeFrontierRow[],
+): FrontierProvenanceSummary => ({
+  assetCount: rows.length,
+  uniqueViewCount: new Set(rows.map((row) => row.binaryViewId)).size,
+  viewCounts: countBy(rows.map((row) => row.binaryViewId)),
+  variantRank: distribution(rows.map((row) => row.variantRank)),
+  baselineRank: distribution(rows.map((row) => row.baselineRank)),
+  clusterRank: distribution(rows.map((row) => row.clusterRank)),
+  representativeRank: distribution(rows.map((row) => row.representativeRank)),
+  score: distribution(rows.map((row) => row.score)),
+  componentAverages: {
+    finder: averageOrZero(rows.map((row) => row.components.finder)),
+    timing: averageOrZero(rows.map((row) => row.components.timing)),
+    module: averageOrZero(rows.map((row) => row.components.module)),
+    quiet: averageOrZero(rows.map((row) => row.components.quiet)),
+    combined: averageOrZero(rows.map((row) => row.components.combined)),
+  },
+});
+
+const averageOrZero = (values: readonly number[]): number =>
+  values.length === 0 ? 0 : round(average(values));
+
+const countBy = (values: readonly string[]): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return Object.fromEntries(Object.entries(counts).sort((left, right) => right[1] - left[1]));
+};
+
+const SWEEP_THRESHOLDS = [0, 0.25, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9] as const;
+
+const buildThresholdSweeps = (
+  variants: readonly GridRealismVariant[],
+  results: readonly AssetResult[],
+): readonly VariantThresholdSweep[] =>
+  variants
+    .filter((variantId) => variantId !== 'baseline')
+    .map((variantId) => ({
+      variantId,
+      thresholds: SWEEP_THRESHOLDS.map((threshold) =>
+        thresholdSummary(variantId, results, threshold),
+      ),
+    }));
+
+const thresholdSummary = (
+  variantId: GridRealismVariant,
+  results: readonly AssetResult[],
+  threshold: number,
+): ThresholdSummary => {
+  let representativesKept = 0;
+  let representativesDropped = 0;
+  let decodeAttemptsKept = 0;
+  let decodeAttemptsAvoided = 0;
+  const decodedAssetIdsLost: string[] = [];
+  const falsePositiveAssetIdsRemoved: string[] = [];
+  let positiveDecodedAssetsKept = 0;
+  let falsePositiveAssetsKept = 0;
+
+  for (const result of results) {
+    const variant = result.variants.find((row) => row.variantId === variantId);
+    if (variant === undefined) continue;
+    for (const row of variant.frontier) {
+      if (row.score >= threshold) representativesKept += 1;
+      else representativesDropped += 1;
+    }
+
+    const decode = variant.decode;
+    if (decode === undefined) continue;
+    const keptAttempts = decode.attempts.filter((attempt) => attempt.score >= threshold);
+    const droppedAttempts = decode.attempts.filter((attempt) => attempt.score < threshold);
+    decodeAttemptsKept += sumBy(keptAttempts, (attempt) => attempt.attemptCount);
+    decodeAttemptsAvoided += sumBy(droppedAttempts, (attempt) => attempt.attemptCount);
+
+    const matchedAttempt = decode.attempts.find((attempt) => attempt.matchedExpected);
+    if (result.label === 'qr-pos' && matchedAttempt !== undefined) {
+      if (matchedAttempt.score >= threshold) positiveDecodedAssetsKept += 1;
+      else decodedAssetIdsLost.push(result.assetId);
+    }
+
+    const falsePositiveAttempt = decode.attempts.find((attempt) => attempt.falsePositive);
+    if (falsePositiveAttempt !== undefined) {
+      if (falsePositiveAttempt.score >= threshold) falsePositiveAssetsKept += 1;
+      else falsePositiveAssetIdsRemoved.push(result.assetId);
+    }
+  }
+
+  const representativeTotal = representativesKept + representativesDropped;
+  const decodeAttemptTotal = decodeAttemptsKept + decodeAttemptsAvoided;
+  return {
+    threshold,
+    representativesKept,
+    representativesDropped,
+    representativeReductionPct: percent(representativesDropped, representativeTotal),
+    decodeAttemptsKept,
+    decodeAttemptsAvoided,
+    decodeAttemptReductionPct: percent(decodeAttemptsAvoided, decodeAttemptTotal),
+    positiveDecodedAssetsKept,
+    positiveDecodedAssetsLost: decodedAssetIdsLost.length,
+    falsePositiveAssetsKept,
+    falsePositiveAssetsRemoved: falsePositiveAssetIdsRemoved.length,
+    decodedAssetIdsLost: decodedAssetIdsLost.sort(),
+    falsePositiveAssetIdsRemoved: falsePositiveAssetIdsRemoved.sort(),
+  };
+};
+
+const percent = (numerator: number, denominator: number): number =>
+  denominator <= 0 ? 0 : round((numerator / denominator) * 100);
 
 const summarizeComponents = (rows: readonly VariantAssetResult[]): ComponentDistributions =>
   componentDistributions({
@@ -1015,7 +1294,10 @@ const summarizeComponents = (rows: readonly VariantAssetResult[]): ComponentDist
     combined: rows.flatMap((row) => row.componentScores.combined),
   });
 
-const buildVisualizations = (variants: readonly VariantSummary[]): readonly StudyBarChart[] => {
+const buildVisualizations = (
+  variants: readonly VariantSummary[],
+  thresholdSweeps: readonly VariantThresholdSweep[] | undefined,
+): readonly StudyBarChart[] => {
   const rankingVariants = variants.filter((variant) => variant.variantId !== 'baseline');
   const scoreValues = rankingVariants.flatMap((variant) => [
     variant.positiveScores.avg,
@@ -1047,6 +1329,35 @@ const buildVisualizations = (variants: readonly VariantSummary[]): readonly Stud
       ),
     },
   ];
+  const thresholdSweep = thresholdSweeps?.find(
+    (sweep) =>
+      sweep.variantId === 'grid-realism-ranking' || sweep.variantId === 'realism-phase-locked',
+  );
+  if (thresholdSweep !== undefined) {
+    charts.push(
+      {
+        title: `${thresholdSweep.variantId} threshold decode-attempt reduction`,
+        unit: '%',
+        rows: thresholdSweep.thresholds.map((row) =>
+          barRow(`>=${row.threshold.toFixed(2)}`, row.decodeAttemptReductionPct, 100),
+        ),
+      },
+      {
+        title: `${thresholdSweep.variantId} threshold lost positives`,
+        unit: 'assets',
+        rows: thresholdSweep.thresholds.map((row) =>
+          barRow(
+            `>=${row.threshold.toFixed(2)}`,
+            row.positiveDecodedAssetsLost,
+            Math.max(
+              1,
+              ...thresholdSweep.thresholds.map((entry) => entry.positiveDecodedAssetsLost),
+            ),
+          ),
+        ),
+      },
+    );
+  }
   const decodeVariants = variants.filter((variant) => variant.decodeAttemptCount !== undefined);
   if (decodeVariants.length === 0) return charts;
   charts.push(

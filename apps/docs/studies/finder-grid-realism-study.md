@@ -89,6 +89,31 @@ The study compares full replacement ranking objectives with and without that coh
 | Combined ranking score distribution by label | score | Positive/negative separation of the full policy. |
 | Per-policy runtime | ms | Whether the full policy is cheap enough before decode. |
 
+## Frontier provenance and threshold-sweep metrics
+
+Decode-mode reports include per-representative frontier evidence so the study answers whether a score can reduce scanner work without hiding valid decodes:
+
+| Field | Unit | Decision use |
+| --- | --- | --- |
+| `frontier[].binaryViewId` | view id | Which materialized views supply kept/dropped representatives and successful decodes. |
+| `frontier[].clusterRank` | rank | Which clusters lead to valid decodes or false positives. |
+| `frontier[].representativeRank` | rank | Whether valid decodes come from the selected cluster representative or later representatives. |
+| `frontier[].variantRank` / `baselineRank` | rank | Rank movement caused by the realism policy. |
+| `frontier[].score` | score | Threshold decision input. |
+| `frontier[].components` | score vector | Which realism signals explain kept/dropped work. |
+| `decode.attempts[]` | per representative | Concrete decode attempts, success, false-positive, expected-text match, and score at the attempted representative. |
+| `summary.thresholdSweeps[]` | threshold table | For each score threshold, reports representatives kept/dropped, decode attempts kept/avoided, positives lost, and false positives removed. |
+| `summary.variants[].decodedProvenance` | distributions | View counts, proposal/cluster/representative ranks, score distributions, and component averages for matched positives and false positives. |
+
+Threshold sweeps simulate applying `score >= threshold` to the scored frontier and replaying the representatives that were actually attempted by the decode run. They are meant to answer:
+
+```text
+how many representatives/decode attempts would this threshold avoid?
+how many positive decoded assets would it lose?
+how many false-positive assets would it remove?
+which views/proposals/clusters/reps produced the kept/lost outcomes?
+```
+
 ## Optional decode-confirmation metrics
 
 Only for candidates that pass `--no-decode`:
