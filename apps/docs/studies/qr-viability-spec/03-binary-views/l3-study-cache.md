@@ -6,6 +6,14 @@ Runtime scanning owns binary views through production `ViewBank` memoization. Be
 L3 binary views
 ```
 
+Study metadata records threshold parameters keyed by `BinaryViewId`, such as:
+
+```text
+otsu threshold value
+sauvola radius/k/dynamicRange
+hybrid radius/global/adaptive weights
+```
+
 Bump the study L3 cache version when:
 
 - threshold formulas change,

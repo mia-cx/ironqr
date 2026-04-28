@@ -19,17 +19,17 @@ interface ScalarView {
 
 ## Stage notes
 
-| Note | Contract |
-| --- | --- |
-| [Binary view contract](./binary-view-contract.md) | Runtime `BinaryView` shape and study artifact metadata. |
-| [Binary view id](./binary-view-id.md) | Composite id format and metadata ownership. |
-| [Threshold methods](./threshold-methods.md) | Otsu, Sauvola, and hybrid threshold responsibilities. |
-| [Otsu math](./math-otsu.md) | Detailed Otsu threshold math. |
-| [Sauvola math](./math-sauvola.md) | Detailed Sauvola threshold math. |
-| [Hybrid math](./math-hybrid.md) | Detailed hybrid threshold math. |
-| [Polarity](./polarity.md) | Normal/inverted materialization policy. |
-| [Validation](./validation.md) | Decode, false-positive, rescue, and work-reduction metrics. |
-| [Study cache note](./l3-study-cache.md) | Study-only artifact metadata and versioning. |
+| Note                                              | Contract                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------- |
+| [Binary view contract](./binary-view-contract.md) | Runtime `BinaryView` shape.                                 |
+| [Binary view id](./binary-view-id.md)             | Composite id format and metadata ownership.                 |
+| [Threshold methods](./threshold-methods.md)       | Otsu, Sauvola, and hybrid threshold responsibilities.       |
+| [Otsu math](./math-otsu.md)                       | Detailed Otsu threshold math.                               |
+| [Sauvola math](./math-sauvola.md)                 | Detailed Sauvola threshold math.                            |
+| [Hybrid math](./math-hybrid.md)                   | Detailed hybrid threshold math.                             |
+| [Polarity](./polarity.md)                         | Normal/inverted materialization policy.                     |
+| [Validation](./validation.md)                     | Decode, false-positive, rescue, and work-reduction metrics. |
+| [Study cache note](./l3-study-cache.md)           | Study-only artifact metadata and versioning.                |
 
 ## Output
 
