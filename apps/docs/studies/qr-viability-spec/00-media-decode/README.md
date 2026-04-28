@@ -61,7 +61,7 @@ Target source support:
 
 ```text
 all common still-image formats supported by the active browser/runtime
-plus explicit HEIC/HEIF support for iPhone uploads via native or supplemental decoder fallback
+plus explicit HEIC/HEIF support for iPhone uploads via platform decode or existing decoder binding
 ```
 
 The product target is broad practical still-image support: common runtime-supported formats, explicit HEIC/HEIF support for iPhone uploads, and clear unsupported-format errors for obscure, unsafe, encrypted, malformed, multi-page, or unavailable decoder cases.
@@ -124,19 +124,18 @@ image smoothing/raster details from drawImage/getImageData
 
 ## Format support policy
 
-Format support is tiered.
+Format support is tiered by implementation source.
 
-### Tier 1: runtime-native decode
+### Tier 1: platform decode
 
-Use the active runtime decoder first:
+Use the active platform decoder first:
 
 ```text
 browser createImageBitmap / canvas / ImageDecoder when available
-native decoder backend when available
-future Rust/WASM decode backend when available
+Node/native image decoder bindings when available
 ```
 
-Common runtime-supported formats may include:
+Common platform-supported formats may include:
 
 ```text
 PNG
@@ -150,9 +149,20 @@ SVG image sources where safe and explicitly allowed
 
 Actual support depends on runtime.
 
-### Tier 2: explicit supplemental decoders
+### Tier 2: existing format libraries
 
-Important user formats have uneven browser support.
+For widely used formats with mature browser, WASM, Node, or native bindings, integrate those libraries instead of writing a new decoder.
+
+Selection criteria:
+
+```text
+maintained implementation
+browser or Node binding suitable for target runtime
+clear license
+bounded memory behavior
+ImageData output or straightforward ImageData conversion
+fixture coverage for orientation, color, alpha, and large-image behavior
+```
 
 Explicit target:
 
@@ -163,12 +173,17 @@ HEIC / HEIF for iPhone uploads
 Decoder policy:
 
 ```text
-try runtime-native decode if supported
-else detect HEIC/HEIF and use supplemental decoder
+try platform decode if supported
+else detect the format and use an existing decoder binding
+else use an IronQR-owned decoder only when no suitable implementation exists
 else reject with actionable unsupported-format error
 ```
 
-Supplemental decoder may be:
+### Tier 3: IronQR-owned decoder
+
+Add an IronQR-owned decoder for a format when platform decode and existing libraries cannot satisfy the product/runtime requirement.
+
+Potential implementations:
 
 ```text
 browser WASM decoder
@@ -176,13 +191,13 @@ Node/native decoder
 future Rust-backed decoder
 ```
 
-### Tier 3: actionable rejection
+### Tier 4: actionable rejection
 
 Unsupported formats fail with an actionable error:
 
 ```text
 unsupported_image_format
-convert to PNG/JPEG/WebP or enable HEIC/HEIF support
+convert to PNG/JPEG/WebP or enable the required decoder package
 ```
 
 ## Format detection
@@ -310,7 +325,7 @@ metadata dimensions over budget
 missing browser decode APIs
 decode failure
 canvas/context failure
-supplemental decoder failure
+decoder binding failure
 ```
 
 Stage 01 errors are about failing to normalize the decoded frame:
