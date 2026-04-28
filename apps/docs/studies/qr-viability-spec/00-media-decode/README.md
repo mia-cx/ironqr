@@ -72,11 +72,7 @@ Do not interpret “all image formats” literally. The product target is broad 
 
 Stage 00 outputs browser `ImageData`, not a custom decoded-frame interface and not IronQR's canonical normalized frame.
 
-```ts
-type MediaDecodeOutput = ImageData;
-```
-
-Do not reinvent this object in the spec. `ImageData` already carries the decoded frame dimensions and pixel buffer:
+Do not alias or proxy this object in the spec. The stage output is `ImageData` from the browser platform contract. `ImageData` already carries the decoded frame dimensions and pixel buffer:
 
 ```text
 width

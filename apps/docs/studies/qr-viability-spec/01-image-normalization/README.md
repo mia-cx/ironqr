@@ -33,11 +33,7 @@ QR-specific detection
 
 Input is the `ImageData` produced by stage 00.
 
-```ts
-type ImageNormalizationInput = ImageData;
-```
-
-Stage 00 does not define a custom decoded-frame interface. `ImageData` is the stage boundary.
+Stage 00 does not define a custom decoded-frame interface, alias, or proxy. `ImageData` from the browser platform contract is the stage boundary.
 
 Current code still has a combined public entry point:
 
