@@ -14,20 +14,28 @@ blue/yellow chroma
 
 The goal is to create enough independent views that real finder patterns show up in at least one of them.
 
-## Current proposal-view subset
+## View priority
 
-The scanner has a prioritized proposal-view subset derived from a prior exhaustive view report. These are binary view ids, but they imply scalar view ids that have historically helped.
+The spec does not canonize a proposal-view order yet.
 
-Current first entries:
+Re-rank scalar/threshold/polarity combinations after validating the new spec direction, especially:
 
 ```text
-gray:otsu:normal
-ok-l:hybrid:normal
-gray:sauvola:normal
-ok-l:sauvola:normal
-ok-l:otsu:normal
-b:hybrid:normal
-...
+7 scalar views instead of 9
+ok-a / ok-b direction handled by binary polarity
+Rec. 601 grayscale over canonical SDR RGB
+HDR/SDR and gamma/color-space normalization
+histogram and threshold-stat reuse
 ```
 
-This means `gray`, `ok-l`, and `b` have been strong early contributors in previous measured runs.
+Relevant open study issues:
+
+```text
+#28 Study grayscale and scalar transforms for QR foreground separation
+#29 Study dynamic-range normalization for scalar QR views
+#31 Study finder-quality contribution per scalar and threshold view
+#35 Cache scalar histograms and integral stats for threshold reuse
+#39 Explore tiny learned scalar transforms from corpus evidence
+```
+
+Until those results land, proposal-view ordering remains policy outside this stage contract.
