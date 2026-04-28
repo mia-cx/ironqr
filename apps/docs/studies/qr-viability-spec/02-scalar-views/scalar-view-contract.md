@@ -1,6 +1,6 @@
 # Scalar View Contract
 
-A scalar view is a runtime-derived view owned by `ViewBank`. Persistent cache artifacts may store the same bytes as L2 scalar-view artifacts.
+A scalar view is a runtime-derived view owned by `ViewBank`. Benchmark/study tooling may persist the same bytes as study artifacts.
 
 ```ts
 interface ScalarView {

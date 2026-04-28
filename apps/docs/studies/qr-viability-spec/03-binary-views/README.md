@@ -240,15 +240,17 @@ The implementation and reports must measure:
 | Do inverted views rescue positives or mostly add work? | Decide whether/when to include them. |
 | Which thresholds produce high-realism but bad decode outcomes? | Improve realism scoring. |
 
-## Cache boundary
+## Study cache note
 
-This is L3 in the scanner artifact cache:
+Runtime scanning owns binary views through `ViewBank`. It does not persist binary views across scans.
+
+Benchmark/study tooling may persist this stage as:
 
 ```text
 L3 binary views
 ```
 
-Bump L3 when:
+Bump the study L3 cache version when:
 
 - threshold formulas change,
 - default threshold parameter constants change,

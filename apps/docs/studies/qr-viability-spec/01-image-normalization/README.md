@@ -14,7 +14,7 @@ final buffer type and length validation
 conversion from runtime ImageData formats into canonical 8-bit RGBA
 canonical coordinate convention
 safe integer RGBA pixel reads
-L1 normalized-frame artifact semantics
+normalized-frame artifact semantics
 ```
 
 Upstream/later-stage responsibilities:
@@ -50,15 +50,15 @@ That function performs media decode when needed and then calls normalization. In
 
 ## Stage notes
 
-| Note | Contract |
-| --- | --- |
-| [SimpleImageData](./simple-image-data.md) | Canonical width/height/`Uint8ClampedArray` RGBA artifact. |
-| [Normalization policy](./normalization-policy.md) | `Uint8ClampedArray` adoption and HDR/float16 → SDR tone mapping. |
-| [Pixel layout and access](./pixel-layout-and-access.md) | Row-major RGBA layout, coordinate convention, and safe pixel readers. |
-| [Validation](./validation.md) | Dimension, area, buffer type, buffer length, and metrics. |
-| [Alpha policy](./alpha-policy.md) | Preserve alpha in L1; scalar views composite over white. |
-| [Runtime state boundary](./runtime-state-boundary.md) | `ViewBank` owns derived-view memoization. |
-| [L1 artifact and cache boundary](./l1-artifact-cache.md) | Artifact metadata and cache-version bump policy. |
+| Note                                                     | Contract                                                              |
+| -------------------------------------------------------- | --------------------------------------------------------------------- |
+| [SimpleImageData](./simple-image-data.md)                | Canonical width/height/`Uint8ClampedArray` RGBA artifact.             |
+| [Normalization policy](./normalization-policy.md)        | `Uint8ClampedArray` adoption and HDR/float16 → SDR tone mapping.      |
+| [Pixel layout and access](./pixel-layout-and-access.md)  | Row-major RGBA layout, coordinate convention, and safe pixel readers. |
+| [Validation](./validation.md)                            | Dimension, area, buffer type, buffer length, and metrics.             |
+| [Alpha policy](./alpha-policy.md)                        | Preserve alpha in `SimpleImageData`; scalar views composite over white. |
+| [Runtime state boundary](./runtime-state-boundary.md)    | `ViewBank` owns derived-view memoization.                             |
+| [Study cache note](./l1-artifact-cache.md)               | Study-only artifact metadata and versioning.                          |
 
 ## Output
 

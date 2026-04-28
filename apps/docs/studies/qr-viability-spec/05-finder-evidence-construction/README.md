@@ -422,20 +422,26 @@ The implementation and reports must measure:
 | Which views produce refined finders that survive to decode? | View prioritization. |
 | Does row-scan or matcher produce better refined geometry? | Detector policy. |
 
-## Cache boundary
+## Study cache note
 
-Current L4 cache stores finder evidence.
+Runtime scanning does not persist finder evidence across scans.
 
-For the target pipeline, split this conceptually:
+Benchmark/study tooling may persist finder evidence as:
+
+```text
+L4 finder evidence
+```
+
+For the target pipeline, study tooling may split this conceptually:
 
 ```text
 L4a finder seeds
 L4b refined finder geometry
 ```
 
-Bump L4a when cheap detector output changes.
+Bump study L4a when cheap detector output changes.
 
-Bump L4b when local finder-refinement math, sampled coordinates, fit metrics, or template semantics change.
+Bump study L4b when local finder-refinement math, sampled coordinates, fit metrics, or template semantics change.
 
 ## Important design decision
 

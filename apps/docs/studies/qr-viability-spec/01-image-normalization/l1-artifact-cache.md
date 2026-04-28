@@ -1,6 +1,14 @@
-# L1 Artifact and Cache Boundary
+# Study Cache Note
 
-Artifact metadata is explicit and separate from mutable runtime cache:
+Runtime scanning emits `SimpleImageData` and keeps per-scan derived data in `ViewBank`. It does not persist normalized frames across scans.
+
+Benchmark/study tooling may persist this stage as:
+
+```text
+L1 normalized frame
+```
+
+Study artifact metadata is explicit and separate from mutable runtime state:
 
 ```ts
 interface NormalizedFrameArtifact {
@@ -13,13 +21,7 @@ interface NormalizedFrameArtifact {
 
 The metadata records pixel format, coordinate policy, and alpha policy so downstream geometry has no ambiguity.
 
-This is L1 in the scanner artifact cache:
-
-```text
-L1 normalized frame
-```
-
-Bump the L1 cache version only when the meaning of normalized pixels changes, such as:
+Bump the study L1 cache version only when the meaning of normalized pixels changes, such as:
 
 - different `ImageData` → `SimpleImageData` conversion semantics,
 - different Float16/HDR handling,
@@ -28,4 +30,4 @@ Bump the L1 cache version only when the meaning of normalized pixels changes, su
 - different coordinate convention,
 - different RGBA layout.
 
-Media decode policy changes bump L1 only when the resulting `SimpleImageData` bytes or metadata semantics change.
+Media decode policy changes bump study L1 only when the resulting `SimpleImageData` bytes or metadata semantics change.

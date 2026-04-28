@@ -4,7 +4,7 @@ This directory is the working spec for IronQR's math-based QR realism pipeline.
 
 It defines the pipeline as a sequence of small, specified stages. Each stage owns one responsibility, one artifact contract, and one set of validation metrics.
 
-The goal is to stop treating “QR-looking” signals as one blurry score. Each stage should produce a concrete artifact that later stages can measure, cache, compare, and use for ranking or filtering.
+The goal is to stop treating “QR-looking” signals as one blurry score. Each stage should produce a concrete artifact that later stages can measure, compare, and use for ranking or filtering.
 
 ## Spec status
 
@@ -16,7 +16,6 @@ Use it to decide:
 what artifact each stage owns
 which data is canonical vs derived
 where runtime memoization is allowed
-where persistent artifact caching begins/ends
 which math/residuals must be measured before production policy changes
 ```
 
@@ -50,7 +49,7 @@ Do not let them silently drift.
 
 A stage artifact should contain the semantic output of that stage, not hidden runtime state.
 
-For example, L1 normalized image is:
+For example, normalized image data is:
 
 ```ts
 interface NormalizedImage {
@@ -75,14 +74,14 @@ not inside canonical artifacts.
 The intended separation is:
 
 ```text
-NormalizedImage
-  pure L1 decoded pixels
+SimpleImageData
+  pure decoded pixels
 
 ViewBank
   per-scan temporary memoization of scalar views, binary views, and derived view backing stores
 
-ScannerArtifactCache
-  persistent per-layer/per-asset artifact cache
+StudyArtifactCache
+  persistent per-layer/per-asset cache for benchmark/study runs only
 ```
 
 This keeps parallel execution and async work easier to reason about:
@@ -90,20 +89,20 @@ This keeps parallel execution and async work easier to reason about:
 ```text
 one image/frame → one ViewBank → garbage-collected after scan
 many assets/workers → many independent contexts
-cross-run reuse → explicit artifact cache, not hidden object mutation
+cross-run study reuse → explicit study artifact cache, not hidden object mutation
 ```
 
-### Persistent caching is explicit and versioned
+### Persistent caching is study-only
 
-Persistent cache artifacts use layer-specific cache keys and numeric versions. Runtime memoization is not a persisted artifact.
+Runtime scanner code uses canonical artifacts and per-scan `ViewBank` memoization. Persistent layer caches are benchmark/study infrastructure only.
 
 Do not blur these:
 
 | Concept | Lifetime | Owner | Example |
 | --- | --- | --- | --- |
-| Canonical artifact | stage output | pipeline | `NormalizedImage` |
+| Canonical artifact | stage output | pipeline | `SimpleImageData` |
 | Runtime memoization | one scan/frame | `ViewBank` | cached `gray` view |
-| Persistent artifact cache | across runs | `ScannerArtifactCache` | L1-L8 files |
+| Study artifact cache | across benchmark/study runs | study tooling | L1-L8 files |
 
 ## Directory convention
 
@@ -114,7 +113,7 @@ NN-stage-name/
   README.md                  # stage contract and overview
   math-*.md                  # focused math derivations
   why-*.md                   # focused justification docs
-  artifact-*.md              # artifact schemas and cache identity
+  artifact-*.md              # artifact schemas
   validation.md              # validation metrics, fixtures, and acceptance criteria
 ```
 
@@ -130,7 +129,7 @@ Each stage README should document:
 4. **Math / algorithm**: short overview only; detailed derivations belong in `math-*.md`.
 5. **Why this signal exists**: what failure mode it helps.
 6. **Validation metrics**: what evidence must be collected to prove the stage works.
-7. **Cache boundary**: whether this stage should be cached separately.
+7. **Study cache note**: whether benchmark/study tooling may persist this stage separately.
 
 ## Current-vs-target language
 
@@ -153,7 +152,7 @@ If we threshold this confidence, how much work do we save and how many real deco
 These rules hold unless implementation evidence proves a better contract:
 
 1. **Validate dimensions as early as possible and again at normalization.** Stage 00 should reject over-budget metadata dimensions when available; stage 01 must validate the actual decoded RGBA frame.
-2. **L1 is decoded pixels only.** Derived views do not belong inside the normalized-image artifact.
+2. **Normalized pixels are decoded pixels only.** Derived views do not belong inside `SimpleImageData`.
 3. **Coordinates for geometry are continuous.** Finder/module centers and edges may be fractional image-space points.
 4. **Rounding is a sampling concern.** Do not round during geometry fitting; only sample/interpolate at image-read boundaries.
 5. **Finder evidence starts as a seed.** Center/module-size evidence is not enough for final realism decisions.

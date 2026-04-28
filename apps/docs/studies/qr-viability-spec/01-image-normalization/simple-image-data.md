@@ -10,11 +10,11 @@ interface SimpleImageData {
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `width` | Image width in pixels. |
-| `height` | Image height in pixels. |
-| `data` | Flat row-major RGBA byte buffer, 4 bytes per pixel. |
+| Field    | Meaning                                             |
+| -------- | --------------------------------------------------- |
+| `width`  | Image width in pixels.                              |
+| `height` | Image height in pixels.                             |
+| `data`   | Flat row-major RGBA byte buffer, 4 bytes per pixel. |
 
 `SimpleImageData` uses the subset of browser `ImageData` that IronQR needs:
 

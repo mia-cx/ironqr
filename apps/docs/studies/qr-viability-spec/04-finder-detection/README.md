@@ -270,15 +270,17 @@ The implementation and reports must measure:
 | How often do row-scan and matcher agree on the same finder? | Confidence/support signal. |
 | Do small module-size finders ever lead to valid decode? | Decide min module-size policy. |
 
-## Cache boundary
+## Study cache note
 
-This is part of L4 in the scanner artifact cache:
+Runtime scanning owns finder seeds through the active scan pipeline. It does not persist finder detection outputs across scans.
+
+Benchmark/study tooling may persist this stage as part of:
 
 ```text
 L4 finder evidence
 ```
 
-Later, if we add richer finder geometry refinement, it may deserve a new boundary:
+Later, if we add richer finder geometry refinement, study tooling may split this into:
 
 ```text
 L4a finder seeds

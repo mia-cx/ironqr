@@ -331,14 +331,8 @@ unsupported color/HDR conversion policy
 | Color-profile fixture outcomes | Prevent platform-specific color/threshold behavior. |
 | Compressed-byte cap failures | Validate source-size safety policy. |
 
-## Cache boundary
+## Study cache note
 
-The persisted artifact boundary starts after stage 01 normalization at L1. Stage 00 may gain an L0 artifact only when decoder comparisons need persisted decoded-frame outputs.
+Runtime scanning does not persist stage-00 decoded media frames. Benchmark/study tooling may add an L0 decoded-media-frame artifact only when decoder comparisons need cross-run reuse.
 
-If future decoder comparisons need persisted artifacts, add a separate pre-L1 cache identity:
-
-```text
-L0 decoded media frame
-```
-
-Bump L0 when media decode policy changes, such as orientation handling, color profile conversion, animated-frame selection, HEIC/HEIF decoder selection, or decoder backend.
+Study L0 identity changes when media decode policy changes, such as orientation handling, color profile conversion, animated-frame selection, HEIC/HEIF decoder selection, or decoder backend.

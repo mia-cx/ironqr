@@ -1,12 +1,14 @@
-# L2 Artifact and Cache Boundary
+# Study Cache Note
 
-This is L2 in the scanner artifact cache:
+Runtime scanning owns scalar views through `ViewBank`. It does not persist scalar views across scans.
+
+Benchmark/study tooling may persist this stage as:
 
 ```text
 L2 scalar views
 ```
 
-Bump L2 when:
+Bump the study L2 cache version when:
 
 - scalar view list changes,
 - formulas change,
