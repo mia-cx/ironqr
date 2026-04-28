@@ -1,15 +1,15 @@
 # 00 — Media Decode
 
-Media decode turns an external media source into an `ImageData`-compatible decoded frame.
+Media decode turns an external media source into browser `ImageData`.
 
 This stage is intentionally separate from image normalization:
 
 ```text
 00 media decode
-  external source → ImageData / ImageData-like decoded frame
+  external source → ImageData
 
 01 image normalization
-  ImageData / ImageData-like decoded frame → SimpleImageData with Uint8ClampedArray RGBA
+  ImageData → SimpleImageData with Uint8ClampedArray RGBA
 ```
 
 Stage 00 is runtime- and format-specific. Stage 01 is IronQR's platform-independent pixel contract.
@@ -52,7 +52,7 @@ Stage 00 accepts external media sources, including browser-shaped sources and fu
 Current public browser-style scan input includes:
 
 ```text
-ImageData-like pixel buffers
+ImageData pixel buffers
 ImageBitmap-like sources
 Blob/File-like compressed sources
 Canvas-like sources
@@ -70,51 +70,48 @@ Do not interpret “all image formats” literally. The product target is broad 
 
 ## Output
 
-Stage 00 outputs an `ImageData`-compatible decoded frame, not yet IronQR's canonical normalized frame.
-
-Browser-compatible shape:
+Stage 00 outputs browser `ImageData`, not a custom decoded-frame interface and not IronQR's canonical normalized frame.
 
 ```ts
-interface DecodedImageDataLike {
-  readonly width: number;
-  readonly height: number;
-  readonly data: Uint8ClampedArray | Float16Array;
-  readonly colorSpace?: 'srgb' | 'display-p3';
-  readonly pixelFormat?: 'rgba-unorm8' | 'rgba-float16';
-}
+type MediaDecodeOutput = ImageData;
+```
+
+Do not reinvent this object in the spec. `ImageData` already carries the decoded frame dimensions and pixel buffer:
+
+```text
+width
+height
+data
 ```
 
 Notes:
 
 - Classic browser `ImageData.data` is `Uint8ClampedArray`.
-- Modern HDR / wide-gamut `ImageData` may use `Float16Array` with `rgba-float16`.
-- Stage 00 may preserve runtime metadata about color space, pixel format, decoder backend, frame index, or timestamp.
+- Modern HDR / wide-gamut `ImageData` may use a float16 pixel format in runtimes that expose it.
+- Stage 00 may keep decode metadata outside the `ImageData` object when needed, but the stage handoff remains `ImageData`.
 - Stage 01 must convert or reject anything that is not canonical `Uint8ClampedArray` RGBA.
 
-Target metadata wrapper when useful:
+Optional sidecar metadata, when useful, is separate from the stage output:
 
 ```ts
-interface DecodedMediaFrame {
-  readonly imageData: DecodedImageDataLike;
-  readonly mediaMetadata?: {
-    readonly sourceKind: 'image-data' | 'blob' | 'bitmap' | 'canvas' | 'video-frame' | 'native';
-    readonly mimeType?: string;
-    readonly fileExtension?: string;
-    readonly frameIndex?: number;
-    readonly timestampMs?: number;
-    readonly decoder?: string;
-  };
+interface MediaDecodeMetadata {
+  readonly sourceKind: 'image-data' | 'blob' | 'bitmap' | 'canvas' | 'video-frame' | 'native';
+  readonly mimeType?: string;
+  readonly fileExtension?: string;
+  readonly frameIndex?: number;
+  readonly timestampMs?: number;
+  readonly decoder?: string;
 }
 ```
 
-Stage 01 should not care whether pixels came from JPEG, PNG, WebP, HEIC, a canvas, or a video frame. It should only normalize the decoded frame into `SimpleImageData`.
+Stage 01 should not care whether pixels came from JPEG, PNG, WebP, HEIC, a canvas, or a video frame. It should only normalize `ImageData` into `SimpleImageData`.
 
 ## Current browser decode path
 
-If the input is already `ImageData`-like, decoding is skipped:
+If the input is already `ImageData`, decoding is skipped:
 
 ```text
-ImageData-like input
+ImageData input
 → stage 01 normalization
 ```
 

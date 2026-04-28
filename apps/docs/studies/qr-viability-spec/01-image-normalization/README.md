@@ -1,6 +1,6 @@
 # 01 — Image Normalization
 
-Image normalization converts a decoded `ImageData`-compatible frame into IronQR's canonical `SimpleImageData` artifact.
+Image normalization converts browser `ImageData` into IronQR's canonical `SimpleImageData` artifact.
 
 This stage starts **after** media decode. It does not care whether the source was JPEG, PNG, WebP, HEIC, canvas, bitmap, video, or native/WASM decode. It only cares about normalizing the decoded frame into a stable 8-bit RGBA contract.
 
@@ -31,19 +31,13 @@ QR-specific detection
 
 ## Input
 
-Input is the decoded frame from stage 00.
-
-Stage 00 may produce browser `ImageData` or an ImageData-like shape:
+Input is the `ImageData` produced by stage 00.
 
 ```ts
-interface DecodedImageDataLike {
-  readonly width: number;
-  readonly height: number;
-  readonly data: Uint8ClampedArray | Float16Array;
-  readonly colorSpace?: 'srgb' | 'display-p3';
-  readonly pixelFormat?: 'rgba-unorm8' | 'rgba-float16';
-}
+type ImageNormalizationInput = ImageData;
 ```
+
+Stage 00 does not define a custom decoded-frame interface. `ImageData` is the stage boundary.
 
 Current code still has a combined public entry point:
 
@@ -54,7 +48,7 @@ normalizeImageInput(input)
 That function performs media decode when needed and then calls normalization. In this spec, those responsibilities are split:
 
 ```text
-00 media decode → ImageData / ImageData-like decoded frame
+00 media decode → ImageData
 01 image normalization → SimpleImageData
 ```
 
@@ -101,7 +95,7 @@ Semantic alias, if helpful in code:
 type NormalizedImage = SimpleImageData;
 ```
 
-Current implementation uses `rgbaPixels` rather than `data`. This spec prefers `data` to match the `ImageData`-like shape unless implementation evidence shows that `rgbaPixels` avoids confusion. Either way, the canonical artifact is the same semantic object: width, height, and `Uint8ClampedArray` RGBA bytes.
+Current implementation uses `rgbaPixels` rather than `data`. This spec prefers `data` to match `ImageData` unless implementation evidence shows that `rgbaPixels` avoids confusion. Either way, the canonical artifact is the same semantic object: width, height, and `Uint8ClampedArray` RGBA bytes.
 
 ## Normalization policy
 
