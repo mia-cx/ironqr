@@ -53,16 +53,16 @@ View grouping belongs in static view registry metadata, keyed by `ScalarViewId`,
 
 Current scalar views:
 
-```ts
-gray;
-r;
-g;
-b;
-oklab - l;
-oklab + a;
-oklab - a;
-oklab + b;
-oklab - b;
+```text
+gray
+r
+g
+b
+oklab-l
+oklab+a
+oklab-a
+oklab+b
+oklab-b
 ```
 
 They fall into three groups.
