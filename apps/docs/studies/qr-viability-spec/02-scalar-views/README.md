@@ -39,11 +39,11 @@ interface ScalarView {
 
 Meaning:
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Stable scalar view id, such as `gray` or `oklab-l`. |
-| `width`, `height` | Same dimensions as input image. |
-| `data` | One byte per pixel. |
+| Field             | Meaning                                             |
+| ----------------- | --------------------------------------------------- |
+| `id`              | Stable scalar view id, such as `gray` or `oklab-l`. |
+| `width`, `height` | Same dimensions as input image.                     |
+| `data`            | One byte per pixel.                                 |
 
 Current implementation may still call the byte array `values`. This spec uses `data` consistently with `SimpleImageData` and later view types.
 
@@ -54,15 +54,15 @@ View grouping belongs in static view registry metadata, keyed by `ScalarViewId`,
 Current scalar views:
 
 ```ts
-gray
-r
-g
-b
-oklab-l
-oklab+a
-oklab-a
-oklab+b
-oklab-b
+gray;
+r;
+g;
+b;
+oklab - l;
+oklab + a;
+oklab - a;
+oklab + b;
+oklab - b;
 ```
 
 They fall into three groups.
@@ -73,13 +73,21 @@ They fall into three groups.
 gray
 ```
 
-Formula after alpha compositing on white:
+Formula after alpha compositing on white, in gamma-encoded canonical SDR RGB byte space:
 
 ```text
-gray = round((0.299 × r + 0.587 × g + 0.114 × b) × 255)
+gray = round(0.299 × R8 + 0.587 × G8 + 0.114 × B8)
 ```
 
-Where `r`, `g`, and `b` are normalized to `0..1` first.
+Where `R8`, `G8`, and `B8` are the 0..255 alpha-composited SDR RGB channel values from `SimpleImageData`.
+
+Equivalent normalized form:
+
+```text
+gray = round((0.299 × r' + 0.587 × g' + 0.114 × b') × 255)
+```
+
+Where `r'`, `g'`, and `b'` are gamma-encoded canonical SDR RGB channels normalized to `0..1`, not linear-light RGB.
 
 Why use it:
 
@@ -127,11 +135,11 @@ oklab-b
 
 OKLab is a perceptual color space. It tries to separate:
 
-| Plane | Rough meaning |
-| --- | --- |
-| `L` | lightness |
-| `a` | green-red-ish axis |
-| `b` | blue-yellow-ish axis |
+| Plane | Rough meaning        |
+| ----- | -------------------- |
+| `L`   | lightness            |
+| `a`   | green-red-ish axis   |
+| `b`   | blue-yellow-ish axis |
 
 The current conversion path is documented separately in [OKLab Scalar View Math](./math-oklab.md):
 
@@ -220,13 +228,13 @@ The formula metadata helps compare behavior across view changes.
 
 The implementation and reports must eventually capture:
 
-| Metric | Purpose |
-| --- | --- |
-| Finder evidence reaching valid decode by scalar view | Avoid spending detector work on low-value views. |
-| False-positive empty decodes by scalar view | Identify risky channels. |
-| Positives rescued by chroma views after grayscale miss | Justify chroma-view cost. |
-| Proposal volume without valid decode by scalar view | Identify views for lower priority or budget caps. |
-| View usefulness by corpus family | Generated/stylized/photographic QR may need different view order. |
+| Metric                                                 | Purpose                                                           |
+| ------------------------------------------------------ | ----------------------------------------------------------------- |
+| Finder evidence reaching valid decode by scalar view   | Avoid spending detector work on low-value views.                  |
+| False-positive empty decodes by scalar view            | Identify risky channels.                                          |
+| Positives rescued by chroma views after grayscale miss | Justify chroma-view cost.                                         |
+| Proposal volume without valid decode by scalar view    | Identify views for lower priority or budget caps.                 |
+| View usefulness by corpus family                       | Generated/stylized/photographic QR may need different view order. |
 
 ## Cache boundary
 
