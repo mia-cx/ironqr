@@ -391,7 +391,55 @@ Objective score separation and frontier-order effect:
 
 The no-decode objective search suggests the original composite is not the best realism objective. `realism-module-heavy`, `realism-low-risk`, and `realism-lexicographic` have better positive/negative separation than `grid-realism-ranking`, while still materially replacing the representative order.
 
-## Conclusion / evidence-backed decision
+Phase-locked semantic grid-realism runs generated on 2026-04-27 from commit `201e34ac4e4320997fbcb8b22e1dd1d83ec880eb`:
+
+```text
+tools/bench/reports/study/realism-0/full/study/study-finder-grid-realism.json
+tools/bench/reports/study/realism-25/full/study/study-finder-grid-realism.json
+tools/bench/reports/study/realism-200/full/study/study-finder-grid-realism.json
+tools/bench/reports/study/realism-unbounded/full/study/study-finder-grid-realism.json
+```
+
+These runs use the corrected phase-locked semantic scorer (`rankingPolicy=4`) with finder-template, separator, quiet-zone, and QR-phase timing checks.
+
+No-decode score separation:
+
+| Variant | Positive avg | Negative avg | Delta |
+| --- | ---: | ---: | ---: |
+| `grid-realism-ranking` / `realism-phase-locked` | 0.65 | 0.62 | +0.03 |
+| `realism-module-heavy` | 0.65 | 0.60 | +0.05 |
+| `realism-decode-likelihood` | 0.64 | 0.60 | +0.04 |
+| `realism-low-risk` | 0.23 | 0.14 | +0.09 |
+| `realism-geomean` | 0.63 | 0.60 | +0.03 |
+| `realism-lexicographic` | 0.42 | 0.37 | +0.05 |
+
+Decode outcome by scan-level concrete-attempt budget with the phase-locked scorer:
+
+| Budget | Variant | Positive decoded | False-positive assets | Decode attempts | Lost decoded positives | Gained decoded positives |
+| ---: | --- | ---: | ---: | ---: | --- | --- |
+| 25 | `baseline` | 28 / 60 | 0 | 4,436 | none | none |
+| 25 | `grid-realism-ranking` / `realism-phase-locked` | 29 / 60 | 0 | 4,424 | none | `asset-532613e8ac453b24` |
+| 25 | `realism-module-heavy` | 29 / 60 | 0 | 4,424 | none | `asset-532613e8ac453b24` |
+| 25 | `realism-decode-likelihood` | 29 / 60 | 0 | 4,424 | none | `asset-532613e8ac453b24` |
+| 25 | `realism-low-risk` | 28 / 60 | 0 | 4,448 | `asset-879ee4c825375434` | `asset-532613e8ac453b24` |
+| 25 | `realism-geomean` | 29 / 60 | 0 | 4,424 | none | `asset-532613e8ac453b24` |
+| 25 | `realism-lexicographic` | 29 / 60 | 0 | 4,424 | none | `asset-532613e8ac453b24` |
+| 200 | `baseline` | 32 / 60 | 0 | 34,721 | none | none |
+| 200 | `grid-realism-ranking` / `realism-phase-locked` | 34 / 60 | 0 | 34,515 | none | `asset-532613e8ac453b24`, `asset-c2c4e788a4932a84` |
+| 200 | `realism-module-heavy` | 34 / 60 | 0 | 34,515 | none | `asset-532613e8ac453b24`, `asset-c2c4e788a4932a84` |
+| 200 | `realism-decode-likelihood` | 34 / 60 | 1 | 34,339 | none | `asset-532613e8ac453b24`, `asset-c2c4e788a4932a84` |
+| 200 | `realism-low-risk` | 32 / 60 | 0 | 34,655 | `asset-1b26a1d1cbb61d25`, `asset-879ee4c825375434` | `asset-532613e8ac453b24`, `asset-c2c4e788a4932a84` |
+| 200 | `realism-geomean` | 34 / 60 | 0 | 34,437 | none | `asset-532613e8ac453b24`, `asset-c2c4e788a4932a84` |
+| 200 | `realism-lexicographic` | 33 / 60 | 0 | 34,456 | `asset-1b26a1d1cbb61d25` | `asset-532613e8ac453b24`, `asset-c2c4e788a4932a84` |
+| unbounded | `baseline` | 37 / 60 | 5 | 1,766,125 | none | none |
+| unbounded | `grid-realism-ranking` / `realism-phase-locked` | 37 / 60 | 7 | 2,034,119 | none | none |
+| unbounded | `realism-module-heavy` | 37 / 60 | 7 | 2,007,948 | none | none |
+| unbounded | `realism-decode-likelihood` | 37 / 60 | 7 | 2,012,181 | none | none |
+| unbounded | `realism-low-risk` | 37 / 60 | 7 | 2,042,123 | none | none |
+| unbounded | `realism-geomean` | 37 / 60 | 7 | 2,030,977 | none | none |
+| unbounded | `realism-lexicographic` | 37 / 60 | 7 | 2,008,288 | none | none |
+
+Conclusion from phase-locked scoring: the corrected semantic scorer is useful for **bounded prioritization** but still not safe as an unbounded full-replacement ordering and still not evidence for hard filtering. With 25 attempts it gains one positive, loses none, and does not add false positives. With 200 attempts, `grid-realism-ranking` / `realism-phase-locked`, `realism-module-heavy`, and `realism-geomean` gain two positives, lose none, and do not add false positives; `realism-decode-likelihood` gains the same positives but adds one false-positive asset. Unbounded, every realism ordering preserves the same 37 positive decodes but increases false positives from 5 to 7 and adds about 242k-276k decode attempts. The next study revision must measure threshold/work-reduction curves over scored view/proposal/cluster/representative frontiers, not only final variant order.
 
 The corrected policy run answers the no-decode frontier-order question: grid-realism objectives are coverage-safe in proposal-only mode and materially change representative order for nearly every asset. They still do **not** justify hard rejection or production canonization by no-decode evidence alone; decode confirmation must decide between objectives.
 
