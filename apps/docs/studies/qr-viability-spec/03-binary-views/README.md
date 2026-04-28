@@ -33,9 +33,6 @@ A binary view is a materialized black/white view.
 ```ts
 interface BinaryView {
   readonly id: BinaryViewId;
-  readonly scalarViewId: ScalarViewId;
-  readonly threshold: ThresholdMethod;
-  readonly polarity: BinaryPolarity;
   readonly width: number;
   readonly height: number;
   readonly data: Uint8Array;
@@ -58,11 +55,15 @@ inverted.data[index] = 1 - normal.data[index]
 
 The inverted view is derived from the already-materialized normal binary view, not from `SimpleImageData` and not by re-running thresholding.
 
-## Current binary view id format
+## Binary view id format
+
+`BinaryViewId` is the canonical source of scalar-view, threshold-method, and polarity metadata:
 
 ```text
 scalarViewId : thresholdMethod : polarity
 ```
+
+Code that needs those parts should parse the id once or use registry metadata keyed by `BinaryViewId`, rather than duplicating the fields on every `BinaryView`.
 
 Examples:
 
@@ -185,9 +186,6 @@ For math-based realism, binary views should include enough metadata for empirica
 ```ts
 interface BinaryViewArtifact {
   readonly id: BinaryViewId;
-  readonly scalarViewId: ScalarViewId;
-  readonly threshold: ThresholdMethod;
-  readonly polarity: BinaryPolarity;
   readonly width: number;
   readonly height: number;
   readonly data: Uint8Array;
