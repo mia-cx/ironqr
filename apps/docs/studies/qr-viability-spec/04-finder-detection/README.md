@@ -2,215 +2,47 @@
 
 Finder detection looks at a binary view and finds local image structures that might be QR finder patterns.
 
-A finder detector should not decide that a whole QR exists. It should only say:
+A finder detector emits local finder seeds. Later stages decide whether three finders form a realistic QR grid.
 
-```text
-this local region looks like one finder pattern
-```
+## Input
 
-Later stages decide whether three finders can form a realistic QR grid.
-
-## Current input
-
-Input is one binary view:
+Input is one materialized binary view from stage 03:
 
 ```ts
 interface BinaryView {
-  id: BinaryViewId;
-  width: number;
-  height: number;
-  plane: BinaryPlane;
-  polarity: BinaryPolarity;
+  readonly id: BinaryViewId;
+  readonly width: number;
+  readonly height: number;
+  readonly data: Uint8Array;
 }
 ```
 
 The detector reads pixels as:
 
 ```text
-0   = dark byte
-255 = light byte
+1 = dark / QR ink
+0 = light / background
 ```
 
-or equivalently:
+## Stage notes
 
-```text
-1 = dark bit
-0 = light bit
-```
+| Note | Contract |
+| --- | --- |
+| [Input and output](./input-output.md) | Binary input and finder-seed output contracts. |
+| [Finder pattern shape](./finder-pattern-shape.md) | 1:1:3:1:1 local finder signal. |
+| [Detector policy](./detector-policy.md) | Canonical detector families and candidate-generator responsibility. |
+| [Row-scan detector](./row-scan-detector.md) | Row run scanning, ratio scoring, and cross-checking. |
+| [Matcher detector](./matcher-detector.md) | Center-pixel matcher flow and step-size policy. |
+| [Flood detector history](./flood-detector-history.md) | Historical non-canonical detector context. |
+| [Deduplication and caps](./deduplication-and-caps.md) | Duplicate clustering and finder evidence caps. |
+| [Validation](./validation.md) | Decode, false-positive, agreement, cap, and module-size metrics. |
+| [Study cache note](./l4-study-cache.md) | Study-only artifact metadata and versioning. |
 
-## Current detector families
+## Output
 
-Current canonical production-like detector families:
+Stage 04 emits finder seeds.
 
-```ts
-['row-scan', 'matcher']
-```
-
-`flood` exists historically but is not in the default detector policy.
-
-## Finder-pattern shape
-
-A QR finder pattern has a 1:1:3:1:1 run ratio through its center:
-
-```text
-black white black white black
-  1     1     3     1     1
-```
-
-Across a center row it looks like:
-
-```text
-# . ### . #
-```
-
-The same idea appears vertically through the center.
-
-The detectors use this ratio as the cheap local signal.
-
----
-
-## Row-scan detector
-
-The row-scan detector sweeps across image rows and looks for five-run patterns.
-
-A run is a consecutive sequence of same-colored pixels.
-
-Example row:
-
-```text
-.....###..#######..###.....
-```
-
-A detector may count:
-
-```text
-light run
-black run
-white run
-black run
-white run
-black run
-light run
-```
-
-For a finder center, the important middle five runs should approximate:
-
-```text
-1 : 1 : 3 : 1 : 1
-```
-
-### Ratio scoring
-
-The current ratio score computes:
-
-```text
-total = count0 + count1 + count2 + count3 + count4
-moduleSize = total / 7
-```
-
-Expected counts:
-
-```text
-count0 ≈ 1 × moduleSize
-count1 ≈ 1 × moduleSize
-count2 ≈ 3 × moduleSize
-count3 ≈ 1 × moduleSize
-count4 ≈ 1 × moduleSize
-```
-
-Error:
-
-```text
-error = Σ abs(actual - expected) / moduleSize
-```
-
-If the error is too high, reject.
-
-Current guard:
-
-```text
-if total < 7, reject
-```
-
-That effectively means accepted row-scan/cross-check finder evidence has at least about:
-
-```text
-moduleSize >= 1 pixel/module
-```
-
-### Cross-checking
-
-A horizontal row hit is not enough. The detector cross-checks vertically and horizontally around the estimated center.
-
-Current flow:
-
-```text
-row hit
-→ estimate centerX
-→ vertical cross-check at centerX
-→ horizontal cross-check at refined centerY
-→ construct finder evidence
-```
-
-This helps reject accidental one-dimensional stripe patterns.
-
----
-
-## Matcher detector
-
-The matcher detector checks likely center pixels and runs the same kind of cross-checks.
-
-Current rough flow:
-
-```text
-step through image pixels
-→ skip pixels that are not dark centers
-→ horizontal cross-check
-→ vertical cross-check
-→ combine into matcher evidence
-```
-
-The step size adapts to image size:
-
-```text
-step = max(1, floor(min(width, height) / 180))
-```
-
-So small images are scanned densely, while larger images skip some pixels for speed.
-
-Matcher evidence is rejected if the combined module size is below:
-
-```text
-0.8 px/module
-```
-
-However, because the cross-check ratio scorer rejects total run length below 7, current row/matcher accepted evidence is practically still around `>= 1 px/module`.
-
----
-
-## Flood detector, historical note
-
-Flood-style finder detection looked for connected dark rings and center stones.
-
-It can estimate module size from area:
-
-```text
-moduleSize = sqrt(ringPixelCount / 24)
-```
-
-It accepts components with at least:
-
-```text
-pixelCount >= 16
-```
-
-So flood could theoretically emit module estimates below 1 px/module. It is not part of the current canonical detector policy.
-
----
-
-## Current detector output
-
-Detectors emit `FinderEvidence` records. Current shape:
+Current code calls these `FinderEvidence` records:
 
 ```ts
 interface FinderEvidence {
@@ -224,65 +56,4 @@ interface FinderEvidence {
 }
 ```
 
-This is cheap and useful, but it is not rich enough for final math-based realism.
-
-## Deduplication and caps
-
-Detectors can emit many nearby hits for the same physical finder.
-
-The pipeline clusters nearby finder evidence. The distance threshold scales with module size but has a floor:
-
-```text
-distance < max(2, min(moduleSizeA, moduleSizeB) × factor)
-```
-
-This prevents tiny module estimates from making duplicate clustering too strict.
-
-Current caps keep finder work bounded:
-
-```text
-MAX_FINDER_EVIDENCE_TOTAL = 12
-```
-
-## Target detector responsibility
-
-For the math-based realism pipeline, finder detection should remain a **candidate generator**.
-
-It must provide:
-
-```text
-where finder geometry refinement should look
-what rough scale refinement should try
-which detector/view produced this seed
-```
-
-It should not be responsible for proving full QR realism.
-
-## Validation metrics
-
-The implementation and reports must measure:
-
-| Metric | Purpose |
-| --- | --- |
-| Which detector family produces finders that lead to valid decodes? | Validate row-scan/matcher policy. |
-| Which detector family produces false positives or empty payload decodes? | Understand risk. |
-| How many finder seeds per view are needed before recall stops improving? | Work cap tuning. |
-| How often do row-scan and matcher agree on the same finder? | Confidence/support signal. |
-| Do small module-size finders ever lead to valid decode? | Decide min module-size policy. |
-
-## Study cache note
-
-Runtime scanning owns finder seeds through the active scan pipeline and any production in-memory memoization. Benchmark/study tooling may additionally write this stage to disk as part of:
-
-```text
-L4 finder evidence
-```
-
-Later, if we add richer finder geometry refinement, study tooling may split this into:
-
-```text
-L4a finder seeds
-L4b refined finder geometry
-```
-
-That separation would let reports reuse cheap seed detection while changing refinement math.
+`FinderEvidence` is a seed for later geometry refinement, not final QR geometry truth.
