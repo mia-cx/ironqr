@@ -48,9 +48,21 @@ That function performs media decode when needed and then calls normalization. In
 01 image normalization → SimpleImageData
 ```
 
-## Output artifact: SimpleImageData
+## Stage notes
 
-The canonical IronQR frame is `SimpleImageData`:
+| Note | Contract |
+| --- | --- |
+| [SimpleImageData](./simple-image-data.md) | Canonical width/height/`Uint8ClampedArray` RGBA artifact. |
+| [Normalization policy](./normalization-policy.md) | `Uint8ClampedArray` adoption and HDR/float16 → SDR tone mapping. |
+| [Pixel layout and access](./pixel-layout-and-access.md) | Row-major RGBA layout, coordinate convention, and safe pixel readers. |
+| [Validation](./validation.md) | Dimension, area, buffer type, buffer length, and metrics. |
+| [Alpha policy](./alpha-policy.md) | Preserve alpha in L1; scalar views composite over white. |
+| [Runtime state boundary](./runtime-state-boundary.md) | `ViewBank` / `ScanContext` own derived-view memoization. |
+| [L1 artifact and cache boundary](./l1-artifact-cache.md) | Artifact metadata and cache-version bump policy. |
+
+## Output
+
+Stage 01 emits `SimpleImageData`:
 
 ```ts
 interface SimpleImageData {
@@ -60,329 +72,13 @@ interface SimpleImageData {
 }
 ```
 
-Meaning:
-
-| Field    | Meaning                                             |
-| -------- | --------------------------------------------------- |
-| `width`  | Image width in pixels.                              |
-| `height` | Image height in pixels.                             |
-| `data`   | Flat row-major RGBA byte buffer, 4 bytes per pixel. |
-
-`SimpleImageData` intentionally uses only the subset of browser `ImageData` that IronQR needs:
-
-```text
-width
-height
-Uint8ClampedArray RGBA data
-```
-
-Runtime-specific `ImageData` features stay on the stage-00 side of the boundary:
-
-```text
-colorSpace
-pixelFormat
-Float16Array HDR data
-methods / DOM object identity
-```
-
-Current implementation uses `rgbaPixels` rather than `data`. This spec prefers `data` to match `ImageData` unless implementation evidence shows that `rgbaPixels` avoids confusion. Either way, the canonical artifact is the same semantic object: width, height, and `Uint8ClampedArray` RGBA bytes.
-
-## Normalization policy
-
-Stage 01 must normalize decoded frames into this contract:
-
-```text
-row-major RGBA
-8-bit unsigned clamped channels
-4 bytes per pixel
-pixel centers at integer coordinates
-```
-
-### Uint8ClampedArray input
-
-For `Uint8ClampedArray` input with valid dimensions and buffer length:
-
-```text
-accept directly or copy according to ownership policy
-```
-
-### Float16Array / HDR input
-
-Modern browser `ImageData` may use `Float16Array`, usually for HDR or wide-gamut canvas/image APIs.
-
-Stage 01 converts HDR / float16 `ImageData` to SDR `SimpleImageData` with a color-managed tone-map, not a per-channel clamp.
-
-`ImageData` exposes its color-space metadata, so stage 01 selects the tone-map from the input `ImageData` color space and pixel format.
-
-MVP tone-mapping policy:
-
-```text
-read ImageData colorSpace and pixel format
-use the matching color-space transform and transfer function
-apply a deterministic luminance-based SDR tone map in stage 01
-```
-
-Normalization pipeline:
-
-```text
-read float16 RGBA channels
-read ImageData colorSpace / pixel format
-sanitize NaN / infinite / negative samples
-linearize with the input color-space transfer function
-convert input primaries to linear canonical SDR RGB
-compute scene luminance Y from linear RGB
-choose exposure / white point from robust frame luminance statistics
-apply the color-space-specific luminance tone curve to map HDR Y into SDR Y
-scale linear RGB by toneMappedY / max(Y, epsilon) to preserve chroma ratios
-convert linear SDR RGB to the canonical SDR transfer function
-clamp final RGB and alpha to 0..1
-quantize to Uint8ClampedArray
-```
-
-The tone-map table defines one policy per supported `ImageData` color space:
-
-```text
-color-space identifier
-input transfer function
-linearization function
-primary conversion matrix to canonical SDR RGB
-luminance coefficients
-robust white-point statistic
-HDR shoulder curve
-chroma-preservation policy
-alpha conversion
-rounding to Uint8ClampedArray
-```
-
-QR viability priority:
-
-```text
-preserve local light/dark contrast used by thresholding
-preserve chroma ratios enough for RGB/OKLab scalar views
-avoid hard clipping bright modules into flat white regions
-produce deterministic bytes across runtimes for the same decoded ImageData
-```
-
-Stage 01 rejects float16 input when the `ImageData` color space or pixel format is outside the supported tone-map table.
-
-Validate each supported color-space conversion with HDR/wide-gamut fixtures before making it a product guarantee.
-
-## RGBA layout
-
-The RGBA layout is row-major:
-
-```text
-pixel 0: R, G, B, A
-pixel 1: R, G, B, A
-pixel 2: R, G, B, A
-...
-```
-
-For pixel `(x, y)`, the base offset is:
-
-```text
-index = y × width + x
-base = index × 4
-r = data[base + 0]
-g = data[base + 1]
-b = data[base + 2]
-a = data[base + 3]
-```
-
-`width` is the row length. When `x` reaches `width`, the next pixel is the start of the next row.
-
-## Shared RGBA pixel reader
-
-The spec exposes a safe coordinate helper for non-hot code, tests, and documentation. This helper encodes the row-major RGBA layout in one place.
-
-```ts
-interface RgbaPixel {
-  readonly r: number;
-  readonly g: number;
-  readonly b: number;
-  readonly a: number;
-}
-
-const isPixelInBounds = (
-  image: SimpleImageData,
-  x: number,
-  y: number,
-): boolean =>
-  Number.isInteger(x) &&
-  Number.isInteger(y) &&
-  x >= 0 &&
-  y >= 0 &&
-  x < image.width &&
-  y < image.height;
-
-const rgbaPixelOffset = (
-  image: SimpleImageData,
-  x: number,
-  y: number,
-): number => {
-  if (!isPixelInBounds(image, x, y)) {
-    throw new RangeError(
-      `Pixel coordinate (${x}, ${y}) is outside ${image.width}x${image.height}.`,
-    );
-  }
-  return (y * image.width + x) * 4;
-};
-
-const readRgbaPixel = (
-  image: SimpleImageData,
-  x: number,
-  y: number,
-): RgbaPixel => {
-  const base = rgbaPixelOffset(image, x, y);
-  return {
-    r: image.data[base + 0] ?? 0,
-    g: image.data[base + 1] ?? 0,
-    b: image.data[base + 2] ?? 0,
-    a: image.data[base + 3] ?? 0,
-  };
-};
-```
-
-Policy:
-
-- `readRgbaPixel(...)` throws on invalid integer coordinates.
-- Consumers either catch that error, pre-check with `isPixelInBounds(...)`, or use direct validated access in hot paths.
-- Hot full-frame loops may use direct offset math after validating image dimensions once.
-- Subpixel geometry uses interpolation/sampling helpers instead of integer pixel reads.
-
-## Coordinate convention
-
-The scanner's image-space coordinate convention is:
-
-```text
-integer pixel coordinates refer to pixel centers
-pixel (x=10, y=20) has center at image point (10, 20)
-continuous image points may use fractional coordinates
-```
-
-So these are valid continuous image-space points:
-
-```text
-(10, 20)
-(10.5, 20)
-(10.25, 20.75)
-```
-
-This matters because later finder geometry stores subpixel module centers and module edges. Geometry fitting keeps these points continuous. Rounding or interpolation belongs at image-sampling boundaries.
-
-## Validation
-
-Validation happens at the decoded-frame trust boundary.
-
-Current limits:
-
-```ts
-MAX_IMAGE_DIMENSION = 8192;
-MAX_IMAGE_PIXELS = 35_389_440; // 8192 × 4320
-```
-
-The scanner rejects:
-
-- non-safe-integer dimensions,
-- zero or negative dimensions,
-- width/height above max side length,
-- total area above max pixel count,
-- unsupported decoded frame buffer type,
-- RGBA buffers with wrong length.
-
-For canonical output, downstream stages may assume:
+The emitted artifact satisfies:
 
 ```text
 width > 0
 height > 0
 data instanceof Uint8ClampedArray
 data.length === width × height × 4
+pixel centers at integer coordinates
+row-major RGBA layout
 ```
-
-`height` is kept as explicit metadata even though it is derivable from buffer length and width. The explicit invariant is clearer and catches mismatched buffers:
-
-```text
-data.length === width × height × 4
-```
-
-## Alpha handling
-
-Stage 01 preserves alpha as an 8-bit RGBA channel in `SimpleImageData`.
-
-Scalar-view construction later composites RGB over white before producing grayscale/RGB/OKLab scalar values:
-
-```text
-alpha = A / 255
-background = 1 - alpha
-channel = (channel / 255) × alpha + background
-```
-
-So transparent pixels behave as if shown on white.
-
-This is important for QR artwork with transparent backgrounds.
-
-## Runtime state boundary
-
-Derived scalar/binary/OKLab views are runtime memoization owned outside L1 image data.
-
-Target ownership:
-
-```text
-SimpleImageData
-  width, height, Uint8ClampedArray RGBA data only
-
-ViewBank / ScanContext
-  scalar view cache
-  binary plane cache
-  binary view cache
-  OKLab plane cache
-```
-
-`ViewBank` / `ScanContext` owns runtime memoization.
-
-## L1 artifact metadata
-
-Artifact metadata is explicit and separate from mutable runtime cache:
-
-```ts
-interface NormalizedFrameArtifact {
-  readonly image: SimpleImageData;
-  readonly coordinateConvention: "pixel-centers-at-integers";
-  readonly alphaCompositePolicy: "views-composite-on-white";
-  readonly normalizedPixelFormat: "rgba-unorm8";
-}
-```
-
-The key addition is precise metadata about pixel format, coordinate policy, and alpha policy so downstream geometry has no ambiguity.
-
-## Validation metrics
-
-This stage affects every later QR signal. Reports must track:
-
-| Metric                                                                         | Purpose                                                                |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| Rejected decoded pixel formats                                                 | Ensure Float16/HDR inputs follow explicit conversion/rejection policy. |
-| Normalization conversion counts                                                | Track when stage 01 converts vs accepts directly.                      |
-| Transparent asset behavior                                                     | QR artwork may rely on transparency.                                   |
-| Very large image materialization time                                          | Cache and budget planning.                                             |
-| Source-dimension correlation with decode/finder failures                       | Very small modules can become unresolvable.                            |
-| 8192×4320 area budget behavior across browser, Node, native, and WASM backends | Product input guarantee.                                               |
-
-## Cache boundary
-
-This is L1 in the scanner artifact cache:
-
-```text
-L1 normalized frame
-```
-
-Bump the L1 cache version only when the meaning of normalized pixels changes, such as:
-
-- different `ImageData` → `SimpleImageData` conversion semantics,
-- different Float16/HDR handling,
-- different alpha-composite policy,
-- different decoded-frame validation semantics,
-- different coordinate convention,
-- different RGBA layout.
-
-Media decode policy changes bump L1 only when the resulting `SimpleImageData` bytes or metadata semantics change.
