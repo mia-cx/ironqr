@@ -2,7 +2,7 @@
 
 Image normalization converts browser `ImageData` into IronQR's canonical `SimpleImageData` artifact.
 
-This stage starts **after** media decode. It does not care whether the source was JPEG, PNG, WebP, HEIC, canvas, bitmap, video, or native/WASM decode. It only cares about normalizing the decoded frame into a stable 8-bit RGBA contract.
+This stage starts **after** media decode. It normalizes browser `ImageData` into a stable 8-bit RGBA contract independent of whether the source was JPEG, PNG, WebP, HEIC, canvas, bitmap, video, or native/WASM decode.
 
 ## Responsibility
 
@@ -17,7 +17,7 @@ safe integer RGBA pixel reads
 L1 normalized-frame artifact semantics
 ```
 
-Stage 01 does **not** own:
+Upstream/later-stage responsibilities:
 
 ```text
 external media format support
@@ -33,7 +33,7 @@ QR-specific detection
 
 Input is the `ImageData` produced by stage 00.
 
-Stage 00 does not define a custom decoded-frame interface, alias, or proxy. `ImageData` from the browser platform contract is the stage boundary.
+`ImageData` from the browser platform contract is the stage boundary.
 
 Current code still has a combined public entry point:
 
@@ -76,7 +76,7 @@ height
 Uint8ClampedArray RGBA data
 ```
 
-It does not carry browser-only or runtime-specific features such as:
+Runtime-specific `ImageData` features stay on the stage-00 side of the boundary:
 
 ```text
 colorSpace
@@ -85,7 +85,7 @@ Float16Array HDR data
 methods / DOM object identity
 ```
 
-Semantic alias, if helpful in code:
+Semantic alias:
 
 ```ts
 type NormalizedImage = SimpleImageData;
@@ -106,7 +106,7 @@ pixel centers at integer coordinates
 
 ### Uint8ClampedArray input
 
-If input data is already `Uint8ClampedArray` and dimensions/buffer length are valid:
+For `Uint8ClampedArray` input with valid dimensions and buffer length:
 
 ```text
 accept directly or copy according to ownership policy
@@ -126,9 +126,7 @@ float precision
 browser/runtime color-management policy
 ```
 
-Until an explicit conversion policy exists, stage 01 must not silently accept `Float16Array` as canonical data.
-
-Allowed policies:
+Stage 01 handles `Float16Array` with one explicit policy:
 
 ```text
 convert Float16Array to Uint8ClampedArray with a documented color/HDR policy
@@ -144,7 +142,7 @@ multiply by 255
 write Uint8ClampedArray
 ```
 
-But this must be documented and validated with HDR/wide-gamut fixtures before becoming a product guarantee.
+Document and validate the conversion with HDR/wide-gamut fixtures before making it a product guarantee.
 
 ## RGBA layout
 
@@ -213,9 +211,9 @@ const readRgbaPixel = (image: SimpleImageData, x: number, y: number): RgbaPixel 
 Policy:
 
 - `readRgbaPixel(...)` throws on invalid integer coordinates.
-- Consumers decide whether to catch that error, pre-check with `isPixelInBounds(...)`, or avoid calling the helper.
+- Consumers either catch that error, pre-check with `isPixelInBounds(...)`, or use direct validated access in hot paths.
 - Hot full-frame loops may use direct offset math after validating image dimensions once.
-- Subpixel geometry must not use this integer pixel reader directly; it should use interpolation/sampling helpers.
+- Subpixel geometry uses interpolation/sampling helpers instead of integer pixel reads.
 
 ## Coordinate convention
 
@@ -235,7 +233,7 @@ So these are valid continuous image-space points:
 (10.25, 20.75)
 ```
 
-This matters because later finder geometry stores subpixel module centers and module edges. Geometry fitting must not round these points. Rounding or interpolation only belongs at image-sampling boundaries.
+This matters because later finder geometry stores subpixel module centers and module edges. Geometry fitting keeps these points continuous. Rounding or interpolation belongs at image-sampling boundaries.
 
 ## Validation
 
@@ -290,7 +288,7 @@ This is important for QR artwork with transparent backgrounds.
 
 ## Runtime state boundary
 
-Derived scalar/binary/OKLab views are runtime memoization, not L1 image data.
+Derived scalar/binary/OKLab views are runtime memoization owned outside L1 image data.
 
 Target ownership:
 
@@ -305,11 +303,11 @@ ViewBank / ScanContext
   OKLab plane cache
 ```
 
-Runtime memoization does not belong inside `SimpleImageData`.
+`ViewBank` / `ScanContext` owns runtime memoization.
 
 ## L1 artifact metadata
 
-If metadata is needed, it should be explicit artifact metadata, not mutable runtime cache:
+Artifact metadata is explicit and separate from mutable runtime cache:
 
 ```ts
 interface NormalizedFrameArtifact {
@@ -324,11 +322,11 @@ The key addition is precise metadata about pixel format, coordinate policy, and 
 
 ## Validation metrics
 
-This stage itself is not a QR signal, but it affects every later signal. Reports must track:
+This stage affects every later QR signal. Reports must track:
 
 | Metric | Purpose |
 | --- | --- |
-| Rejected decoded pixel formats | Ensure Float16/HDR inputs are not silently misread. |
+| Rejected decoded pixel formats | Ensure Float16/HDR inputs follow explicit conversion/rejection policy. |
 | Normalization conversion counts | Track when stage 01 converts vs accepts directly. |
 | Transparent asset behavior | QR artwork may rely on transparency. |
 | Very large image materialization time | Cache and budget planning. |
@@ -352,4 +350,4 @@ Bump the L1 cache version only when the meaning of normalized pixels changes, su
 - different coordinate convention,
 - different RGBA layout.
 
-Media decode policy changes belong to stage 00 and should not automatically bump L1 unless the resulting `SimpleImageData` bytes or metadata semantics change.
+Media decode policy changes bump L1 only when the resulting `SimpleImageData` bytes or metadata semantics change.

@@ -31,7 +31,7 @@ color-profile/rasterization policy
 decode errors before pixel normalization
 ```
 
-Stage 00 does **not** own:
+Downstream responsibilities:
 
 ```text
 canonical 8-bit RGBA conversion
@@ -42,8 +42,6 @@ safe RGBA pixel reads
 scalar/binary derived views
 QR-specific detection
 ```
-
-Those begin in stage 01 or later.
 
 ## Input
 
@@ -66,28 +64,20 @@ all common still-image formats supported by the active browser/runtime
 plus explicit HEIC/HEIF support for iPhone uploads via native or supplemental decoder fallback
 ```
 
-Do not interpret “all image formats” literally. The product target is broad practical support, with clear unsupported-format errors for obscure, unsafe, encrypted, malformed, multi-page, or unavailable decoder cases.
+The product target is broad practical still-image support: common runtime-supported formats, explicit HEIC/HEIF support for iPhone uploads, and clear unsupported-format errors for obscure, unsafe, encrypted, malformed, multi-page, or unavailable decoder cases.
 
 ## Output
 
-Stage 00 outputs browser `ImageData`, not a custom decoded-frame interface and not IronQR's canonical normalized frame.
-
-Do not alias or proxy this object in the spec. The stage output is `ImageData` from the browser platform contract. `ImageData` already carries the decoded frame dimensions and pixel buffer:
-
-```text
-width
-height
-data
-```
+Stage 00 outputs browser `ImageData`.
 
 Notes:
 
 - Classic browser `ImageData.data` is `Uint8ClampedArray`.
 - Modern HDR / wide-gamut `ImageData` may use a float16 pixel format in runtimes that expose it.
 - Stage 00 may keep decode metadata outside the `ImageData` object when needed, but the stage handoff remains `ImageData`.
-- Stage 01 must convert or reject anything that is not canonical `Uint8ClampedArray` RGBA.
+- Stage 01 converts supported pixel formats to canonical `Uint8ClampedArray` RGBA and rejects unsupported decoded pixel formats.
 
-Optional sidecar metadata, when useful, is separate from the stage output:
+Sidecar metadata is separate from the stage output:
 
 ```ts
 interface MediaDecodeMetadata {
@@ -100,7 +90,7 @@ interface MediaDecodeMetadata {
 }
 ```
 
-Stage 01 should not care whether pixels came from JPEG, PNG, WebP, HEIC, a canvas, or a video frame. It should only normalize `ImageData` into `SimpleImageData`.
+Stage 01 normalizes `ImageData` into `SimpleImageData` using only the decoded frame contract, independent of whether the pixels came from JPEG, PNG, WebP, HEIC, a canvas, or a video frame.
 
 ## Current browser decode path
 
@@ -162,7 +152,7 @@ Actual support depends on runtime.
 
 ### Tier 2: explicit supplemental decoders
 
-Some important user formats are not reliably browser-supported everywhere.
+Important user formats have uneven browser support.
 
 Explicit target:
 
@@ -170,7 +160,7 @@ Explicit target:
 HEIC / HEIF for iPhone uploads
 ```
 
-The decoder policy should be:
+Decoder policy:
 
 ```text
 try runtime-native decode if supported
@@ -188,7 +178,7 @@ future Rust-backed decoder
 
 ### Tier 3: actionable rejection
 
-Unsupported formats should fail with an error that tells the user what to do:
+Unsupported formats fail with an actionable error:
 
 ```text
 unsupported_image_format
@@ -197,9 +187,7 @@ convert to PNG/JPEG/WebP or enable HEIC/HEIF support
 
 ## Format detection
 
-Do not rely only on one signal.
-
-Use layered detection:
+Use layered detection from multiple signals:
 
 ```text
 declared MIME type
@@ -230,7 +218,7 @@ Many source types expose dimensions before or during decode:
 | `Canvas` | `width`, `height` |
 | `VideoFrame` | `displayWidth` / `displayHeight` or `codedWidth` / `codedHeight` |
 | `Blob` / `File` | byte size; dimensions require header parse or decode |
-| encoded PNG/JPEG/WebP/HEIC bytes | dimensions often exist in headers/boxes, but current browser path does not parse all of them itself |
+| encoded PNG/JPEG/WebP/HEIC bytes | dimensions often exist in headers/boxes; current browser path gets them through decode unless a header parser is added |
 
 Stage 00 must reject impossible or over-budget dimensions as early as metadata permits.
 
@@ -259,7 +247,7 @@ Current browser preflight ties source byte cap to the decoded area budget:
 MAX_IMAGE_SOURCE_BYTES = MAX_IMAGE_PIXELS * 4;
 ```
 
-That is a safety cap before bitmap decode. It is not the same as decoded pixel memory.
+That is a safety cap before bitmap decode. Decoded pixel memory is governed by stage 01 width/height/area validation.
 
 Target policy:
 
@@ -269,11 +257,11 @@ metadata dimension preflight is stage 00 policy when dimensions are available
 decoded width/height/area validation is stage 01 policy and always runs
 ```
 
-A compressed JPEG or HEIC can be small but decode to a huge frame, so byte-size validation is not enough.
+A compressed JPEG or HEIC can be small while decoding to a huge frame, so stage 01 area validation always follows byte-size validation.
 
 ## Video and animation policy
 
-Video and animated images are not the same as still images.
+Video and animated images need explicit frame-selection policy.
 
 Target behavior:
 
@@ -283,7 +271,7 @@ stream scan = caller/session provides frames over time
 animated image scan = first frame by default unless explicit frame selection exists
 ```
 
-Temporal tracking belongs to a future scanner-session design, not stage 00.
+Future scanner-session design owns temporal tracking.
 
 ## Color, HDR, and orientation policy
 
@@ -305,10 +293,10 @@ Until a full HDR policy exists:
 
 ```text
 Float16 / HDR ImageData is allowed as a stage-00 decoded frame shape
-but stage 01 must explicitly convert it with documented policy or reject it
+stage 01 must explicitly convert it with documented policy or reject it
 ```
 
-Do not silently treat `Float16Array` as if it were 8-bit RGBA.
+Handle `Float16Array` through explicit HDR conversion or unsupported-format rejection.
 
 ## Errors
 
@@ -350,7 +338,7 @@ unsupported color/HDR conversion policy
 
 ## Cache boundary
 
-Stage 00 is not currently a persisted scanner artifact layer. The persisted L1 artifact starts after stage 01 normalization.
+The persisted artifact boundary starts after stage 01 normalization at L1. Stage 00 may gain an L0 artifact only when decoder comparisons need persisted decoded-frame outputs.
 
 If future decoder comparisons need persisted artifacts, add a separate pre-L1 cache identity:
 
