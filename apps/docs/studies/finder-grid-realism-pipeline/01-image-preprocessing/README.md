@@ -80,7 +80,11 @@ interface RgbaPixel {
   readonly a: number;
 }
 
-const isPixelInBounds = (image: NormalizedImage, x: number, y: number): boolean =>
+const isPixelInBounds = (
+  image: NormalizedImage,
+  x: number,
+  y: number,
+): boolean =>
   Number.isInteger(x) &&
   Number.isInteger(y) &&
   x >= 0 &&
@@ -88,14 +92,24 @@ const isPixelInBounds = (image: NormalizedImage, x: number, y: number): boolean 
   x < image.width &&
   y < image.height;
 
-const rgbaPixelOffset = (image: NormalizedImage, x: number, y: number): number => {
+const rgbaPixelOffset = (
+  image: NormalizedImage,
+  x: number,
+  y: number,
+): number => {
   if (!isPixelInBounds(image, x, y)) {
-    throw new RangeError(`Pixel coordinate (${x}, ${y}) is outside ${image.width}x${image.height}.`);
+    throw new RangeError(
+      `Pixel coordinate (${x}, ${y}) is outside ${image.width}x${image.height}.`,
+    );
   }
   return (y * image.width + x) * 4;
 };
 
-const readRgbaPixel = (image: NormalizedImage, x: number, y: number): RgbaPixel => {
+const readRgbaPixel = (
+  image: NormalizedImage,
+  x: number,
+  y: number,
+): RgbaPixel => {
   const base = rgbaPixelOffset(image, x, y);
   return {
     r: image.rgbaPixels[base + 0] ?? 0,
@@ -105,24 +119,14 @@ const readRgbaPixel = (image: NormalizedImage, x: number, y: number): RgbaPixel 
   };
 };
 
-const tryReadRgbaPixel = (image: NormalizedImage, x: number, y: number): RgbaPixel | null => {
-  if (!isPixelInBounds(image, x, y)) return null;
-  const base = (y * image.width + x) * 4;
-  return {
-    r: image.rgbaPixels[base + 0] ?? 0,
-    g: image.rgbaPixels[base + 1] ?? 0,
-    b: image.rgbaPixels[base + 2] ?? 0,
-    a: image.rgbaPixels[base + 3] ?? 0,
-  };
-};
 ```
 
 Policy:
 
 - `readRgbaPixel(...)` throws on invalid integer coordinates.
-- `tryReadRgbaPixel(...)` returns `null` on invalid integer coordinates.
+- Consumers decide whether to catch that error, pre-check with `isPixelInBounds(...)`, or avoid calling the helper.
 - Hot full-frame loops may use direct offset math after validating image dimensions once.
-- Subpixel geometry must not use these integer pixel readers directly; it should use interpolation/sampling helpers.
+- Subpixel geometry must not use this integer pixel reader directly; it should use interpolation/sampling helpers.
 
 ## Coordinate convention
 
