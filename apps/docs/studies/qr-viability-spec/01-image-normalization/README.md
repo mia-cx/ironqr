@@ -110,44 +110,53 @@ accept directly or copy according to ownership policy
 
 Modern browser `ImageData` may use `Float16Array`, usually for HDR or wide-gamut canvas/image APIs.
 
-Stage 01 converts HDR / float16 `ImageData` to SDR `SimpleImageData`:
-
-```text
-read float16 RGBA channels
-convert source color space to the canonical SDR RGB space
-tone map HDR channel values into SDR range
-clamp normalized RGB and alpha to 0..1
-multiply by 255
-write Uint8ClampedArray
-```
+Stage 01 converts HDR / float16 `ImageData` to SDR `SimpleImageData` with a color-managed tone-map, not a per-channel clamp.
 
 MVP tone-mapping policy:
 
 ```text
-use platform color conversion when it provides SDR ImageData output
-otherwise apply an explicit deterministic SDR tone map in stage 01
+prefer platform conversion to SDR ImageData when the runtime exposes it
+otherwise apply a deterministic luminance-based SDR tone map in stage 01
 ```
 
-The deterministic fallback must define:
+Deterministic fallback pipeline:
+
+```text
+read float16 RGBA channels
+sanitize NaN / infinite / negative samples
+interpret the source color space and transfer function
+convert source primaries to linear canonical SDR RGB
+compute scene luminance Y from linear RGB
+choose exposure / white point from robust frame luminance statistics
+apply a luminance tone curve to map HDR Y into SDR Y
+scale linear RGB by toneMappedY / max(Y, epsilon) to preserve chroma ratios
+convert linear SDR RGB to the canonical SDR transfer function
+clamp final RGB and alpha to 0..1
+quantize to Uint8ClampedArray
+```
+
+The fallback must define:
 
 ```text
 source color-space interpretation
+transfer function / linearization
 NaN / infinite channel handling
 negative channel handling
+luminance coefficients
+robust white-point statistic
 HDR shoulder curve
+chroma-preservation policy
 alpha conversion
 rounding to Uint8ClampedArray
 ```
 
-Suggested fallback for QR viability:
+QR viability priority:
 
 ```text
-sanitize non-finite RGB to 0
-clamp negative RGB to 0
-apply a luminance-preserving HDR shoulder for RGB values above SDR white
-clamp final RGB to 0..1
-clamp alpha to 0..1
-write 0..255 Uint8ClampedArray channels
+preserve local light/dark contrast used by thresholding
+preserve chroma ratios enough for RGB/OKLab scalar views
+avoid hard clipping bright modules into flat white regions
+produce deterministic bytes across runtimes for the same decoded ImageData
 ```
 
 Stage 01 rejects float16 input only when the runtime exposes insufficient color-space or pixel-format information to apply the documented SDR conversion safely.
