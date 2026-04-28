@@ -57,6 +57,14 @@ decoder success/failure
 canvas/context availability when canvas is part of the path
 ```
 
+Early dimension validation uses the shared image limits:
+
+```text
+width <= 8192
+height <= 8192
+width × height <= 35_389_440
+```
+
 Stage 01 still validates decoded dimensions, area, buffer type, and buffer length.
 
 ## MVP fallback

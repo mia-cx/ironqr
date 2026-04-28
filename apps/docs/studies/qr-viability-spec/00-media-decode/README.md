@@ -188,6 +188,33 @@ Many source types expose dimensions before or during decode:
 
 Stage 00 must reject impossible or over-budget dimensions as early as metadata permits.
 
+Current dimension limits:
+
+```ts
+MAX_IMAGE_DIMENSION = 8192;
+MAX_IMAGE_PIXELS = 35_389_440; // 8192 × 4320
+```
+
+Stage 00 applies these limits to metadata dimensions when they are available before decode:
+
+```text
+width <= 8192
+height <= 8192
+width × height <= 35_389_440
+```
+
+This accepts 8K screen captures:
+
+```text
+8192 × 4320 = 35_389_440 pixels
+```
+
+It rejects square 8K images:
+
+```text
+8192 × 8192 = 67_108_864 pixels
+```
+
 Policy:
 
 ```text
