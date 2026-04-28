@@ -33,8 +33,8 @@ type BrowserBitmapRuntime = {
 
 /** Maximum supported image side length accepted at the public scan boundary. */
 export const MAX_IMAGE_DIMENSION = 8192;
-/** Maximum supported image area accepted before allocation-heavy scan work. */
-export const MAX_IMAGE_PIXELS = 24_000_000;
+/** Maximum supported image area accepted before allocation-heavy scan work. Allows an 8192×4320 8K screen capture. */
+export const MAX_IMAGE_PIXELS = 35_389_440;
 /** Maximum compressed browser source size accepted before bitmap decode. */
 export const MAX_IMAGE_SOURCE_BYTES = MAX_IMAGE_PIXELS * RGBA_CHANNELS;
 

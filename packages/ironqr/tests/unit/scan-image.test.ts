@@ -2,8 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { Effect } from 'effect';
 import {
   createNormalizedImage,
+  MAX_IMAGE_PIXELS,
   MAX_IMAGE_SOURCE_BYTES,
   normalizeImageInput,
+  validateImageDimensions,
 } from '../../src/pipeline/frame.js';
 import { createGeometryCandidates, resolveGrid } from '../../src/pipeline/geometry.js';
 import {
@@ -83,6 +85,11 @@ describe('single-image baseline pipeline (internal modules)', () => {
     const luma = new Uint8Array(width * height).fill(255);
     const binary = otsuBinarize(luma, width, height);
     expect(binary.every((value) => value === 255)).toBe(true);
+  });
+
+  it('accepts an 8192x4320 8K screen capture area budget', () => {
+    expect(MAX_IMAGE_PIXELS).toBe(8192 * 4320);
+    expect(() => validateImageDimensions(8192, 4320)).not.toThrow();
   });
 
   it('rejects oversized canvas-like browser sources before bitmap conversion', async () => {
