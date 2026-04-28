@@ -4,7 +4,7 @@ Image normalization adopts a decoded RGBA frame into the scanner's canonical pix
 
 This stage starts **after** media decode. It should not care whether the pixels came from JPEG, PNG, WebP, canvas, bitmap, video, or native/WASM decode.
 
-This stage should answer:
+This stage defines:
 
 ```text
 What exact decoded pixels are later stages allowed to read?
@@ -237,11 +237,11 @@ interface NormalizedFrameArtifact {
 
 The key addition is precise metadata about coordinate and alpha policy so downstream geometry has no ambiguity.
 
-## Empirical questions
+## Validation metrics
 
-This stage itself is not a QR signal, but it affects every later signal. Studies should track:
+This stage itself is not a QR signal, but it affects every later signal. Reports must track:
 
-| Question | Why |
+| Metric | Purpose |
 | --- | --- |
 | Do transparent assets behave differently after white compositing? | QR artwork may rely on transparency. |
 | Do very large images dominate materialization time? | Cache and budget planning. |

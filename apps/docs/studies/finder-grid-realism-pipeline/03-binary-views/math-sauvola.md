@@ -100,7 +100,7 @@ Sauvola adapts to local brightness. A pixel can be dark relative to its neighbor
 - Can create many finder candidates on busy backgrounds.
 - More expensive than Otsu.
 
-## Empirical questions
+## Validation metrics
 
 - Which valid decodes require Sauvola views?
 - Which false positives or empty-payload decodes come from Sauvola views?

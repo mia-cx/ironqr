@@ -409,11 +409,11 @@ reprojection error = distance(predicted image point, observed image point)
 
 This is far stronger than center-only geometry.
 
-## Empirical questions
+## Validation metrics
 
-The study should measure:
+The implementation and reports must measure:
 
-| Question | Why |
+| Metric | Purpose |
 | --- | --- |
 | Do low-res finder seeds with module size near 1 px ever produce valid decodes? | Decide min module-size policy. |
 | Does finder lattice residual separate positives from negatives? | Candidate ranking/filter signal. |
@@ -447,4 +447,4 @@ For math-based realism, the important artifact is:
 refined finder geometry with subpixel lattice points and residuals
 ```
 
-That is the object that should drive future unwarp and realism studies.
+That is the object that should drive future unwarp and realism policies.

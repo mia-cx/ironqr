@@ -81,7 +81,7 @@ Polarity is applied later by `BinaryView` reads.
 - Poor with shadows/glare.
 - Can miss QR modules when background intensity varies across the image.
 
-## Empirical questions
+## Validation metrics
 
 - How often do Otsu views produce valid finder triples compared with local thresholds?
 - Are Otsu false positives lower than Sauvola/hybrid?

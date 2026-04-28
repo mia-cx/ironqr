@@ -2,7 +2,7 @@
 
 Binary views turn scalar values into black/white pixels.
 
-This stage should answer:
+This stage defines:
 
 ```text
 Which pixels are dark enough to count as QR ink?
@@ -95,7 +95,7 @@ sauvola
 hybrid
 ```
 
-Each answers a different question.
+Each has a different responsibility.
 
 ---
 
@@ -225,13 +225,13 @@ sauvola radius/k/dynamicRange
 hybrid radius/global/adaptive weights
 ```
 
-Current code does not expose all these values in the artifact, but the study should if we want to compare threshold behavior rigorously.
+Current code does not expose all these values in the artifact, but the spec requires them before threshold behavior can be compared rigorously.
 
-## Empirical questions
+## Validation metrics
 
-The realism study should measure:
+The implementation and reports must measure:
 
-| Question | Why |
+| Metric | Purpose |
 | --- | --- |
 | Which threshold methods produce valid decodes? | Prioritize useful view families. |
 | Which threshold methods produce false positives or empty decodes? | Identify risky texture generators. |

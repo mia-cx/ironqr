@@ -8,7 +8,7 @@ A scalar view is not black/white yet. It is a single 8-bit plane:
 0..255 value per pixel
 ```
 
-This stage should answer:
+This stage defines:
 
 ```text
 Which image signals do we expose before thresholding?
@@ -186,7 +186,7 @@ The goal is not to make every scalar view equally valuable. The goal is to creat
 
 ## Current proposal-view subset
 
-The scanner has a prioritized proposal-view subset derived from a prior exhaustive view study. These are binary view ids, but they imply scalar families that have historically helped.
+The scanner has a prioritized proposal-view subset derived from a prior exhaustive view report. These are binary view ids, but they imply scalar families that have historically helped.
 
 Current first entries:
 
@@ -217,13 +217,13 @@ interface ScalarViewArtifact {
 }
 ```
 
-The formula metadata helps when comparing studies across view changes.
+The formula metadata helps when comparing behavior across view changes.
 
-## Empirical questions
+## Validation metrics
 
-The realism study should eventually answer:
+The implementation and reports must eventually capture:
 
-| Question | Why |
+| Metric | Purpose |
 | --- | --- |
 | Which scalar views produce finder evidence that reaches valid decode? | Avoid spending detector work on low-value views. |
 | Which scalar views produce false-positive empty decodes? | Identify risky channels. |

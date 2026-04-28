@@ -76,14 +76,14 @@ Hybrid tries to keep global stability while allowing local rescue.
 
 - Often useful for hard images where Otsu misses local contrast.
 - Less purely local than Sauvola.
-- Empirically useful in proposal-view ordering.
+- Useful in measured proposal-view ordering.
 
 ## Weaknesses
 
 - Still can create texture-derived false finders.
-- Constants are heuristic and should remain study-backed.
+- Constants are heuristic and must remain evidence-backed.
 
-## Empirical questions
+## Validation metrics
 
 - Which assets are rescued only by hybrid views?
 - Does hybrid increase false-positive empty decodes?

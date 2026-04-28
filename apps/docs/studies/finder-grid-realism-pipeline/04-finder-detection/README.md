@@ -248,21 +248,21 @@ MAX_FINDER_EVIDENCE_TOTAL = 12
 
 For the math-based realism pipeline, finder detection should remain a **candidate generator**.
 
-It should answer:
+It must provide:
 
 ```text
-Where should finder geometry refinement look?
-What rough scale should refinement try?
-Which detector/view produced this seed?
+where finder geometry refinement should look
+what rough scale refinement should try
+which detector/view produced this seed
 ```
 
 It should not be responsible for proving full QR realism.
 
-## Empirical questions
+## Validation metrics
 
-The study should measure:
+The implementation and reports must measure:
 
-| Question | Why |
+| Metric | Purpose |
 | --- | --- |
 | Which detector family produces finders that lead to valid decodes? | Validate row-scan/matcher policy. |
 | Which detector family produces false positives or empty payload decodes? | Understand risk. |
@@ -285,4 +285,4 @@ L4a finder seeds
 L4b refined finder geometry
 ```
 
-That separation would let studies reuse cheap seed detection while changing refinement math.
+That separation would let reports reuse cheap seed detection while changing refinement math.

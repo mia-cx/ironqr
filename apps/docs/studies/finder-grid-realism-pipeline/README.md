@@ -2,7 +2,7 @@
 
 This directory is the working spec for IronQR's math-based QR realism pipeline.
 
-It defines the pipeline as a sequence of small, empirical stages. Each stage owns one responsibility, one artifact contract, and one set of study questions.
+It defines the pipeline as a sequence of small, specified stages. Each stage owns one responsibility, one artifact contract, and one set of validation metrics.
 
 The goal is to stop treating “QR-looking” signals as one blurry score. Each stage should produce a concrete artifact that later stages can measure, cache, compare, and use for ranking or filtering.
 
@@ -16,7 +16,7 @@ Use it to decide:
 what artifact each stage owns
 which data is canonical vs derived
 where runtime memoization is allowed
-where persistent study caching begins/ends
+where persistent artifact caching begins/ends
 which math/residuals must be measured before production policy changes
 ```
 
@@ -83,7 +83,7 @@ ViewBank / ScanContext
   per-scan temporary memoization of scalar views, binary planes, binary views, OKLab planes
 
 ScannerArtifactCache
-  persistent per-layer/per-asset study cache
+  persistent per-layer/per-asset artifact cache
 ```
 
 This keeps parallel execution and async work easier to reason about:
@@ -91,20 +91,20 @@ This keeps parallel execution and async work easier to reason about:
 ```text
 one image/frame → one ViewBank/ScanContext → garbage-collected after scan
 many assets/workers → many independent contexts
-study reuse → explicit artifact cache, not hidden object mutation
+cross-run reuse → explicit artifact cache, not hidden object mutation
 ```
 
 ### Persistent caching is explicit and versioned
 
-Persistent study/cache artifacts use layer-specific cache keys and numeric versions. Runtime memoization is not a persisted artifact.
+Persistent cache artifacts use layer-specific cache keys and numeric versions. Runtime memoization is not a persisted artifact.
 
 Do not blur these:
 
 | Concept | Lifetime | Owner | Example |
 | --- | --- | --- | --- |
-| Canonical artifact | stage output | pipeline/study | `NormalizedImage` |
+| Canonical artifact | stage output | pipeline | `NormalizedImage` |
 | Runtime memoization | one scan/frame | `ViewBank` / `ScanContext` | cached `gray` view |
-| Persistent artifact cache | across study runs | `ScannerArtifactCache` | L1-L8 files |
+| Persistent artifact cache | across runs | `ScannerArtifactCache` | L1-L8 files |
 
 ## Directory convention
 
@@ -116,7 +116,7 @@ NN-stage-name/
   math-*.md                  # focused math derivations
   why-*.md                   # focused justification docs
   artifact-*.md              # artifact schemas and cache identity
-  study-questions.md         # empirical questions and metrics
+  validation.md              # validation metrics, fixtures, and acceptance criteria
 ```
 
 Keep docs small and responsible for one idea. If a section starts explaining a separate algorithm, split it into a sibling file and link it from the stage README.
@@ -130,7 +130,7 @@ Each stage README should document:
 3. **Canonical vs runtime state**: what belongs in the artifact and what belongs in `ViewBank`/`ScanContext`.
 4. **Math / algorithm**: short overview only; detailed derivations belong in `math-*.md`.
 5. **Why this signal exists**: what failure mode it helps.
-6. **Empirical questions**: what the study should measure.
+6. **Validation metrics**: what evidence must be collected to prove the stage works.
 7. **Cache boundary**: whether this stage should be cached separately.
 
 ## Current-vs-target language
@@ -140,7 +140,7 @@ These docs intentionally distinguish:
 - **Current pipeline**: what the code mostly does today.
 - **Target realism pipeline**: the math-based artifacts we want to evolve toward.
 
-The current pipeline already has good pieces: normalized frames, scalar views, binary views, row-scan/matcher detectors, proposal frontiers, cluster frontiers, and decode-confirmation studies.
+The current pipeline already has good pieces: normalized frames, scalar views, binary views, row-scan/matcher detectors, proposal frontiers, cluster frontiers, and decode-confirmation reports.
 
 The target pipeline adds richer finder geometry and shared-grid residuals so we can ask:
 
@@ -151,7 +151,7 @@ If we threshold this confidence, how much work do we save and how many real deco
 
 ## Spec invariants
 
-These rules should hold unless a study disproves them:
+These rules hold unless implementation evidence proves a better contract:
 
 1. **Validate dimensions as early as possible and again at normalization.** Stage 00 should reject over-budget metadata dimensions when available; stage 01 must validate the actual decoded RGBA frame.
 2. **L1 is decoded pixels only.** Derived views do not belong inside the normalized-image artifact.

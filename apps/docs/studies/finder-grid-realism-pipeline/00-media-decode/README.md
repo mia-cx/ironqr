@@ -4,7 +4,7 @@ Media decode turns an external image/video source into a decoded RGBA frame.
 
 This stage is intentionally separate from image normalization. Media decoding is runtime- and format-specific; normalization is the platform-independent contract for pixels after decoding.
 
-This stage should answer:
+This stage defines:
 
 ```text
 What source formats can IronQR accept?
@@ -245,9 +245,9 @@ bad buffer length
 decoded area too large
 ```
 
-## Empirical questions
+## Validation metrics
 
-| Question | Why |
+| Metric | Purpose |
 | --- | --- |
 | Which source formats are used in real integrations? | Prioritize decoder/conformance work. |
 | Do browser and Node/native decoders produce identical RGBA for corpus fixtures? | Required for future Rust/WASM conformance. |
@@ -259,7 +259,7 @@ decoded area too large
 
 Stage 00 is not currently a persisted scanner artifact layer. The persisted L1 artifact starts after decode, at the normalized RGBA frame.
 
-If future studies compare decoders, add a separate pre-L1 cache identity:
+If future decoder comparisons need persisted artifacts, add a separate pre-L1 cache identity:
 
 ```text
 L0 decoded media frame

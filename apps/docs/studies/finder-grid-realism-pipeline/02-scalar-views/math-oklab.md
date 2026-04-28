@@ -89,7 +89,7 @@ A QR may be foreground-red/background-green or foreground-green/background-red. 
 
 By materializing both signs, the scanner lets thresholding discover contrast in either direction without guessing the foreground color.
 
-## Empirical questions
+## Validation metrics
 
 - Which OKLab scalar views produce successful decode provenance?
 - Which OKLab scalar views produce empty-payload false positives?
