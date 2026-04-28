@@ -1,4 +1,4 @@
-# Math-Based QR Realism Pipeline Spec
+# Math-Based QR Viability Pipeline Spec
 
 This directory is the working spec for IronQR's math-based QR realism pipeline.
 
