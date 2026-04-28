@@ -1,9 +1,9 @@
 # OKLab Views
 
 ```text
-oklab-l
-oklab-a
-oklab-b
+ok-l
+ok-a
+ok-b
 ```
 
 OKLab is a perceptual color space. It separates:
@@ -24,10 +24,10 @@ sRGB channel
 → OKLab L/a/b
 ```
 
-## `oklab-l`
+## `ok-l`
 
 ```text
-oklab-l = clampByte(round(okL × 255))
+ok-l = clampByte(round(okL × 255))
 ```
 
 This is perceptual lightness. It can provide a better brightness signal than Rec. 601 grayscale for some images.
@@ -40,17 +40,17 @@ The `a` and `b` channels are signed. Stage 02 emits one neutral-centered scalar 
 OKLAB_CHROMA_BYTE_CENTER = 127.5
 OKLAB_CHROMA_BYTE_GAIN = 180
 
-oklab-a = clampByte(round(OKLAB_CHROMA_BYTE_CENTER + okA × OKLAB_CHROMA_BYTE_GAIN))
-oklab-b = clampByte(round(OKLAB_CHROMA_BYTE_CENTER + okB × OKLAB_CHROMA_BYTE_GAIN))
+ok-a = clampByte(round(OKLAB_CHROMA_BYTE_CENTER + okA × OKLAB_CHROMA_BYTE_GAIN))
+ok-b = clampByte(round(OKLAB_CHROMA_BYTE_CENTER + okB × OKLAB_CHROMA_BYTE_GAIN))
 ```
 
 Binary polarity in stage 03 handles opposite chroma directions:
 
 ```text
-oklab-a:otsu:normal
-oklab-a:otsu:inverted
-oklab-b:otsu:normal
-oklab-b:otsu:inverted
+ok-a:otsu:normal
+ok-a:otsu:inverted
+ok-b:otsu:normal
+ok-b:otsu:inverted
 ```
 
 A QR may be darker in one chroma direction or the opposite. The scalar axis stores the signed chroma signal once; binary polarity chooses which direction counts as dark.

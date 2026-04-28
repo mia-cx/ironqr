@@ -22,12 +22,12 @@ Current first entries:
 
 ```text
 gray:otsu:normal
-oklab-l:hybrid:normal
+ok-l:hybrid:normal
 gray:sauvola:normal
-oklab-l:sauvola:normal
-oklab-l:otsu:normal
+ok-l:sauvola:normal
+ok-l:otsu:normal
 b:hybrid:normal
 ...
 ```
 
-This means `gray`, `oklab-l`, and `b` have been strong early contributors in previous measured runs.
+This means `gray`, `ok-l`, and `b` have been strong early contributors in previous measured runs.

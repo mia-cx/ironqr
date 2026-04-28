@@ -13,7 +13,7 @@ interface ScalarView {
 
 | Field             | Meaning                                             |
 | ----------------- | --------------------------------------------------- |
-| `id`              | Stable scalar view id, such as `gray` or `oklab-l`. |
+| `id`              | Stable scalar view id, such as `gray` or `ok-l`. |
 | `width`, `height` | Same dimensions as input `SimpleImageData`.         |
 | `data`            | One byte per pixel.                                 |
 

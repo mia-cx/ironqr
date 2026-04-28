@@ -81,8 +81,8 @@ Examples:
 ```text
 gray:otsu:normal
 gray:otsu:inverted
-oklab-l:sauvola:normal
-oklab-a:otsu:inverted
+ok-l:sauvola:normal
+ok-a:otsu:inverted
 b:hybrid:normal
 ```
 
